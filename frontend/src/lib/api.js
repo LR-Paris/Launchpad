@@ -34,8 +34,14 @@ export const getMe = () =>
 export const getShops = () =>
   api.get('/shops').then(r => r.data);
 
+export const getShop = (slug) =>
+  api.get(`/shops/${slug}`).then(r => r.data);
+
 export const createShop = (data) =>
   api.post('/shops', data).then(r => r.data);
+
+export const updateShop = (slug, data) =>
+  api.patch(`/shops/${slug}`, data).then(r => r.data);
 
 export const deleteShop = (slug, deleteFiles = false) =>
   api.delete(`/shops/${slug}?deleteFiles=${deleteFiles}`).then(r => r.data);
@@ -45,6 +51,9 @@ export const shopAction = (slug, action) =>
 
 export const deployShop = (slug) =>
   api.post(`/shops/${slug}/deploy`).then(r => r.data);
+
+export const getShopLogs = (slug, lines = 100) =>
+  api.get(`/shops/${slug}/logs?lines=${lines}`).then(r => r.data);
 
 // Orders
 export const getOrders = (slug) =>

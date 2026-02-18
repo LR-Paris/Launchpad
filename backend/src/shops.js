@@ -14,6 +14,14 @@ const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
 const BASE_PORT = 8100;
 
+// When running inside Docker, docker compose needs HOST-side paths for volumes/files.
+// HOST_PROJECT_DIR is injected by docker-compose.yml via environment: HOST_PROJECT_DIR=${PWD}
+function getHostShopsDir() {
+  return process.env.HOST_PROJECT_DIR
+    ? path.join(process.env.HOST_PROJECT_DIR, 'shops')
+    : SHOPS_DIR;
+}
+
 function getDb() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -44,8 +52,10 @@ function getNextPort(db) {
 
 function getContainerStatus(slug) {
   try {
+    const hostShopsDir = getHostShopsDir();
+    const composeFile = path.join(hostShopsDir, slug, 'docker-compose.yml');
     const result = execSync(
-      `docker compose -f ${path.join(SHOPS_DIR, slug, 'docker-compose.yml')} ps --format json`,
+      `docker compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8' }
     );
     if (result.trim()) {
@@ -104,6 +114,7 @@ router.post('/', (req, res) => {
 
     const port = getNextPort(db);
     const subdomain = slug;
+    const log = [];
 
     // Clone or copy shop files
     if (folderPath) {
@@ -111,51 +122,74 @@ router.post('/', (req, res) => {
         return res.status(400).json({ error: 'Source folder not found' });
       }
       copyDirSync(folderPath, shopDir);
+      log.push(`Copied files from ${folderPath}`);
     } else {
-      execSync(`git clone ${TEMPLATE_REPO} ${shopDir}`, { stdio: 'pipe' });
+      log.push(`Cloning template from ${TEMPLATE_REPO}...`);
+      try {
+        const cloneOut = execSync(`git clone ${TEMPLATE_REPO} ${shopDir} 2>&1`, {
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+        log.push(cloneOut || 'Clone complete.');
+      } catch (cloneErr) {
+        const msg = cloneErr.stderr?.toString() || cloneErr.stdout?.toString() || cloneErr.message;
+        log.push(`Clone error: ${msg}`);
+        throw new Error(`git clone failed: ${msg}`);
+      }
     }
 
     // Create orders directory
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
+    log.push('Created orders directory.');
 
     // Write .env for shop
     const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
+    log.push('Wrote shop .env file.');
 
-    // Copy and configure docker-compose.yml
-    const template = fs.readFileSync(
-      path.join(TEMPLATES_DIR, 'shop-docker-compose.yml'),
-      'utf8'
-    );
+    // Copy and configure docker-compose.yml from template
+    const templatePath = path.join(TEMPLATES_DIR, 'shop-docker-compose.yml');
+    if (!fs.existsSync(templatePath)) {
+      throw new Error(`Template not found at ${templatePath}. Check that the templates directory is mounted.`);
+    }
+    const template = fs.readFileSync(templatePath, 'utf8');
     fs.writeFileSync(
       path.join(shopDir, 'docker-compose.yml'),
       template.replace(/{PORT}/g, String(port))
     );
+    log.push(`Configured shop docker-compose.yml on port ${port}.`);
 
     // Generate nginx config
     generateShopConfig(slug, port);
+    log.push('Generated nginx config.');
 
     // Register in database
     db.prepare(
       'INSERT INTO shops (slug, name, status, port, subdomain) VALUES (?, ?, ?, ?, ?)'
     ).run(slug, name, 'stopped', port, subdomain);
 
-    // Start the container
+    // Start the container using host-side path
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    log.push(`Starting container with: docker compose -f ${hostComposeFile} up -d`);
     try {
-      execSync(
-        `docker compose -f ${path.join(shopDir, 'docker-compose.yml')} up -d`,
-        { stdio: 'pipe' }
+      const upOut = execSync(
+        `docker compose -f ${hostComposeFile} up -d 2>&1`,
+        { stdio: 'pipe', encoding: 'utf8' }
       );
+      log.push(upOut || 'Container started.');
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    } catch (err) {
+    } catch (upErr) {
+      const msg = upErr.stderr?.toString() || upErr.stdout?.toString() || upErr.message;
+      log.push(`Container start error: ${msg}`);
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
     }
 
     // Reload nginx
     reloadNginx();
+    log.push('Nginx reloaded.');
 
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
-    res.status(201).json({ shop });
+    res.status(201).json({ shop, log: log.join('\n') });
   } catch (err) {
     // Cleanup on failure
     if (fs.existsSync(shopDir)) {
@@ -187,6 +221,77 @@ router.get('/', (req, res) => {
   }
 });
 
+// GET /api/shops/:slug — Get single shop
+router.get('/:slug', (req, res) => {
+  const { slug } = req.params;
+  const db = getDb();
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+    res.json({ shop: { ...shop, status: getContainerStatus(slug) } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
+// PATCH /api/shops/:slug — Update shop fields in the database
+router.patch('/:slug', (req, res) => {
+  const { slug } = req.params;
+  const { name, port, subdomain } = req.body;
+  const db = getDb();
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const newName = name !== undefined ? String(name).trim() : shop.name;
+    const newPort = port !== undefined ? parseInt(port, 10) : shop.port;
+    const newSubdomain = subdomain !== undefined ? String(subdomain).trim() : shop.subdomain;
+
+    if (!newName) return res.status(400).json({ error: 'Name cannot be empty' });
+    if (isNaN(newPort)) return res.status(400).json({ error: 'Invalid port' });
+
+    db.prepare(
+      'UPDATE shops SET name = ?, port = ?, subdomain = ? WHERE slug = ?'
+    ).run(newName, newPort, newSubdomain, slug);
+
+    const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    res.json({ shop: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
+// GET /api/shops/:slug/logs — Get recent docker compose logs
+router.get('/:slug/logs', (req, res) => {
+  const { slug } = req.params;
+  const lines = parseInt(req.query.lines, 10) || 100;
+  const db = getDb();
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    let logs = '';
+    try {
+      logs = execSync(
+        `docker compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
+        { stdio: 'pipe', encoding: 'utf8' }
+      );
+    } catch (logErr) {
+      logs = logErr.stdout?.toString() || logErr.stderr?.toString() || logErr.message;
+    }
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
 // DELETE /api/shops/:slug
 router.delete('/:slug', (req, res) => {
   const { slug } = req.params;
@@ -199,11 +304,12 @@ router.delete('/:slug', (req, res) => {
       return res.status(404).json({ error: 'Shop not found' });
     }
 
-    // Stop container
-    const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    if (fs.existsSync(composeFile)) {
+    // Stop container using host-side path
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const localComposeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
+    if (fs.existsSync(localComposeFile)) {
       try {
-        execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
+        execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
       } catch { /* container may not be running */ }
     }
 
@@ -237,11 +343,20 @@ router.post('/:slug/start', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} up -d`, { stdio: 'pipe' });
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    let out = '';
+    try {
+      out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+    } catch (err) {
+      const msg = err.stdout?.toString() || err.stderr?.toString() || err.message;
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: msg });
+    }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-
-    res.json({ message: `Shop "${slug}" started` });
+    res.json({ message: `Shop "${slug}" started`, log: out });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -258,11 +373,19 @@ router.post('/:slug/stop', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    let out = '';
+    try {
+      out = execSync(`docker compose -f ${hostComposeFile} down 2>&1`, {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+    } catch (err) {
+      const msg = err.stdout?.toString() || err.stderr?.toString() || err.message;
+      return res.status(500).json({ error: msg });
+    }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('stopped', slug);
-
-    res.json({ message: `Shop "${slug}" stopped` });
+    res.json({ message: `Shop "${slug}" stopped`, log: out });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -279,11 +402,28 @@ router.post('/:slug/restart', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} restart`, { stdio: 'pipe' });
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    let out = '';
+    try {
+      // Try restart first; if it fails (container not created), fall back to up -d
+      out = execSync(`docker compose -f ${hostComposeFile} restart 2>&1`, {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+    } catch {
+      try {
+        out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+      } catch (upErr) {
+        const msg = upErr.stdout?.toString() || upErr.stderr?.toString() || upErr.message;
+        db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+        return res.status(500).json({ error: msg });
+      }
+    }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-
-    res.json({ message: `Shop "${slug}" restarted` });
+    res.json({ message: `Shop "${slug}" restarted`, log: out });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -301,19 +441,36 @@ router.post('/:slug/deploy', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const shopDir = path.join(SHOPS_DIR, slug);
-    const composeFile = path.join(shopDir, 'docker-compose.yml');
+    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const log = [];
 
     // Pull latest if it's a git repo
     if (fs.existsSync(path.join(shopDir, '.git'))) {
-      execSync('git pull', { cwd: shopDir, stdio: 'pipe' });
+      try {
+        const pullOut = execSync('git pull 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+        log.push(pullOut || 'git pull complete.');
+      } catch (pullErr) {
+        log.push(`git pull error: ${pullErr.message}`);
+      }
     }
 
     // Rebuild container
-    execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
-    execSync(`docker compose -f ${composeFile} up -d --build`, { stdio: 'pipe' });
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    try {
+      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+      log.push(upOut || 'Container rebuilt.');
+    } catch (buildErr) {
+      const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
+      log.push(`Build error: ${msg}`);
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: msg, log: log.join('\n') });
+    }
 
-    res.json({ message: `Shop "${slug}" redeployed` });
+    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n') });
   } catch (err) {
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
     res.status(500).json({ error: err.message });

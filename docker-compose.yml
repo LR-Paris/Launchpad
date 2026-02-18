@@ -8,6 +8,9 @@ services:
       - ./nginx:/app/nginx
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/data:/app/data
+      - ./templates:/app/templates
+    environment:
+      - HOST_PROJECT_DIR=${PWD}
     env_file: .env
     restart: unless-stopped
 
