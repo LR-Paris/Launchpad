@@ -53,7 +53,12 @@ router.post('/login', (req, res) => {
     }
 
     req.session.user = { username: user.username };
-    res.json({ user: { username: user.username } });
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        return res.status(500).json({ error: 'Failed to save session' });
+      }
+      res.json({ user: { username: user.username } });
+    });
   });
 });
 

@@ -6,6 +6,20 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Redirect to login on 401 responses (except for /auth/ endpoints)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes('/auth/')
+    ) {
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Auth
 export const login = (username, password) =>
   api.post('/auth/login', { username, password }).then(r => r.data);
