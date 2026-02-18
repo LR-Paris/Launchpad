@@ -1,0 +1,9 @@
+services:
+  web:
+    image: nginx:alpine
+    volumes:
+      - ./:/usr/share/nginx/html:ro
+      - ./orders:/orders
+    ports:
+      - "{PORT}:80"
+    restart: unless-stopped
