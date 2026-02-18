@@ -88,7 +88,7 @@ export default function App() {
       <footer className="border-t border-border/40 py-3 text-center">
         <span className="text-xs font-mono text-muted-foreground/60">
           Launchpad{' '}
-          <span className="text-[hsl(188,100%,42%)/70]">LC-1.2</span>
+          <span className="text-[hsl(188,100%,42%)/70]">LC-1.3</span>
           {' '}·{' '}
           Shuttle Template LC-0.12
         </span>
