@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const NGINX_CONF_DIR = path.join(__dirname, '..', '..', 'nginx', 'conf.d');
+const NGINX_CONF_DIR = path.join(__dirname, '..', 'nginx', 'conf.d');
 
 function generateShopConfig(slug, port) {
   const conf = `server {

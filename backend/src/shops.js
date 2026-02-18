@@ -7,9 +7,9 @@ const slugify = require('slugify');
 const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx');
 
 const router = express.Router();
-const SHOPS_DIR = path.join(__dirname, '..', '..', 'shops');
+const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
+const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
 const BASE_PORT = 8100;
@@ -55,7 +55,7 @@ function getContainerStatus(slug) {
     const hostShopsDir = getHostShopsDir();
     const composeFile = path.join(hostShopsDir, slug, 'docker-compose.yml');
     const result = execSync(
-      `docker compose -f ${composeFile} ps --format json`,
+      `docker-compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8' }
     );
     if (result.trim()) {
@@ -170,10 +170,10 @@ router.post('/', (req, res) => {
 
     // Start the container using host-side path
     const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
-    log.push(`Starting container with: docker compose -f ${hostComposeFile} up -d`);
+    log.push(`Starting container with: docker-compose -f ${hostComposeFile} up -d`);
     try {
       const upOut = execSync(
-        `docker compose -f ${hostComposeFile} up -d 2>&1`,
+        `docker-compose -f ${hostComposeFile} up -d 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
       log.push(upOut || 'Container started.');
@@ -278,7 +278,7 @@ router.get('/:slug/logs', (req, res) => {
     let logs = '';
     try {
       logs = execSync(
-        `docker compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
+        `docker-compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
     } catch (logErr) {
@@ -309,7 +309,7 @@ router.delete('/:slug', (req, res) => {
     const localComposeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
     if (fs.existsSync(localComposeFile)) {
       try {
-        execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
+        execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
       } catch { /* container may not be running */ }
     }
 
@@ -346,7 +346,7 @@ router.post('/:slug/start', (req, res) => {
     const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
     let out = '';
     try {
-      out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+      out = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -376,7 +376,7 @@ router.post('/:slug/stop', (req, res) => {
     const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
     let out = '';
     try {
-      out = execSync(`docker compose -f ${hostComposeFile} down 2>&1`, {
+      out = execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -406,13 +406,13 @@ router.post('/:slug/restart', (req, res) => {
     let out = '';
     try {
       // Try restart first; if it fails (container not created), fall back to up -d
-      out = execSync(`docker compose -f ${hostComposeFile} restart 2>&1`, {
+      out = execSync(`docker-compose -f ${hostComposeFile} restart 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
     } catch {
       try {
-        out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+        out = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
           stdio: 'pipe',
           encoding: 'utf8',
         });
@@ -456,8 +456,8 @@ router.post('/:slug/deploy', (req, res) => {
 
     // Rebuild container
     try {
-      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker-compose -f ${hostComposeFile} up -d --build 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });

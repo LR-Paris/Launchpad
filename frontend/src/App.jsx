@@ -75,7 +75,7 @@ export default function App() {
         </Routes>
       </main>
       <footer className="border-t py-3 text-center text-xs text-muted-foreground">
-        Launchpad LC-0.11 &middot; Shuttle Template LC-0.11
+        Launchpad LC-0.12 &middot; Shuttle Template LC-0.12
       </footer>
     </div>
   );
