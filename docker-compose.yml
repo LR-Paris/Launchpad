@@ -9,8 +9,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/data:/app/data
       - ./templates:/app/templates
+      - .:/host/project:ro
     environment:
-      - HOST_PROJECT_DIR=${PWD}
+      - HOST_PROJECT_DIR=/host/project
     env_file: .env
     restart: unless-stopped
 

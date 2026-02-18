@@ -4,7 +4,7 @@ const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const router = express.Router();
-const SHOPS_DIR = path.join(__dirname, '..', '..', 'shops');
+const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {

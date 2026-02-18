@@ -30,7 +30,7 @@ export default function ShopCard({ shop }) {
       <div className="flex items-start justify-between mb-3">
         <div>
           <h3 className="font-semibold text-base">{shop.name}</h3>
-          <p className="text-sm text-muted-foreground">{shop.slug}.localhost:{shop.port}</p>
+          <p className="text-sm text-muted-foreground">localhost:{shop.port}</p>
         </div>
         <StatusBadge status={shop.status} />
       </div>

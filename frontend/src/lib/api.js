@@ -62,4 +62,24 @@ export const getOrders = (slug) =>
 export const getOrdersDownloadUrl = (slug) =>
   `/api/shops/${slug}/orders/download`;
 
+// Shop Files
+export const listShopFiles = (slug, dirPath = '.') =>
+  api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
+
+export const readShopFile = (slug, filePath) =>
+  api.get(`/shops/${slug}/files/read`, { params: { path: filePath } }).then(r => r.data);
+
+export const writeShopFile = (slug, filePath, content) =>
+  api.put(`/shops/${slug}/files/write`, { content }, { params: { path: filePath } }).then(r => r.data);
+
+export const uploadShopFiles = (slug, dirPath, formData) =>
+  api.post(`/shops/${slug}/files/upload`, formData, {
+    params: { path: dirPath },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+// Auth
+export const changePassword = (oldPassword, newPassword) =>
+  api.post('/auth/change-password', { oldPassword, newPassword }).then(r => r.data);
+
 export default api;

@@ -26,15 +26,18 @@ export default function Orders() {
         </Link>
         <h1 className="text-xl font-semibold">Orders — {slug}</h1>
         <div className="flex-1" />
-        {orders.length > 0 && (
-          <a
-            href={getOrdersDownloadUrl(slug)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-secondary text-secondary-foreground px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
-          >
-            <Download className="h-4 w-4" />
-            Download CSV
-          </a>
-        )}
+        <a
+          href={getOrdersDownloadUrl(slug)}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            orders.length > 0
+              ? 'bg-secondary text-secondary-foreground hover:bg-accent'
+              : 'bg-secondary/50 text-muted-foreground cursor-not-allowed pointer-events-none'
+          }`}
+          aria-disabled={orders.length === 0}
+        >
+          <Download className="h-4 w-4" />
+          Download CSV
+        </a>
       </div>
 
       {isLoading && <p className="text-muted-foreground">Loading orders...</p>}
