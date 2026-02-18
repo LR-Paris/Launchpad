@@ -31,9 +31,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {user && <Header user={user} />}
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 flex-1 w-full">
         <Routes>
           <Route
             path="/login"
@@ -74,6 +74,9 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <footer className="border-t py-3 text-center text-xs text-muted-foreground">
+        Launchpad LC-0.11 &middot; Shuttle Template LC-0.11
+      </footer>
     </div>
   );
 }

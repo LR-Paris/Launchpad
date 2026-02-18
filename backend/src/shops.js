@@ -180,6 +180,8 @@ router.get('/', (req, res) => {
     }));
 
     res.json({ shops: updatedShops });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   } finally {
     db.close();
   }
