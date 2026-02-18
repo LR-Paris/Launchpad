@@ -24,8 +24,9 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading...</p>
+      <div className="flex items-center justify-center min-h-screen gap-2">
+        <span className="term-cursor" />
+        <p className="text-muted-foreground text-sm font-mono">Initializing...</p>
       </div>
     );
   }
@@ -33,7 +34,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {user && <Header user={user} />}
-      <main className="max-w-6xl mx-auto px-4 py-6 flex-1 w-full">
+      <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
         <Routes>
           <Route
             path="/login"
@@ -74,8 +75,13 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-      <footer className="border-t py-3 text-center text-xs text-muted-foreground">
-        Launchpad LC-1.1 &middot; Shuttle Template LC-0.12
+      <footer className="border-t border-border/40 py-3 text-center">
+        <span className="text-xs font-mono text-muted-foreground/60">
+          Launchpad{' '}
+          <span className="text-[hsl(188,100%,42%)/70]">LC-1.2</span>
+          {' '}·{' '}
+          Shuttle Template LC-0.12
+        </span>
       </footer>
     </div>
   );
