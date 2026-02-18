@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deployShop, deleteShop, getShops, updateShop, getShopLogs } from '../lib/api';
-import { ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw } from 'lucide-react';
+import { deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction } from '../lib/api';
+import { ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw, Play, Square, RotateCcw } from 'lucide-react';
 
 export default function Settings() {
   const { slug } = useParams();
@@ -76,6 +76,16 @@ export default function Settings() {
     },
   });
 
+  const actionMutation = useMutation({
+    mutationFn: (action) => shopAction(slug, action),
+    onSuccess: () => {
+      setMessage('');
+      queryClient.invalidateQueries({ queryKey: ['shops'] });
+      queryClient.invalidateQueries({ queryKey: ['shop-logs', slug] });
+    },
+    onError: (err) => setMessage(err.response?.data?.error || 'Action failed'),
+  });
+
   const handleDelete = () => {
     if (window.confirm(`Permanently delete shop "${slug}" and all its files?`)) {
       deleteMutation.mutate();
@@ -111,6 +121,8 @@ export default function Settings() {
   };
 
   const logOutput = [deployLog, logsData?.logs].filter(Boolean).join('\n\n--- Live Logs ---\n');
+  const currentShop = allShops.find((s) => s.slug === slug);
+  const currentStatus = currentShop?.status ?? 'stopped';
 
   return (
     <div className="max-w-4xl">
@@ -130,6 +142,54 @@ export default function Settings() {
       )}
 
       <div className="space-y-6">
+        {/* Container Control */}
+        <div className="rounded-lg border bg-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-medium">Container Control</h2>
+            <span
+              className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
+                currentStatus === 'running'
+                  ? 'bg-green-100 text-green-700'
+                  : currentStatus === 'error'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-zinc-100 text-zinc-600'
+              }`}
+            >
+              {currentStatus}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {currentStatus !== 'running' && (
+              <button
+                onClick={() => actionMutation.mutate('start')}
+                disabled={actionMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />
+                {actionMutation.isPending ? 'Starting...' : 'Start'}
+              </button>
+            )}
+            {currentStatus === 'running' && (
+              <button
+                onClick={() => actionMutation.mutate('stop')}
+                disabled={actionMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-secondary text-secondary-foreground px-3 py-2 text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+              >
+                <Square className="h-4 w-4" />
+                {actionMutation.isPending ? 'Stopping...' : 'Stop'}
+              </button>
+            )}
+            <button
+              onClick={() => actionMutation.mutate('restart')}
+              disabled={actionMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-secondary text-secondary-foreground px-3 py-2 text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              <RotateCcw className="h-4 w-4" />
+              {actionMutation.isPending ? 'Restarting...' : 'Restart'}
+            </button>
+          </div>
+        </div>
+
         {/* Redeploy */}
         <div className="rounded-lg border bg-card p-5">
           <h2 className="font-medium mb-2">Redeploy</h2>
