@@ -9,7 +9,7 @@ const fs = require('fs');
 
 const SQLiteStore = require('connect-sqlite3')(session);
 const { router: authRouter, requireAuth, loadUsers } = require('./auth');
-const shopsRouter = require('./shops');
+const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 
 const app = express();
@@ -20,6 +20,9 @@ if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
   console.error('ERROR: SESSION_SECRET env var must be at least 32 characters.');
   process.exit(1);
 }
+
+// Initialize shops database on startup
+initDb();
 
 // Check if admin user exists
 const users = loadUsers();
@@ -49,7 +52,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.COOKIE_SECURE === 'true',
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
     sameSite: 'lax',

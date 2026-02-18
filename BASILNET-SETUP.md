@@ -65,15 +65,18 @@ Update it to look like this (change the values to your own):
 # You can run this to make one:  openssl rand -hex 32
 SESSION_SECRET=PUT_YOUR_RANDOM_SECRET_HERE
 
-# Set this to basilnet's actual IP or hostname on your network
-# If you're only accessing it from the local network, use the LAN IP
-FRONTEND_URL=http://basilnet:3000
+# Set this to basilnet's actual IP on the LAN
+# Example: http://192.168.68.59:3000
+FRONTEND_URL=http://<basilnet-ip>:3000
 
 # Backend port (3001 is the default, fine to leave as-is)
 PORT=3001
 
 # Set to production for the real deal
 NODE_ENV=production
+
+# Leave false unless you set up HTTPS
+COOKIE_SECURE=false
 ```
 
 Save and close (`Ctrl+X`, then `Y`, then `Enter` in nano).
@@ -96,13 +99,18 @@ mkdir -p shops nginx/conf.d backend/data
 docker compose up -d --build
 ```
 
-This builds and starts three services:
+This builds and starts two services:
 
-| Service        | Port | What it does                          |
-|----------------|------|---------------------------------------|
-| **backend**    | 3001 | API server (Express + SQLite)         |
-| **frontend**   | 3000 | Web dashboard (React + Vite)          |
-| **nginx-proxy**| 80   | Reverse proxy for deployed shops      |
+| Service      | Port | What it does                  |
+|--------------|------|-------------------------------|
+| **backend**  | 3001 | API server (Express + SQLite) |
+| **frontend** | 3000 | Web dashboard (React + Vite)  |
+
+The nginx reverse proxy is optional — only needed if you're routing shop subdomains. To include it:
+
+```bash
+docker compose --profile proxy up -d --build
+```
 
 Wait for it to finish building. You can watch the logs with:
 
@@ -134,7 +142,7 @@ From any machine on the same network, open a browser and go to:
 http://<basilnet-ip>:3000
 ```
 
-Replace `<basilnet-ip>` with basilnet's actual LAN IP address (e.g. `192.168.1.50`). Log in with the admin credentials you just created.
+Replace `<basilnet-ip>` with basilnet's actual LAN IP address (e.g. `192.168.68.59`). Log in with the admin credentials you just created.
 
 ---
 
@@ -195,18 +203,16 @@ Your data in `backend/data/`, `shops/`, and `nginx/conf.d/` persists across rebu
 
 Make sure these ports are available on basilnet and not blocked by a firewall:
 
-| Port | Service              |
-|------|----------------------|
-| 80   | Nginx proxy (shops)  |
-| 443  | Nginx proxy (HTTPS)  |
-| 3000 | Frontend dashboard   |
-| 3001 | Backend API          |
+| Port | Service            | Required? |
+|------|--------------------|-----------|
+| 3000 | Frontend dashboard | Yes       |
+| 3001 | Backend API        | Yes       |
+| 80   | Nginx proxy        | Only with `--profile proxy` |
+| 443  | Nginx proxy HTTPS  | Only with `--profile proxy` |
 
 If basilnet runs a firewall (ufw), open them:
 
 ```bash
-sudo ufw allow 80
-sudo ufw allow 443
 sudo ufw allow 3000
 sudo ufw allow 3001
 ```
@@ -226,6 +232,10 @@ sudo ufw allow 3001
 **Frontend won't load**
 - Check it's running: `docker compose ps`
 - Check logs: `docker compose logs frontend`
+
+**Can't log in / session not sticking**
+- Make sure `COOKIE_SECURE=false` in `.env` (unless you have HTTPS set up)
+- Make sure `FRONTEND_URL` in `.env` matches the URL you're actually using in the browser
 
 **Can't reach from other machines**
 - Make sure you're using basilnet's LAN IP, not `localhost`

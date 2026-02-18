@@ -320,4 +320,11 @@ router.post('/:slug/deploy', (req, res) => {
   }
 });
 
+function initDb() {
+  const db = getDb();
+  db.close();
+}
+
 module.exports = router;
+module.exports.router = router;
+module.exports.initDb = initDb;
