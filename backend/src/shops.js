@@ -62,6 +62,15 @@ function getContainerStatus(slug) {
   }
 }
 
+function runCmd(cmd, opts = {}) {
+  try {
+    const output = execSync(cmd, { encoding: 'utf8', stdio: 'pipe', ...opts });
+    return { ok: true, output: output || '' };
+  } catch (err) {
+    return { ok: false, output: (err.stdout || '') + (err.stderr || '') || err.message };
+  }
+}
+
 function copyDirSync(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -95,6 +104,7 @@ router.post('/', (req, res) => {
   }
 
   const db = getDb();
+  const logs = [];
 
   try {
     const existing = db.prepare('SELECT id FROM shops WHERE slug = ?').get(slug);
@@ -111,8 +121,15 @@ router.post('/', (req, res) => {
         return res.status(400).json({ error: 'Source folder not found' });
       }
       copyDirSync(folderPath, shopDir);
+      logs.push(`> Copied files from ${folderPath}`);
     } else {
-      execSync(`git clone ${TEMPLATE_REPO} ${shopDir}`, { stdio: 'pipe' });
+      logs.push(`> Cloning template from ${TEMPLATE_REPO}...`);
+      const clone = runCmd(`git clone ${TEMPLATE_REPO} ${shopDir}`);
+      logs.push(clone.output);
+      if (!clone.ok) {
+        throw new Error(`Git clone failed: ${clone.output}`);
+      }
+      logs.push('> Template cloned successfully');
     }
 
     // Create orders directory
@@ -131,9 +148,11 @@ router.post('/', (req, res) => {
       path.join(shopDir, 'docker-compose.yml'),
       template.replace(/{PORT}/g, String(port))
     );
+    logs.push(`> Configuration written (port ${port})`);
 
     // Generate nginx config
     generateShopConfig(slug, port);
+    logs.push(`> Nginx config generated for ${slug}.localhost`);
 
     // Register in database
     db.prepare(
@@ -141,27 +160,33 @@ router.post('/', (req, res) => {
     ).run(slug, name, 'stopped', port, subdomain);
 
     // Start the container
-    try {
-      execSync(
-        `docker compose -f ${path.join(shopDir, 'docker-compose.yml')} up -d`,
-        { stdio: 'pipe' }
-      );
+    logs.push('> Starting container...');
+    const composeFile = path.join(shopDir, 'docker-compose.yml');
+    const start = runCmd(`docker compose -f ${composeFile} up -d --build`);
+    logs.push(start.output);
+    if (start.ok) {
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    } catch (err) {
+      logs.push('> Container started successfully');
+    } else {
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      logs.push('> Container failed to start');
     }
 
     // Reload nginx
-    reloadNginx();
+    const reload = runCmd('docker exec nginx-proxy nginx -s reload');
+    if (reload.ok) {
+      logs.push('> Nginx reloaded');
+    }
 
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
-    res.status(201).json({ shop });
+    res.status(201).json({ shop, logs: logs.join('\n') });
   } catch (err) {
     // Cleanup on failure
     if (fs.existsSync(shopDir)) {
       fs.rmSync(shopDir, { recursive: true, force: true });
     }
-    res.status(500).json({ error: err.message });
+    logs.push(`> Error: ${err.message}`);
+    res.status(500).json({ error: err.message, logs: logs.join('\n') });
   } finally {
     db.close();
   }
@@ -202,9 +227,7 @@ router.delete('/:slug', (req, res) => {
     // Stop container
     const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
     if (fs.existsSync(composeFile)) {
-      try {
-        execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
-      } catch { /* container may not be running */ }
+      runCmd(`docker compose -f ${composeFile} down`);
     }
 
     // Remove nginx config
@@ -238,10 +261,14 @@ router.post('/:slug/start', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} up -d`, { stdio: 'pipe' });
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    const result = runCmd(`docker compose -f ${composeFile} up -d --build`);
+    if (!result.ok) {
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: `Failed to start: ${result.output}` });
+    }
 
-    res.json({ message: `Shop "${slug}" started` });
+    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    res.json({ message: `Shop "${slug}" started`, output: result.output });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -259,10 +286,13 @@ router.post('/:slug/stop', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('stopped', slug);
+    const result = runCmd(`docker compose -f ${composeFile} down`);
+    if (!result.ok) {
+      return res.status(500).json({ error: `Failed to stop: ${result.output}` });
+    }
 
-    res.json({ message: `Shop "${slug}" stopped` });
+    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('stopped', slug);
+    res.json({ message: `Shop "${slug}" stopped`, output: result.output });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -280,10 +310,17 @@ router.post('/:slug/restart', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
-    execSync(`docker compose -f ${composeFile} restart`, { stdio: 'pipe' });
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
 
-    res.json({ message: `Shop "${slug}" restarted` });
+    // Bring down then up — `docker compose restart` doesn't start stopped containers
+    runCmd(`docker compose -f ${composeFile} down`);
+    const result = runCmd(`docker compose -f ${composeFile} up -d --build`);
+    if (!result.ok) {
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: `Failed to restart: ${result.output}` });
+    }
+
+    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    res.json({ message: `Shop "${slug}" restarted`, output: result.output });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -309,17 +346,34 @@ router.post('/:slug/deploy', (req, res) => {
     }
 
     // Rebuild container
-    execSync(`docker compose -f ${composeFile} down`, { stdio: 'pipe' });
-    execSync(`docker compose -f ${composeFile} up -d --build`, { stdio: 'pipe' });
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    runCmd(`docker compose -f ${composeFile} down`);
+    const result = runCmd(`docker compose -f ${composeFile} up -d --build`);
+    if (!result.ok) {
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: result.output });
+    }
 
-    res.json({ message: `Shop "${slug}" redeployed` });
+    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    res.json({ message: `Shop "${slug}" redeployed`, output: result.output });
   } catch (err) {
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
     res.status(500).json({ error: err.message });
   } finally {
     db.close();
   }
+});
+
+// GET /api/shops/:slug/logs — Container logs
+router.get('/:slug/logs', (req, res) => {
+  const { slug } = req.params;
+  const composeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
+
+  if (!fs.existsSync(composeFile)) {
+    return res.status(404).json({ error: 'Shop not found' });
+  }
+
+  const result = runCmd(`docker compose -f ${composeFile} logs --tail=200 2>&1`);
+  res.json({ logs: result.output || 'No logs available.' });
 });
 
 function initDb() {

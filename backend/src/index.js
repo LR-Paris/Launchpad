@@ -11,6 +11,7 @@ const SQLiteStore = require('connect-sqlite3')(session);
 const { router: authRouter, requireAuth, loadUsers } = require('./auth');
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
+const shopDbRouter = require('./shopdb');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -75,6 +76,7 @@ app.use('/api/auth', authRouter);
 // Protected routes
 app.use('/api/shops', requireAuth, shopsRouter);
 app.use('/api/shops', requireAuth, ordersRouter);
+app.use('/api/shops', requireAuth, shopDbRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

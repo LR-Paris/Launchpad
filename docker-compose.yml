@@ -8,6 +8,7 @@ services:
       - ./nginx:/app/nginx
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/data:/app/data
+      - ./templates:/templates
     env_file: .env
     restart: unless-stopped
 
