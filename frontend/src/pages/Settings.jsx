@@ -12,25 +12,6 @@ import {
   Upload, Copy, ImageIcon,
 } from 'lucide-react';
 
-function extractPasswordFields(obj, prefix = '') {
-  const results = [];
-  if (!obj || typeof obj !== 'object') return results;
-  for (const [key, value] of Object.entries(obj)) {
-    const fullKey = prefix ? `${prefix}.${key}` : key;
-    if (typeof value === 'string' || typeof value === 'number') {
-      const lk = key.toLowerCase();
-      if (
-        lk.includes('password') || lk.includes('passwd') ||
-        lk.includes('secret') || lk.includes('token') || lk.includes('key')
-      ) {
-        results.push({ key: fullKey, value: String(value) });
-      }
-    } else if (value && typeof value === 'object') {
-      results.push(...extractPasswordFields(value, fullKey));
-    }
-  }
-  return results;
-}
 
 export default function Settings() {
   const { slug } = useParams();
@@ -59,10 +40,10 @@ export default function Settings() {
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef(null);
 
-  // DATABASE config password viewer
-  const [dbPasswordFields, setDbPasswordFields] = useState([]);
-  const [shownPasswords, setShownPasswords] = useState({});
-  const [copiedKey, setCopiedKey] = useState(null);
+  // DATABASE password file viewer (DATABASE/design/details/Password.txt)
+  const [shopPassword, setShopPassword] = useState('');
+  const [passwordShown, setPasswordShown] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -89,18 +70,11 @@ export default function Settings() {
     }
   }, [filesError, browsePath]);
 
-  // Load DATABASE/config.json for password viewer
+  // Load DATABASE/design/details/Password.txt
   useEffect(() => {
-    readShopFile(slug, 'DATABASE/config.json')
-      .then((data) => {
-        try {
-          const parsed = JSON.parse(data.content);
-          setDbPasswordFields(extractPasswordFields(parsed));
-        } catch {
-          setDbPasswordFields([]);
-        }
-      })
-      .catch(() => setDbPasswordFields([]));
+    readShopFile(slug, 'DATABASE/design/details/Password.txt')
+      .then((data) => setShopPassword(data.content.trim()))
+      .catch(() => setShopPassword(''));
   }, [slug]);
 
   useEffect(() => {
@@ -265,10 +239,10 @@ export default function Settings() {
     }
   };
 
-  const copyToClipboard = (key, value) => {
-    navigator.clipboard.writeText(value).then(() => {
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 2000);
+  const copyPassword = () => {
+    navigator.clipboard.writeText(shopPassword).then(() => {
+      setPasswordCopied(true);
+      setTimeout(() => setPasswordCopied(false), 2000);
     });
   };
 
@@ -553,41 +527,35 @@ export default function Settings() {
                  style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
               <Database className="h-3.5 w-3.5 lp-glow" />
             </div>
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop DATABASE</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">config.json</span>
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Password</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/design/details/Password.txt</span>
           </div>
-          {dbPasswordFields.length === 0 ? (
+          {!shopPassword ? (
             <p className="text-xs text-muted-foreground font-mono">
-              No password fields found in DATABASE/config.json.
+              Password.txt not found at DATABASE/design/details/Password.txt.
             </p>
           ) : (
-            <div className="space-y-2">
-              {dbPasswordFields.map(({ key, value }) => (
-                <div key={key} className="flex items-center gap-3 rounded-lg border border-border/40 bg-[hsl(222,32%,5%)] px-3 py-2">
-                  <span className="text-xs font-mono text-muted-foreground w-40 truncate flex-shrink-0">{key}</span>
-                  <span className="text-xs font-mono text-zinc-200 flex-1 truncate">
-                    {shownPasswords[key] ? value : '•'.repeat(Math.min(value.length, 16))}
-                  </span>
-                  <button
-                    onClick={() => setShownPasswords(p => ({ ...p, [key]: !p[key] }))}
-                    className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                    title={shownPasswords[key] ? 'Hide' : 'Show'}
-                  >
-                    {shownPasswords[key] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                  </button>
-                  <button
-                    onClick={() => copyToClipboard(key, value)}
-                    className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                    title="Copy to clipboard"
-                  >
-                    {copiedKey === key ? (
-                      <span className="text-xs text-[hsl(142,70%,50%)] font-mono">copied</span>
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-              ))}
+            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-[hsl(222,32%,5%)] px-3 py-2.5">
+              <span className="text-xs font-mono text-muted-foreground flex-shrink-0">password</span>
+              <span className="text-xs font-mono text-foreground flex-1 truncate">
+                {passwordShown ? shopPassword : '•'.repeat(Math.min(shopPassword.length, 20))}
+              </span>
+              <button
+                onClick={() => setPasswordShown(v => !v)}
+                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                title={passwordShown ? 'Hide password' : 'Show password'}
+              >
+                {passwordShown ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                onClick={copyPassword}
+                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                title="Copy to clipboard"
+              >
+                {passwordCopied
+                  ? <span className="text-xs text-[hsl(142,70%,50%)] font-mono">copied</span>
+                  : <Copy className="h-3.5 w-3.5" />}
+              </button>
             </div>
           )}
         </div>

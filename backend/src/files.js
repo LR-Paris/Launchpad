@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const AdmZip = require('adm-zip');
 
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
@@ -171,6 +172,26 @@ router.delete('/:slug/files', (req, res) => {
     fs.unlinkSync(resolved);
   }
   res.json({ message: 'Deleted', path: relPath });
+});
+
+// POST /api/shops/:slug/files/upload-zip?path=DATABASE
+const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
+  const { slug } = req.params;
+  const relPath = req.query.path || 'DATABASE';
+  const resolved = safeShopPath(slug, relPath);
+  if (!resolved) return res.status(400).json({ error: 'Invalid path' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  try {
+    const zip = new AdmZip(req.file.buffer);
+    fs.mkdirSync(resolved, { recursive: true });
+    zip.extractAllTo(resolved, /* overwrite */ true);
+    const fileCount = zip.getEntries().filter(e => !e.isDirectory).length;
+    res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to extract zip: ' + err.message });
+  }
 });
 
 // POST /api/shops/:slug/files/upload?path=subdir

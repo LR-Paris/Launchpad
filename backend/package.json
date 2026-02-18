@@ -8,6 +8,7 @@
     "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^11.7.0",
     "connect-sqlite3": "^0.9.15",

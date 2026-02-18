@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getMe } from './lib/api';
@@ -14,6 +15,15 @@ function ProtectedRoute({ children, user }) {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('lp-theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('lp-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
   const { data, isLoading } = useQuery({
     queryKey: ['auth'],
     queryFn: getMe,
@@ -33,7 +43,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {user && <Header user={user} />}
+      {user && <Header user={user} theme={theme} toggleTheme={toggleTheme} />}
       <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
         <Routes>
           <Route

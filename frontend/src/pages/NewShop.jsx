@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
-import { createShop, getShopLogs, uploadShopFiles } from '../lib/api';
-import { ArrowLeft, Terminal, Rocket, Database, FolderUp } from 'lucide-react';
+import { createShop, getShopLogs, uploadDatabaseZip } from '../lib/api';
+import { ArrowLeft, Terminal, Rocket, Database, FileArchive } from 'lucide-react';
 
 export default function NewShop() {
   const [name, setName] = useState('');
   const [folderPath, setFolderPath] = useState('');
-  const [dbFiles, setDbFiles] = useState(null);
+  const [dbFiles, setDbFiles] = useState(null); // single File (zip)
   const [error, setError] = useState('');
   const [createdSlug, setCreatedSlug] = useState(null);
   const [creationLog, setCreationLog] = useState('');
@@ -26,15 +26,11 @@ export default function NewShop() {
       const slug = data.shop?.slug;
       setCreatedSlug(slug || null);
 
-      // Upload DATABASE folder if files were selected
-      if (slug && dbFiles && dbFiles.length > 0) {
-        setUploadStatus('Uploading DATABASE folder...');
+      // Upload DATABASE.zip if selected
+      if (slug && dbFiles) {
+        setUploadStatus('Extracting DATABASE.zip...');
         try {
-          const formData = new FormData();
-          for (const file of dbFiles) {
-            formData.append('files', file);
-          }
-          const result = await uploadShopFiles(slug, 'DATABASE', formData);
+          const result = await uploadDatabaseZip(slug, 'DATABASE', dbFiles);
           setUploadStatus(`✓ DATABASE: ${result.message}`);
         } catch (uploadErr) {
           setUploadStatus(`✗ DATABASE upload failed: ${uploadErr.response?.data?.error || uploadErr.message}`);
@@ -146,7 +142,7 @@ export default function NewShop() {
             </p>
           </div>
 
-          {/* DATABASE folder upload */}
+          {/* DATABASE zip upload */}
           <div className="rounded-lg border border-dashed border-border hover:border-primary/40 transition-colors p-4">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
@@ -155,18 +151,18 @@ export default function NewShop() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold mb-0.5" style={{ fontFamily: 'Syne, sans-serif' }}>
-                  Upload DATABASE Folder
+                  Upload DATABASE.zip
                   <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span>
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Select files from your DATABASE folder to populate the shop's database after deployment.
+                  Upload a <code className="font-mono">.zip</code> of your DATABASE folder — it will be extracted into the shop after deployment.
                 </p>
                 <input
                   ref={dbInputRef}
                   type="file"
-                  multiple
+                  accept=".zip"
                   className="hidden"
-                  onChange={(e) => setDbFiles(e.target.files)}
+                  onChange={(e) => setDbFiles(e.target.files?.[0] || null)}
                   disabled={mutation.isPending}
                 />
                 <button
@@ -175,14 +171,12 @@ export default function NewShop() {
                   disabled={mutation.isPending}
                   className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/40 transition-all disabled:opacity-50"
                 >
-                  <FolderUp className="h-3.5 w-3.5" />
-                  {dbFiles && dbFiles.length > 0
-                    ? `${dbFiles.length} file${dbFiles.length > 1 ? 's' : ''} selected`
-                    : 'Choose files'}
+                  <FileArchive className="h-3.5 w-3.5" />
+                  {dbFiles ? dbFiles.name : 'Choose .zip file'}
                 </button>
-                {dbFiles && dbFiles.length > 0 && (
+                {dbFiles && (
                   <p className="text-xs text-muted-foreground mt-2 font-mono">
-                    {Array.from(dbFiles).map(f => f.name).join(', ')}
+                    {dbFiles.name} — {(dbFiles.size / 1024).toFixed(1)} KB
                   </p>
                 )}
               </div>

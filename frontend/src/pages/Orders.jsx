@@ -2,47 +2,90 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getOrders, getOrdersDownloadUrl } from '../lib/api';
 import OrderTable from '../components/OrderTable';
-import { ArrowLeft, Download } from 'lucide-react';
+import { ArrowLeft, Download, ShoppingBag, RefreshCw } from 'lucide-react';
 
 export default function Orders() {
   const { slug } = useParams();
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['orders', slug],
     queryFn: () => getOrders(slug),
+    refetchInterval: 15000,
   });
 
   const orders = data?.orders || [];
 
   return (
-    <div>
-      <div className="flex items-center gap-3 mb-6">
+    <div className="max-w-6xl lp-fadein">
+      <div className="flex items-center gap-3 mb-8">
         <Link
           to="/"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           Back
         </Link>
-        <h1 className="text-xl font-semibold">Orders — {slug}</h1>
+        <div>
+          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Orders</p>
+          <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{slug}</h1>
+        </div>
         <div className="flex-1" />
+        <button
+          onClick={() => refetch()}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors border border-border/40 rounded-md px-2.5 py-1.5"
+        >
+          <RefreshCw className="h-3 w-3" /> Refresh
+        </button>
         <a
           href={getOrdersDownloadUrl(slug)}
-          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
             orders.length > 0
-              ? 'bg-secondary text-secondary-foreground hover:bg-accent'
-              : 'bg-secondary/50 text-muted-foreground cursor-not-allowed pointer-events-none'
+              ? 'btn-launch'
+              : 'bg-secondary/50 text-muted-foreground cursor-not-allowed pointer-events-none border border-border/40'
           }`}
           aria-disabled={orders.length === 0}
         >
-          <Download className="h-4 w-4" />
+          <Download className="h-3.5 w-3.5" />
           Download CSV
         </a>
       </div>
 
-      {isLoading && <p className="text-muted-foreground">Loading orders...</p>}
-      {error && <p className="text-destructive">Failed to load orders.</p>}
-      {!isLoading && <OrderTable orders={orders} />}
+      {isLoading && (
+        <div className="lp-card rounded-xl p-8 text-center">
+          <p className="text-muted-foreground text-sm font-mono">Loading orders<span className="term-cursor" /></p>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+          Failed to load orders. The CSV file may not exist yet.
+        </div>
+      )}
+
+      {!isLoading && !error && orders.length === 0 && (
+        <div className="lp-card rounded-xl p-12 text-center">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4"
+               style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
+            <ShoppingBag className="h-6 w-6 lp-glow" />
+          </div>
+          <p className="text-sm font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>No orders yet</p>
+          <p className="text-xs text-muted-foreground font-mono">
+            Orders will appear here from <code>DATABASE/orders/orders.csv</code>
+          </p>
+        </div>
+      )}
+
+      {!isLoading && orders.length > 0 && (
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <ShoppingBag className="h-4 w-4 text-primary/70" />
+            <span className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
+              {orders.length} order{orders.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <OrderTable orders={orders} />
+        </div>
+      )}
     </div>
   );
 }
