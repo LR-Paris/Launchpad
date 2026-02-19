@@ -264,7 +264,7 @@ export default function Settings() {
     setEditingSlug(shop.slug);
     setEditValues((prev) => ({
       ...prev,
-      [shop.slug]: { name: shop.name, port: String(shop.port), subdomain: shop.subdomain },
+      [shop.slug]: { name: shop.name },
     }));
     setSaveError('');
     setSaveSuccess('');
@@ -278,7 +278,7 @@ export default function Settings() {
   const handleSave = (targetSlug) => {
     const vals = editValues[targetSlug];
     if (!vals) return;
-    updateMutation.mutate({ targetSlug, data: { name: vals.name, port: vals.port, subdomain: vals.subdomain } });
+    updateMutation.mutate({ targetSlug, data: { name: vals.name } });
   };
 
   const setField = (shopSlug, field, value) => {
@@ -726,7 +726,7 @@ export default function Settings() {
                     <th className="px-4 py-2.5 text-left font-medium font-mono">ID</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Slug</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Name</th>
-                    <th className="px-4 py-2.5 text-left font-medium font-mono">Port</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Path</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Status</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Created</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono"></th>
@@ -759,14 +759,14 @@ export default function Settings() {
                           ) : shop.name}
                         </td>
                         <td className="px-4 py-2.5 text-xs font-mono">
-                          {isEditing ? (
-                            <input
-                              className="w-20 rounded border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
-                              value={vals.port ?? shop.port}
-                              onChange={(e) => setField(shop.slug, 'port', e.target.value)}
-                              type="number"
-                            />
-                          ) : shop.port}
+                          <a
+                            href={`/${shop.slug}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                          >
+                            /{shop.slug}
+                          </a>
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1.5">

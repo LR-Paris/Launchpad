@@ -156,8 +156,8 @@ router.post('/', (req, res) => {
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
 
-    // Write .env for shop
-    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\n`;
+    // Write .env for shop (includes BASE_PATH for path-based routing)
+    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
     log.push('Wrote shop .env file.');
 
