@@ -104,4 +104,14 @@ export const uploadDatabaseZip = (slug, dirPath, file) => {
   }).then(r => r.data);
 };
 
+// System / Updates
+export const getSystemVersion = () =>
+  api.get('/system/version').then(r => r.data);
+
+export const checkForUpdate = () =>
+  api.get('/system/check-update').then(r => r.data);
+
+export const installUpdate = () =>
+  api.post('/system/update').then(r => r.data);
+
 export default api;

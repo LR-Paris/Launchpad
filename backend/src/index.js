@@ -12,8 +12,11 @@ const { router: authRouter, requireAuth, loadUsers } = require('./auth');
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
+const updateRouter = require('./update');
 
 const app = express();
+// Trust proxy (required when behind nginx)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
@@ -77,6 +80,9 @@ app.use('/api/auth', authRouter);
 app.use('/api/shops', requireAuth, shopsRouter);
 app.use('/api/shops', requireAuth, ordersRouter);
 app.use('/api/shops', requireAuth, filesRouter);
+
+// System / update routes (protected)
+app.use('/api/system', requireAuth, updateRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

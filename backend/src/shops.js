@@ -191,6 +191,7 @@ router.post('/', (req, res) => {
       template
         .replace(/{PORT}/g, String(port))
         .replace(/{SHOP_DIR}/g, hostShopDir)
+        .replace(/{SLUG}/g, slug)
     );
     log.push(`Configured shop docker-compose.yml on port ${port}.`);
 

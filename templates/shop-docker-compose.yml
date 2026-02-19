@@ -6,5 +6,10 @@ services:
       - {SHOP_DIR}:/app
     ports:
       - "{PORT}:3000"
+    environment:
+      - NEXT_PUBLIC_BASE_PATH=/{SLUG}
+      - BASE_PATH=/{SLUG}
+    env_file:
+      - .env
     command: sh -c "npm install && npm run build && npm start"
     restart: unless-stopped

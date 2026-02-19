@@ -12,8 +12,9 @@ const SHOPS_LOCATIONS_FILE = path.join(NGINX_CONF_DIR, 'shops-locations.conf');
 function generateShopConfig(slug, port) {
   const block = `
 # Shop: ${slug}
-location /${slug}/ {
+location /${slug} {
     rewrite ^/${slug}/(.*) /$1 break;
+    rewrite ^/${slug}$ / break;
     proxy_pass http://host.docker.internal:${port};
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -24,6 +25,15 @@ location /${slug}/ {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Prefix /${slug};
     proxy_cache_bypass $http_upgrade;
+}
+
+location /${slug}/api/images/ {
+    proxy_pass http://host.docker.internal:${port};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 `;
 
