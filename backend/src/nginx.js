@@ -3,11 +3,12 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const NGINX_CONF_DIR = path.join(__dirname, '..', 'nginx', 'conf.d');
+const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost';
 
 function generateShopConfig(slug, port) {
   const conf = `server {
     listen 80;
-    server_name ${slug}.localhost;
+    server_name ${slug}.${BASE_DOMAIN};
 
     location / {
         proxy_pass http://host.docker.internal:${port};
