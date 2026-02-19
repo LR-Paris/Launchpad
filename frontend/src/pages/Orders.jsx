@@ -70,7 +70,7 @@ export default function Orders() {
           </div>
           <p className="text-sm font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>No orders yet</p>
           <p className="text-xs text-muted-foreground font-mono">
-            Orders will appear here from <code>DATABASE/orders/orders.csv</code>
+            Orders will appear here from <code>DATABASE/Orders/orders.csv</code>
           </p>
         </div>
       )}

@@ -9,7 +9,7 @@ import {
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
-  Upload, Copy, ImageIcon,
+  Upload, Copy, ImageIcon, Store,
 } from 'lucide-react';
 
 
@@ -40,7 +40,11 @@ export default function Settings() {
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef(null);
 
-  // DATABASE password file viewer (DATABASE/design/details/Password.txt)
+  // DATABASE/Design/Details info
+  const [shopTitle, setShopTitle] = useState('');
+  const [shopDescription, setShopDescription] = useState('');
+
+  // DATABASE password file viewer
   const [shopPassword, setShopPassword] = useState('');
   const [passwordShown, setPasswordShown] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
@@ -69,6 +73,16 @@ export default function Settings() {
       setBrowsePath('.');
     }
   }, [filesError, browsePath]);
+
+  // Load DATABASE/Design/Details/Title.txt and Description.txt
+  useEffect(() => {
+    readShopFile(slug, 'DATABASE/Design/Details/Title.txt')
+      .then((d) => setShopTitle(d.content.trim()))
+      .catch(() => setShopTitle(''));
+    readShopFile(slug, 'DATABASE/Design/Details/Description.txt')
+      .then((d) => setShopDescription(d.content.trim()))
+      .catch(() => setShopDescription(''));
+  }, [slug]);
 
   // Load DATABASE/Design/Details/Password.txt
   useEffect(() => {
@@ -277,6 +291,27 @@ export default function Settings() {
       )}
 
       <div className="space-y-5">
+
+        {/* Shop Info from DATABASE/Design/Details */}
+        {(shopTitle || shopDescription) && (
+          <div className="lp-card rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                   style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
+                <Store className="h-3.5 w-3.5 lp-glow" />
+              </div>
+              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Info</h2>
+            </div>
+            {shopTitle && (
+              <p className="text-base font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                {shopTitle}
+              </p>
+            )}
+            {shopDescription && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{shopDescription}</p>
+            )}
+          </div>
+        )}
 
         {/* Container Control */}
         <div className="lp-card rounded-xl p-5">

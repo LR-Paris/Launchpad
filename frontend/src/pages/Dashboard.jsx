@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getShops } from '../lib/api';
 import ShopCard from '../components/ShopCard';
-import { Plus, Rocket, Activity } from 'lucide-react';
+import { Plus, Rocket, Activity, RefreshCw } from 'lucide-react';
 
 export default function Dashboard() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['shops'],
     queryFn: getShops,
     refetchInterval: 10000,
@@ -26,7 +26,7 @@ export default function Dashboard() {
             Deployed Shops
           </h1>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {shops.length > 0 && (
             <div className="flex items-center gap-2 text-xs font-mono">
               <Activity className="h-3.5 w-3.5 text-[hsl(142,70%,50%)]" />
@@ -36,6 +36,14 @@ export default function Dashboard() {
               </span>
             </div>
           )}
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            title="Refresh shops"
+            className="flex items-center justify-center w-8 h-8 text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/40 rounded-md transition-all disabled:opacity-40"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+          </button>
           <Link
             to="/shops/new"
             className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm disabled:opacity-50"
