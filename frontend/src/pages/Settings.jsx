@@ -11,6 +11,8 @@ import {
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check,
 } from 'lucide-react';
+import KeyValueEditor from '../components/KeyValueEditor';
+import CollectionsEditor from '../components/CollectionsEditor';
 
 
 export default function Settings() {
@@ -59,8 +61,6 @@ export default function Settings() {
   const [detailsLoading, setDetailsLoading] = useState(true);
   const [replacingImage, setReplacingImage] = useState(null);
   const [imageTimestamps, setImageTimestamps] = useState({});
-  const imageInputRefs = useRef({});
-  const [detailsPasswordShown, setDetailsPasswordShown] = useState({});
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -431,154 +431,25 @@ export default function Settings() {
               </p>
             </div>
           ) : (
-            <div className="p-5 space-y-6">
-              {/* Text file settings */}
-              {detailsEntries
-                .filter(e => e.readable)
-                .map(entry => {
-                  const filePath = `DATABASE/Design/Details/${entry.name}`;
-                  const isPassword = entry.name.toLowerCase() === 'password.txt';
-                  const isLongText = entry.name.toLowerCase() === 'descriptions.txt';
-                  const isDirty = detailsValues[filePath] !== detailsOriginal[filePath];
-                  const isSaving = detailsSaving[filePath];
-                  const label = friendlyLabel(entry.name);
-                  const pwVisible = detailsPasswordShown[filePath];
-
-                  return (
-                    <div key={entry.name}>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-sm font-medium" style={{ fontFamily: 'Syne, sans-serif' }}>
-                          {label}
-                        </label>
-                        <span className="text-[10px] text-muted-foreground font-mono opacity-60">{entry.name}</span>
-                      </div>
-
-                      {isPassword ? (
-                        <div className="flex items-center gap-2">
-                          <div className="relative flex-1">
-                            <input
-                              type={pwVisible ? 'text' : 'password'}
-                              value={detailsValues[filePath] ?? ''}
-                              onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
-                              className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all pr-10"
-                              placeholder="Enter password..."
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setDetailsPasswordShown(prev => ({ ...prev, [filePath]: !prev[filePath] }))}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors"
-                              title={pwVisible ? 'Hide' : 'Show'}
-                            >
-                              {pwVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                            </button>
-                          </div>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(detailsValues[filePath] || '');
-                              setDetailsSuccess('Password copied to clipboard.');
-                              setTimeout(() => setDetailsSuccess(''), 2000);
-                            }}
-                            className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0 p-2"
-                            title="Copy to clipboard"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : isLongText ? (
-                        <textarea
-                          value={detailsValues[filePath] ?? ''}
-                          onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
-                          className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-y leading-relaxed"
-                          rows={4}
-                          placeholder={`Enter ${label.toLowerCase()}...`}
-                        />
-                      ) : (
-                        <input
-                          type="text"
-                          value={detailsValues[filePath] ?? ''}
-                          onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
-                          className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all"
-                          placeholder={`Enter ${label.toLowerCase()}...`}
-                        />
-                      )}
-
-                      <div className="flex items-center gap-2 mt-2">
-                        {isDirty && <span className="text-xs text-amber-400 font-mono">unsaved changes</span>}
-                        <div className="flex-1" />
-                        <button
-                          onClick={() => saveDetailFile(filePath)}
-                          disabled={!isDirty || isSaving}
-                          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                        >
-                          <Save className="h-3 w-3" />
-                          {isSaving ? 'Saving...' : 'Save'}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-
-              {/* Image file settings */}
-              {detailsEntries.filter(e => e.isImage).length > 0 && (
-                <div className="border-t border-border/40 pt-5">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Images</p>
-                  <div className="space-y-5">
-                    {detailsEntries
-                      .filter(e => e.isImage)
-                      .map(entry => {
-                        const filePath = `DATABASE/Design/Details/${entry.name}`;
-                        const label = friendlyLabel(entry.name);
-                        const isReplacing = replacingImage === filePath;
-                        const ts = imageTimestamps[filePath];
-                        const imgUrl = getShopImageUrl(slug, filePath) + (ts ? `&_t=${ts}` : '');
-
-                        return (
-                          <div key={entry.name}>
-                            <div className="flex items-center justify-between mb-2">
-                              <label className="text-sm font-medium" style={{ fontFamily: 'Syne, sans-serif' }}>
-                                {label}
-                              </label>
-                              <span className="text-[10px] text-muted-foreground font-mono opacity-60">{entry.name}</span>
-                            </div>
-                            <div className="rounded-lg border border-border/40 bg-muted/30 p-4 flex flex-col items-center gap-3">
-                              <img
-                                src={imgUrl}
-                                alt={label}
-                                className="max-h-40 max-w-full object-contain rounded-md border border-border/30"
-                              />
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => imageInputRefs.current[filePath]?.click()}
-                                  disabled={isReplacing}
-                                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
-                                >
-                                  <Upload className="h-3 w-3" />
-                                  {isReplacing ? 'Replacing...' : 'Replace Image'}
-                                </button>
-                                <input
-                                  ref={el => { imageInputRefs.current[filePath] = el; }}
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    if (e.target.files?.[0]) handleImageReplace(filePath, e.target.files[0]);
-                                    e.target.value = '';
-                                  }}
-                                />
-                                <span className="text-[10px] text-muted-foreground font-mono">
-                                  {entry.size > 1024 ? `${(entry.size / 1024).toFixed(1)} KB` : `${entry.size} B`}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              )}
-            </div>
+            <KeyValueEditor
+              slug={slug}
+              entries={detailsEntries}
+              basePath="DATABASE/Design/Details"
+              values={detailsValues}
+              originalValues={detailsOriginal}
+              onValueChange={(fp, val) => setDetailsValues(prev => ({ ...prev, [fp]: val }))}
+              onSave={saveDetailFile}
+              saving={detailsSaving}
+              onImageReplace={handleImageReplace}
+              replacingImage={replacingImage}
+              imageTimestamps={imageTimestamps}
+              hiddenFiles={['README.md']}
+            />
           )}
         </div>
+
+        {/* Shop Collections — DATABASE/ShopCollections */}
+        <CollectionsEditor slug={slug} />
 
         {/* Container Control */}
         <div className="lp-card rounded-xl p-5">
