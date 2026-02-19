@@ -11,3 +11,11 @@ export function apiUrl(path: string): string {
 export async function apiFetch(path: string, options?: RequestInit) {
   return fetch(apiUrl(path), options);
 }
+
+// Prefix a local asset URL with basePath.  External URLs (http/https/protocol-relative)
+// pass through unchanged.  Useful for dynamic paths like font URLs from the API.
+export function assetUrl(url: string | undefined | null): string {
+  if (!url) return '';
+  if (url.startsWith('http') || url.startsWith('//')) return url;
+  return `${BASE_PATH}${url.startsWith('/') ? '' : '/'}${url}`;
+}

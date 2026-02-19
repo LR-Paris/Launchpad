@@ -125,14 +125,18 @@ function findFilesSync(dir, filename) {
 
 // After cloning a shop, replace all fetch('/api/...') calls with apiFetch()
 // so path-based routing works correctly behind the nginx reverse proxy.
+// Scans all .tsx/.ts/.jsx files in app/ and components/ (not just page.tsx)
+// so that layout.tsx, Header.tsx, checkout, etc. are all covered.
 function patchShopFetchCalls(shopDir) {
   const appDir = path.join(shopDir, 'app');
-  if (!fs.existsSync(appDir)) return 0;
-
-  const pageFiles = findFilesSync(appDir, 'page.tsx');
+  const componentsDir = path.join(shopDir, 'components');
+  const sourceFiles = [
+    ...findFilesByExtSync(appDir, ['.tsx', '.ts', '.jsx']),
+    ...findFilesByExtSync(componentsDir, ['.tsx', '.ts', '.jsx']),
+  ];
   let patched = 0;
 
-  for (const file of pageFiles) {
+  for (const file of sourceFiles) {
     let content = fs.readFileSync(file, 'utf8');
 
     // Skip files that don't use fetch('/api/
@@ -247,6 +251,49 @@ function patchShopPublicAssets(shopDir, slug) {
   return patched;
 }
 
+// Patch dynamic font/asset URL references in layout.tsx files.
+// The Shuttle template uses href={design.fonts.titleFontUrl} which can be a local
+// path like "/fonts/kors-sans.css" or an external URL like "https://fonts.googleapis.com/...".
+// We wrap these with assetUrl() so local paths get the basePath prefix automatically.
+function patchShopDynamicUrls(shopDir) {
+  const appDir = path.join(shopDir, 'app');
+  const layoutFiles = findFilesSync(appDir, 'layout.tsx');
+  let patched = 0;
+
+  for (const file of layoutFiles) {
+    let content = fs.readFileSync(file, 'utf8');
+    const origContent = content;
+
+    // Match href={something.somethingUrl} or href={something.somethingUrl || ...}
+    // and wrap with assetUrl():  href={assetUrl(something.somethingUrl)} etc.
+    // Covers patterns like: href={design.fonts.titleFontUrl}
+    content = content.replace(
+      /href=\{([^}]+(?:Url|url|URL)[^}]*)\}/g,
+      (match, expr) => {
+        // Don't double-wrap if already using assetUrl
+        if (expr.includes('assetUrl')) return match;
+        return `href={assetUrl(${expr.trim()})}`;
+      }
+    );
+
+    if (content !== origContent) {
+      // Ensure assetUrl is imported
+      if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
+        content = "import { assetUrl } from '@/lib/api';\n" + content;
+      } else if (!content.includes('assetUrl')) {
+        content = content.replace(
+          /import\s*\{([^}]*)\}\s*from\s*'@\/lib\/api'/,
+          (m, imports) => `import {${imports}, assetUrl } from '@/lib/api'`
+        );
+      }
+      fs.writeFileSync(file, content);
+      patched++;
+    }
+  }
+
+  return patched;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description } = req.body;
@@ -320,6 +367,12 @@ router.post('/', (req, res) => {
     const assetPatchCount = patchShopPublicAssets(shopDir, slug);
     if (assetPatchCount > 0) {
       log.push(`Patched ${assetPatchCount} file(s) with basePath for public assets.`);
+    }
+
+    // Patch dynamic URL references (e.g. font URLs in layout.tsx) to use assetUrl()
+    const dynamicPatchCount = patchShopDynamicUrls(shopDir);
+    if (dynamicPatchCount > 0) {
+      log.push(`Patched ${dynamicPatchCount} layout file(s) with assetUrl() for dynamic URLs.`);
     }
 
     // Create orders directory
