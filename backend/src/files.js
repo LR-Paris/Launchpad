@@ -193,18 +193,38 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
     }
     fs.mkdirSync(targetDir, { recursive: true });
 
-    // Detect if the zip has a single top-level directory and strip it so files
-    // always land in targetDir regardless of how the zip was created (whether
-    // the user zipped the DATABASE folder itself or just its contents).
+    // Determine which top-level prefix to strip so files always land directly
+    // in targetDir regardless of how the zip was created.
+    // Ignore common OS artifacts (__MACOSX, .DS_Store) when counting top-level entries.
+    const JUNK = new Set(['__MACOSX', '__macosx', '.DS_Store']);
     const topLevelNames = new Set();
     for (const entry of entries) {
       const firstPart = entry.entryName.split('/')[0];
-      if (firstPart) topLevelNames.add(firstPart);
+      if (firstPart && !JUNK.has(firstPart)) topLevelNames.add(firstPart);
     }
-    const stripPrefix = topLevelNames.size === 1 ? [...topLevelNames][0] + '/' : '';
+
+    let stripPrefix = '';
+    const targetName = path.basename(relPath);
+    if (topLevelNames.size === 1) {
+      // Single meaningful top-level folder — always strip it
+      stripPrefix = [...topLevelNames][0] + '/';
+    } else if (topLevelNames.size > 1) {
+      // Multiple top-level entries — if one matches the target directory name
+      // (case-insensitive), strip that prefix to avoid nesting (e.g. DATABASE/DATABASE/…)
+      for (const name of topLevelNames) {
+        if (name.toLowerCase() === targetName.toLowerCase()) {
+          stripPrefix = name + '/';
+          break;
+        }
+      }
+    }
 
     let fileCount = 0;
     for (const entry of entries) {
+      // Skip OS junk entries entirely
+      const firstPart = entry.entryName.split('/')[0];
+      if (JUNK.has(firstPart)) continue;
+
       let entryName = entry.entryName;
       if (stripPrefix && entryName.startsWith(stripPrefix)) {
         entryName = entryName.slice(stripPrefix.length);
