@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─────────────────────────────────────────────
+# Launchpad — Digital Ocean Setup Script
+# Run this on a fresh Ubuntu droplet.
+# ─────────────────────────────────────────────
+
+DOMAIN=""
+EMAIL=""
+SKIP_SSL=false
+
+usage() {
+  echo "Usage: $0 --domain <yourdomain.com> --email <you@example.com> [--skip-ssl]"
+  echo ""
+  echo "  --domain    Your domain (e.g. launchpad.example.com)"
+  echo "  --email     Email for Let's Encrypt SSL certificate"
+  echo "  --skip-ssl  Skip SSL setup (use HTTP only)"
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --domain) DOMAIN="$2"; shift 2 ;;
+    --email) EMAIL="$2"; shift 2 ;;
+    --skip-ssl) SKIP_SSL=true; shift ;;
+    *) usage ;;
+  esac
+done
+
+if [ -z "$DOMAIN" ]; then
+  echo "Error: --domain is required"
+  usage
+fi
+
+if [ "$SKIP_SSL" = false ] && [ -z "$EMAIL" ]; then
+  echo "Error: --email is required for SSL. Use --skip-ssl to skip."
+  usage
+fi
+
+echo "═══════════════════════════════════════════"
+echo "  Launchpad — Digital Ocean Setup"
+echo "═══════════════════════════════════════════"
+echo "  Domain:   $DOMAIN"
+echo "  Email:    ${EMAIL:-N/A}"
+echo "  SSL:      $([ "$SKIP_SSL" = true ] && echo 'Skipped' || echo 'Yes')"
+echo "═══════════════════════════════════════════"
+echo ""
+
+# ── 1. Install Docker if missing ──────────────────
+
+if ! command -v docker &>/dev/null; then
+  echo "→ Installing Docker..."
+  apt-get update -qq
+  apt-get install -y -qq ca-certificates curl gnupg
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources-list.d/docker.list
+  apt-get update -qq
+  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  echo "  Docker installed."
+else
+  echo "→ Docker already installed."
+fi
+
+# ── 2. Install Git if missing ─────────────────────
+
+if ! command -v git &>/dev/null; then
+  echo "→ Installing Git..."
+  apt-get update -qq && apt-get install -y -qq git
+fi
+
+# ── 3. Clone / update repo ────────────────────────
+
+INSTALL_DIR="/opt/launchpad"
+
+if [ -d "$INSTALL_DIR" ]; then
+  echo "→ Updating existing installation..."
+  cd "$INSTALL_DIR"
+  git pull origin main
+else
+  echo "→ Cloning Launchpad..."
+  git clone https://github.com/LR-Paris/Launchpad.git "$INSTALL_DIR"
+  cd "$INSTALL_DIR"
+fi
+
+# ── 4. Create directories ─────────────────────────
+
+echo "→ Creating directories..."
+mkdir -p shops nginx/conf.d backend/data certbot/conf certbot/www
+
+# ── 5. Generate .env ──────────────────────────────
+
+if [ ! -f .env ]; then
+  echo "→ Generating .env..."
+  SESSION_SECRET=$(openssl rand -hex 32)
+
+  if [ "$SKIP_SSL" = true ]; then
+    FRONTEND_URL="http://${DOMAIN}"
+    COOKIE_SECURE=false
+  else
+    FRONTEND_URL="https://${DOMAIN}"
+    COOKIE_SECURE=true
+  fi
+
+  cat > .env <<EOF
+SESSION_SECRET=${SESSION_SECRET}
+FRONTEND_URL=${FRONTEND_URL}
+PORT=3001
+NODE_ENV=production
+COOKIE_SECURE=${COOKIE_SECURE}
+BASE_DOMAIN=${DOMAIN}
+EOF
+  echo "  .env created."
+else
+  echo "→ .env already exists, skipping."
+fi
+
+# ── 6. Generate Nginx config for Launchpad ────────
+
+echo "→ Generating Launchpad nginx config..."
+cat > nginx/conf.d/launchpad.conf <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location /api/ {
+        proxy_pass http://backend:3001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+
+# ── 7. Update default.conf ────────────────────────
+
+cat > nginx/conf.d/default.conf <<EOF
+server {
+    listen 80 default_server;
+    server_name _;
+    return 404;
+}
+EOF
+
+# ── 8. Configure firewall ─────────────────────────
+
+if command -v ufw &>/dev/null; then
+  echo "→ Configuring firewall..."
+  ufw allow 22/tcp   >/dev/null 2>&1 || true
+  ufw allow 80/tcp   >/dev/null 2>&1 || true
+  ufw allow 443/tcp  >/dev/null 2>&1 || true
+  ufw --force enable  >/dev/null 2>&1 || true
+  echo "  Firewall configured (22, 80, 443 open)."
+fi
+
+# ── 9. Build and start ────────────────────────────
+
+echo "→ Building and starting services..."
+docker compose -f docker-compose.prod.yml up -d --build
+
+# ── 10. SSL setup ─────────────────────────────────
+
+if [ "$SKIP_SSL" = false ]; then
+  echo "→ Obtaining SSL certificate..."
+
+  # Get initial certificate
+  docker run --rm \
+    -v "$INSTALL_DIR/certbot/conf:/etc/letsencrypt" \
+    -v "$INSTALL_DIR/certbot/www:/var/www/certbot" \
+    certbot/certbot certonly \
+    --webroot \
+    --webroot-path=/var/www/certbot \
+    --email "$EMAIL" \
+    --agree-tos \
+    --no-eff-email \
+    -d "$DOMAIN" \
+    -d "*.${DOMAIN}"
+
+  # Add SSL server block
+  cat > nginx/conf.d/launchpad-ssl.conf <<EOF
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    location /api/ {
+        proxy_pass http://backend:3001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+
+  # Update HTTP block to redirect to HTTPS
+  cat > nginx/conf.d/launchpad.conf <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+  # Reload nginx and start certbot renewal
+  docker exec nginx-proxy nginx -s reload
+  docker compose -f docker-compose.prod.yml --profile ssl up -d certbot
+  echo "  SSL configured."
+fi
+
+# ── 11. Create admin account ──────────────────────
+
+echo ""
+echo "═══════════════════════════════════════════"
+echo "  Setup complete!"
+echo "═══════════════════════════════════════════"
+echo ""
+echo "Next steps:"
+echo ""
+echo "  1. Create your admin account:"
+echo "     cd $INSTALL_DIR"
+echo "     docker compose -f docker-compose.prod.yml exec -it backend npm run create-admin"
+echo ""
+if [ "$SKIP_SSL" = true ]; then
+  echo "  2. Open http://${DOMAIN} in your browser"
+else
+  echo "  2. Open https://${DOMAIN} in your browser"
+fi
+echo ""
+echo "  3. Log in and start creating shops!"
+echo ""
