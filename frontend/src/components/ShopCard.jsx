@@ -58,6 +58,9 @@ export default function ShopCard({ shop }) {
               <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-60" />
             </a>
           </div>
+          {shop.description && (
+            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shop.description}</p>
+          )}
         </div>
         {/* Status */}
         <div className="flex items-center gap-1.5 shrink-0">

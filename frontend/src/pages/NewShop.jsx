@@ -6,6 +6,8 @@ import { ArrowLeft, Terminal, Rocket, Database, FileArchive } from 'lucide-react
 
 export default function NewShop() {
   const [name, setName] = useState('');
+  const [customSlug, setCustomSlug] = useState('');
+  const [description, setDescription] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [dbFiles, setDbFiles] = useState(null); // single File (zip)
   const [error, setError] = useState('');
@@ -59,10 +61,13 @@ export default function NewShop() {
     }
   }, [creationLog, liveLogs, uploadStatus]);
 
-  const slug = name
+  const autoSlug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
+  const slug = customSlug
+    ? customSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    : autoSlug;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -72,6 +77,8 @@ export default function NewShop() {
     setUploadStatus('');
     setCreatedSlug(null);
     const payload = { name };
+    if (customSlug.trim()) payload.slug = customSlug.trim();
+    if (description.trim()) payload.description = description.trim();
     if (folderPath.trim()) payload.folderPath = folderPath.trim();
     mutation.mutate(payload);
   };
@@ -114,9 +121,48 @@ export default function NewShop() {
               required
               disabled={mutation.isPending}
             />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-sm font-semibold mb-1.5" htmlFor="description"
+                   style={{ fontFamily: 'Syne, sans-serif' }}>
+              Description{' '}
+              <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+            </label>
+            <textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Short description shown on the dashboard"
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-none"
+              rows={2}
+              disabled={mutation.isPending}
+            />
+          </div>
+
+          {/* URL Path */}
+          <div>
+            <label className="block text-sm font-semibold mb-1.5" htmlFor="customSlug"
+                   style={{ fontFamily: 'Syne, sans-serif' }}>
+              URL Path{' '}
+              <span className="text-muted-foreground font-normal text-xs">(optional)</span>
+            </label>
+            <div className="flex items-center gap-0 rounded-md border border-border bg-input overflow-hidden focus-within:ring-1 focus-within:ring-primary/60 focus-within:border-primary/60 transition-all">
+              <span className="pl-3 text-sm text-muted-foreground select-none whitespace-nowrap">lrparisstore.com /</span>
+              <input
+                id="customSlug"
+                type="text"
+                value={customSlug}
+                onChange={(e) => setCustomSlug(e.target.value)}
+                placeholder={autoSlug || 'my-awesome-shop'}
+                className="flex-1 bg-transparent px-1 py-2 text-sm font-mono outline-none"
+                disabled={mutation.isPending}
+              />
+            </div>
             {slug && (
               <p className="text-xs text-muted-foreground mt-1.5 font-mono">
-                slug: <code className="text-primary">{slug}</code>
+                URL: <code className="text-primary">/{slug}</code>
               </p>
             )}
           </div>

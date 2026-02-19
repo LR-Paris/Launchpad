@@ -50,12 +50,19 @@ function getDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
+      description TEXT DEFAULT '',
       status TEXT DEFAULT 'stopped',
       created_at TEXT DEFAULT (datetime('now')),
       port INTEGER NOT NULL,
       subdomain TEXT NOT NULL
     )
   `);
+
+  // Migrate: add description column if missing (existing databases)
+  const cols = db.pragma('table_info(shops)').map(c => c.name);
+  if (!cols.includes('description')) {
+    db.exec("ALTER TABLE shops ADD COLUMN description TEXT DEFAULT ''");
+  }
 
   return db;
 }
@@ -102,15 +109,19 @@ function copyDirSync(src, dest) {
 
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
-  const { name, folderPath } = req.body;
+  const { name, folderPath, description } = req.body;
+  let { slug: customSlug } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Shop name is required' });
   }
 
-  const slug = slugify(name, { lower: true, strict: true });
+  // Use custom slug if provided, otherwise generate from name
+  const slug = customSlug
+    ? slugify(customSlug, { lower: true, strict: true })
+    : slugify(name, { lower: true, strict: true });
   if (!slug) {
-    return res.status(400).json({ error: 'Invalid shop name' });
+    return res.status(400).json({ error: 'Invalid shop name / URL path' });
   }
 
   const shopDir = path.join(SHOPS_DIR, slug);
@@ -189,8 +200,8 @@ router.post('/', (req, res) => {
 
     // Register in database
     db.prepare(
-      'INSERT INTO shops (slug, name, status, port, subdomain) VALUES (?, ?, ?, ?, ?)'
-    ).run(slug, name, 'stopped', port, subdomain);
+      'INSERT INTO shops (slug, name, description, status, port, subdomain) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(slug, name, description || '', 'stopped', port, subdomain);
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
@@ -263,24 +274,81 @@ router.get('/:slug', (req, res) => {
 // PATCH /api/shops/:slug — Update shop fields in the database
 router.patch('/:slug', (req, res) => {
   const { slug } = req.params;
-  const { name, port, subdomain } = req.body;
+  const { name, description } = req.body;
+  let { slug: newSlugRaw } = req.body;
   const db = getDb();
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const newName = name !== undefined ? String(name).trim() : shop.name;
-    const newPort = port !== undefined ? parseInt(port, 10) : shop.port;
-    const newSubdomain = subdomain !== undefined ? String(subdomain).trim() : shop.subdomain;
+    const newDescription = description !== undefined ? String(description).trim() : (shop.description || '');
 
     if (!newName) return res.status(400).json({ error: 'Name cannot be empty' });
-    if (isNaN(newPort)) return res.status(400).json({ error: 'Invalid port' });
+
+    // Handle slug (URL path) rename
+    const newSlug = newSlugRaw !== undefined
+      ? slugify(String(newSlugRaw).trim(), { lower: true, strict: true })
+      : slug;
+
+    if (!newSlug) return res.status(400).json({ error: 'Invalid URL path' });
+
+    if (newSlug !== slug) {
+      // Check uniqueness
+      const conflict = db.prepare('SELECT id FROM shops WHERE slug = ?').get(newSlug);
+      if (conflict) return res.status(409).json({ error: `URL path "/${newSlug}" is already taken` });
+
+      const oldDir = path.join(SHOPS_DIR, slug);
+      const newDir = path.join(SHOPS_DIR, newSlug);
+
+      // Stop container
+      const oldCompose = getComposeFilePath(slug);
+      if (fs.existsSync(path.join(oldDir, 'docker-compose.yml'))) {
+        try { execSync(`docker-compose -f ${oldCompose} down 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+      }
+
+      // Rename directory
+      if (fs.existsSync(oldDir)) {
+        fs.renameSync(oldDir, newDir);
+      }
+
+      // Update docker-compose.yml volume path inside the shop
+      const composeInShop = path.join(newDir, 'docker-compose.yml');
+      if (fs.existsSync(composeInShop)) {
+        let compose = fs.readFileSync(composeInShop, 'utf8');
+        const oldHostDir = getHostShopDir(slug);
+        const newHostDir = getHostShopDir(newSlug);
+        compose = compose.replace(oldHostDir, newHostDir);
+        fs.writeFileSync(composeInShop, compose);
+      }
+
+      // Update shop .env
+      const envPath = path.join(newDir, '.env');
+      if (fs.existsSync(envPath)) {
+        let envContent = fs.readFileSync(envPath, 'utf8');
+        envContent = envContent
+          .replace(/^SHOP_SLUG=.*/m, `SHOP_SLUG=${newSlug}`)
+          .replace(/^BASE_PATH=.*/m, `BASE_PATH=/${newSlug}`)
+          .replace(/^PUBLIC_URL=.*/m, `PUBLIC_URL=/${newSlug}`)
+          .replace(/^NEXT_PUBLIC_BASE_PATH=.*/m, `NEXT_PUBLIC_BASE_PATH=/${newSlug}`);
+        fs.writeFileSync(envPath, envContent);
+      }
+
+      // Update nginx: remove old, add new
+      removeShopConfig(slug);
+      generateShopConfig(newSlug, shop.port);
+      reloadNginx();
+
+      // Restart container
+      const newCompose = getComposeFilePath(newSlug);
+      try { execSync(`docker-compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+    }
 
     db.prepare(
-      'UPDATE shops SET name = ?, port = ?, subdomain = ? WHERE slug = ?'
-    ).run(newName, newPort, newSubdomain, slug);
+      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ? WHERE slug = ?'
+    ).run(newSlug, newName, newDescription, newSlug, slug);
 
-    const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
     res.json({ shop: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
