@@ -86,6 +86,15 @@ export const uploadShopFiles = (slug, dirPath, formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 
+export const replaceShopFile = (slug, filePath, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post(`/shops/${slug}/files/replace`, formData, {
+    params: { path: filePath },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+};
+
 export const uploadDatabaseZip = (slug, dirPath, file) => {
   const formData = new FormData();
   formData.append('file', file);

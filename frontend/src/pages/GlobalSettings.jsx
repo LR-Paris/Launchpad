@@ -185,7 +185,7 @@ export default function GlobalSettings({ theme, toggleTheme }) {
           <div className="space-y-2.5 font-mono text-xs">
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
               <span className="text-muted-foreground">Template</span>
-              <span className="text-foreground">Shuttle LC-0.12</span>
+              <span className="text-foreground">Shuttle LC-0.13</span>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
               <span className="text-muted-foreground">Database zip extraction</span>
