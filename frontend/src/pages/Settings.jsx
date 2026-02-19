@@ -542,6 +542,7 @@ export default function Settings() {
             >
               <Upload className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Upload'}
             </button>
+            <span className="text-[10px] text-muted-foreground/60">Max 1 GB</span>
             <input ref={uploadInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
             <button
               onClick={() => refetchFiles()}

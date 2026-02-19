@@ -165,15 +165,18 @@ export default function NewShop() {
                   onChange={(e) => setDbFiles(e.target.files?.[0] || null)}
                   disabled={mutation.isPending}
                 />
-                <button
-                  type="button"
-                  onClick={() => dbInputRef.current?.click()}
-                  disabled={mutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/40 transition-all disabled:opacity-50"
-                >
-                  <FileArchive className="h-3.5 w-3.5" />
-                  {dbFiles ? dbFiles.name : 'Choose .zip file'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => dbInputRef.current?.click()}
+                    disabled={mutation.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/40 transition-all disabled:opacity-50"
+                  >
+                    <FileArchive className="h-3.5 w-3.5" />
+                    {dbFiles ? dbFiles.name : 'Choose .zip file'}
+                  </button>
+                  <span className="text-[10px] text-muted-foreground/60">Max 1 GB</span>
+                </div>
                 {dbFiles && (
                   <p className="text-xs text-muted-foreground mt-2 font-mono">
                     {dbFiles.name} — {(dbFiles.size / 1024).toFixed(1)} KB

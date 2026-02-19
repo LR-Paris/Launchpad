@@ -252,6 +252,7 @@ export default function KeyValueEditor({
                       <span className="text-[10px] text-muted-foreground font-mono">
                         {entry.size > 1024 ? `${(entry.size / 1024).toFixed(1)} KB` : `${entry.size} B`}
                       </span>
+                      <span className="text-[10px] text-muted-foreground/60">Max 1 GB</span>
                     </div>
                   </div>
                 </div>
