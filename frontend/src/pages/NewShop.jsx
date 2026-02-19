@@ -28,7 +28,7 @@ export default function NewShop() {
 
       // Upload DATABASE.zip if selected
       if (slug && dbFiles) {
-        setUploadStatus('Extracting DATABASE.zip...');
+        setUploadStatus('Uploading DATABASE.zip to server...');
         try {
           const result = await uploadDatabaseZip(slug, 'DATABASE', dbFiles);
           setUploadStatus(`✓ DATABASE: ${result.message}`);
@@ -155,7 +155,7 @@ export default function NewShop() {
                   <span className="ml-2 text-xs font-normal text-muted-foreground">(optional)</span>
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Upload a <code className="font-mono">.zip</code> of your DATABASE folder — it will be extracted into the shop after deployment.
+                  Upload a <code className="font-mono">.zip</code> containing your <code className="font-mono">DATABASE/</code> folder — it will be uploaded to the server and replace the template DATABASE folder after deployment.
                 </p>
                 <input
                   ref={dbInputRef}
@@ -237,7 +237,7 @@ export default function NewShop() {
             className="p-4 h-80 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
           >
             {mutation.isPending && !creationLog && (
-              <span className="text-zinc-500">Waiting for server...</span>
+              <span className="text-zinc-500">Deploying to server — cloning template &amp; starting container...</span>
             )}
             {terminalContent || (mutation.isPending ? '' : <span className="text-zinc-500">No output.</span>)}
             {mutation.isPending && <span className="term-cursor" />}

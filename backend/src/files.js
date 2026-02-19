@@ -179,14 +179,20 @@ const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 
 router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';
-  const resolved = safeShopPath(slug, relPath);
-  if (!resolved) return res.status(400).json({ error: 'Invalid path' });
+  const shopDir = path.resolve(SHOPS_DIR, slug);
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
     const zip = new AdmZip(req.file.buffer);
-    fs.mkdirSync(resolved, { recursive: true });
-    zip.extractAllTo(resolved, /* overwrite */ true);
+
+    // Delete the existing target folder entirely so the zip fully replaces it
+    const existingDir = path.join(shopDir, relPath);
+    if (fs.existsSync(existingDir)) {
+      fs.rmSync(existingDir, { recursive: true, force: true });
+    }
+
+    // Extract to shop root — the zip must contain DATABASE/ at its top level
+    zip.extractAllTo(shopDir, /* overwrite */ true);
     const fileCount = zip.getEntries().filter(e => !e.isDirectory).length;
     res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
   } catch (err) {

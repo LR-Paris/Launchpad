@@ -9,8 +9,11 @@ const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {
   const { slug } = req.params;
-  // Look in DATABASE/orders/orders.csv (primary), fall back to orders/orders.csv
-  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  // Try title-case path first (DATABASE/Orders/Orders.csv), then lowercase fallbacks
+  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  }
   if (!fs.existsSync(csvPath)) {
     csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
   }
@@ -35,7 +38,10 @@ router.get('/:slug/orders', (req, res) => {
 // GET /api/shops/:slug/orders/download
 router.get('/:slug/orders/download', (req, res) => {
   const { slug } = req.params;
-  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  }
   if (!fs.existsSync(csvPath)) {
     csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
   }

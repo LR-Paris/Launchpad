@@ -1,7 +1,7 @@
 import { useNavigate, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { logout } from '../lib/api';
-import { LogOut, Plus, Rocket, Sun, Moon } from 'lucide-react';
+import { LogOut, Plus, Rocket, Sun, Moon, Settings } from 'lucide-react';
 
 export default function Header({ user, theme, toggleTheme }) {
   const navigate = useNavigate();
@@ -33,6 +33,13 @@ export default function Header({ user, theme, toggleTheme }) {
           >
             <Plus className="h-3.5 w-3.5" />
             New Shop
+          </Link>
+          <Link
+            to="/settings"
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border/60 hover:border-primary/40 rounded-md px-3 py-1.5 transition-all"
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Settings
           </Link>
         </div>
         <div className="flex items-center gap-3">

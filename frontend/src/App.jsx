@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import NewShop from './pages/NewShop';
 import Orders from './pages/Orders';
 import Settings from './pages/Settings';
+import GlobalSettings from './pages/GlobalSettings';
 import Header from './components/Header';
 
 function ProtectedRoute({ children, user }) {
@@ -82,13 +83,21 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute user={user}>
+                <GlobalSettings theme={theme} toggleTheme={toggleTheme} />
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
       <footer className="border-t border-border/40 py-3 text-center">
         <span className="text-xs font-mono text-muted-foreground/60">
           Launchpad{' '}
-          <span className="text-[hsl(188,100%,42%)/70]">LC-1.3</span>
+          <span className="text-[hsl(188,100%,42%)/70]">LC-1.4</span>
           {' '}·{' '}
           Shuttle Template LC-0.12
         </span>

@@ -32,7 +32,13 @@ export default function ShopCard({ shop }) {
   const statusColor = STATUS_COLORS[shop.status] || STATUS_COLORS.stopped;
 
   return (
-    <div className="lp-card rounded-xl p-5 flex flex-col gap-4">
+    <div className="rounded-xl p-5 flex flex-col gap-4 border border-border/60 hover:border-primary/25 transition-all duration-300"
+         style={{
+           background: 'hsl(var(--card) / 0.65)',
+           backdropFilter: 'blur(12px)',
+           WebkitBackdropFilter: 'blur(12px)',
+           boxShadow: '0 4px 24px hsl(0 0% 0% / 0.08), inset 0 1px 0 hsl(var(--card) / 0.3)',
+         }}>
       {/* Header row */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

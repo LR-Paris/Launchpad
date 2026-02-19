@@ -70,11 +70,16 @@ export default function Settings() {
     }
   }, [filesError, browsePath]);
 
-  // Load DATABASE/design/details/Password.txt
+  // Load DATABASE/Design/Details/Password.txt
   useEffect(() => {
-    readShopFile(slug, 'DATABASE/design/details/Password.txt')
+    readShopFile(slug, 'DATABASE/Design/Details/Password.txt')
       .then((data) => setShopPassword(data.content.trim()))
-      .catch(() => setShopPassword(''));
+      .catch(() => {
+        // Try lowercase fallback
+        readShopFile(slug, 'DATABASE/design/details/Password.txt')
+          .then((d) => setShopPassword(d.content.trim()))
+          .catch(() => setShopPassword(''));
+      });
   }, [slug]);
 
   useEffect(() => {
@@ -332,7 +337,7 @@ export default function Settings() {
 
         {/* Terminal / Logs */}
         <div className="rounded-xl border border-border/60 bg-[hsl(222,32%,4%)] overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-[hsl(222,28%,7%)]">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-secondary/60">
             <Terminal className="h-3.5 w-3.5 text-primary/70" />
             <span className="text-xs font-mono text-muted-foreground">logs — {slug}</span>
             <div className="flex-1" />
@@ -374,7 +379,7 @@ export default function Settings() {
           </div>
 
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-1 px-5 py-2 border-b border-border/30 bg-[hsl(222,32%,4%)] text-xs font-mono">
+          <div className="flex items-center gap-1 px-5 py-2 border-b border-border/30 bg-muted/40 text-xs font-mono">
             <button onClick={() => navigateTo('.')} className="text-primary hover:underline">{slug}</button>
             {breadcrumbs.map((part, i) => {
               const pathTo = breadcrumbs.slice(0, i + 1).join('/');
@@ -396,7 +401,7 @@ export default function Settings() {
 
           <div className="flex" style={{ minHeight: '300px' }}>
             {/* File tree */}
-            <div className="w-56 border-r border-border/40 overflow-y-auto flex-shrink-0 bg-[hsl(222,32%,4%)]">
+            <div className="w-56 border-r border-border/40 overflow-y-auto flex-shrink-0 bg-card">
               {filesLoading ? (
                 <p className="px-4 py-3 text-xs text-muted-foreground font-mono">Loading...</p>
               ) : !filesData?.entries?.length ? (
@@ -411,7 +416,7 @@ export default function Settings() {
                           parts.pop();
                           navigateTo(parts.length ? parts.join('/') : '.');
                         }}
-                        className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground hover:bg-white/5 transition-colors"
+                        className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 transition-colors"
                       >
                         <ArrowLeft className="h-3 w-3" /> ..
                       </button>
@@ -430,7 +435,7 @@ export default function Settings() {
                           className={`w-full flex items-center gap-2 px-4 py-1.5 text-xs transition-colors pr-8 ${
                             isOpen
                               ? 'bg-primary/10 text-primary font-medium'
-                              : 'hover:bg-white/5 text-zinc-300'
+                              : 'hover:bg-foreground/5 text-foreground'
                           } ${!entry.isDirectory && !entry.readable && !entry.isImage ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                         >
                           {entry.isDirectory ? (
@@ -459,10 +464,10 @@ export default function Settings() {
             </div>
 
             {/* Editor / Image preview */}
-            <div className="flex-1 flex flex-col min-w-0 bg-[hsl(222,32%,4%)]">
+            <div className="flex-1 flex flex-col min-w-0 bg-card">
               {openFilePath && fileMode === 'image' ? (
                 <div className="flex-1 flex flex-col">
-                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-[hsl(222,28%,7%)]">
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-secondary/60">
                     <ImageIcon className="h-3 w-3 text-pink-400/80" />
                     <span className="text-xs font-mono text-muted-foreground flex-1 truncate">{openFilePath}</span>
                     <button
@@ -482,7 +487,7 @@ export default function Settings() {
                 </div>
               ) : openFilePath && fileMode === 'text' ? (
                 <>
-                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-[hsl(222,28%,7%)]">
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-secondary/60">
                     <span className="text-xs font-mono text-muted-foreground flex-1 truncate">{openFilePath}</span>
                     {fileDirty && <span className="text-xs text-amber-400 font-mono">unsaved</span>}
                     <button
@@ -501,7 +506,7 @@ export default function Settings() {
                     </button>
                   </div>
                   <textarea
-                    className="flex-1 w-full font-mono text-xs p-4 bg-transparent text-zinc-200 resize-none outline-none leading-relaxed"
+                    className="flex-1 w-full font-mono text-xs p-4 bg-transparent text-foreground resize-none outline-none leading-relaxed"
                     value={fileEdited}
                     onChange={(e) => {
                       setFileEdited(e.target.value);
@@ -528,14 +533,14 @@ export default function Settings() {
               <Database className="h-3.5 w-3.5 lp-glow" />
             </div>
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Password</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/design/details/Password.txt</span>
+            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/Design/Details/Password.txt</span>
           </div>
           {!shopPassword ? (
             <p className="text-xs text-muted-foreground font-mono">
-              Password.txt not found at DATABASE/design/details/Password.txt.
+              Password.txt not found at DATABASE/Design/Details/Password.txt.
             </p>
           ) : (
-            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-[hsl(222,32%,5%)] px-3 py-2.5">
+            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/50 px-3 py-2.5">
               <span className="text-xs font-mono text-muted-foreground flex-shrink-0">password</span>
               <span className="text-xs font-mono text-foreground flex-1 truncate">
                 {passwordShown ? shopPassword : '•'.repeat(Math.min(shopPassword.length, 20))}
@@ -583,7 +588,7 @@ export default function Settings() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border/40 text-xs text-muted-foreground bg-[hsl(222,32%,5%)]">
+                  <tr className="border-b border-border/40 text-xs text-muted-foreground bg-muted/50">
                     <th className="px-4 py-2.5 text-left font-medium font-mono">ID</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Slug</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Name</th>
@@ -602,7 +607,7 @@ export default function Settings() {
                       <tr
                         key={shop.id}
                         className={`border-b border-border/30 last:border-0 transition-colors ${
-                          isCurrentShop ? 'bg-primary/5' : 'hover:bg-white/[0.02]'
+                          isCurrentShop ? 'bg-primary/5' : 'hover:bg-foreground/[0.02]'
                         }`}
                       >
                         <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{shop.id}</td>
