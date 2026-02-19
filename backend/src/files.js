@@ -184,16 +184,46 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
 
   try {
     const zip = new AdmZip(req.file.buffer);
+    const entries = zip.getEntries();
 
     // Delete the existing target folder entirely so the zip fully replaces it
-    const existingDir = path.join(shopDir, relPath);
-    if (fs.existsSync(existingDir)) {
-      fs.rmSync(existingDir, { recursive: true, force: true });
+    const targetDir = path.join(shopDir, relPath);
+    if (fs.existsSync(targetDir)) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    // Detect if the zip has a single top-level directory and strip it so files
+    // always land in targetDir regardless of how the zip was created (whether
+    // the user zipped the DATABASE folder itself or just its contents).
+    const topLevelNames = new Set();
+    for (const entry of entries) {
+      const firstPart = entry.entryName.split('/')[0];
+      if (firstPart) topLevelNames.add(firstPart);
+    }
+    const stripPrefix = topLevelNames.size === 1 ? [...topLevelNames][0] + '/' : '';
+
+    let fileCount = 0;
+    for (const entry of entries) {
+      let entryName = entry.entryName;
+      if (stripPrefix && entryName.startsWith(stripPrefix)) {
+        entryName = entryName.slice(stripPrefix.length);
+      }
+      if (!entryName) continue; // skip the root directory entry itself
+
+      const destPath = path.join(targetDir, entryName);
+      // Prevent path traversal
+      if (!destPath.startsWith(targetDir + path.sep) && destPath !== targetDir) continue;
+
+      if (entry.isDirectory) {
+        fs.mkdirSync(destPath, { recursive: true });
+      } else {
+        fs.mkdirSync(path.dirname(destPath), { recursive: true });
+        fs.writeFileSync(destPath, entry.getData());
+        fileCount++;
+      }
     }
 
-    // Extract to shop root — the zip must contain DATABASE/ at its top level
-    zip.extractAllTo(shopDir, /* overwrite */ true);
-    const fileCount = zip.getEntries().filter(e => !e.isDirectory).length;
     res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
   } catch (err) {
     res.status(400).json({ error: 'Failed to extract zip: ' + err.message });
