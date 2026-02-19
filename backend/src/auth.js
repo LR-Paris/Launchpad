@@ -62,6 +62,39 @@ router.post('/login', (req, res) => {
   });
 });
 
+// POST /api/auth/change-password
+router.post('/change-password', (req, res) => {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: 'oldPassword and newPassword are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  const users = loadUsers();
+  const userIndex = users.findIndex(u => u.username === req.session.user.username);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  bcrypt.compare(oldPassword, users[userIndex].password, (err, match) => {
+    if (err) return res.status(500).json({ error: 'Authentication error' });
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    bcrypt.hash(newPassword, BCRYPT_ROUNDS, (hashErr, hash) => {
+      if (hashErr) return res.status(500).json({ error: 'Failed to hash password' });
+      users[userIndex].password = hash;
+      saveUsers(users);
+      res.json({ message: 'Password changed successfully' });
+    });
+  });
+});
+
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   req.session.destroy(err => {

@@ -6,7 +6,6 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Redirect to login on 401 responses (except for /auth/ endpoints)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -29,6 +28,9 @@ export const logout = () =>
 
 export const getMe = () =>
   api.get('/auth/me').then(r => r.data);
+
+export const changePassword = (oldPassword, newPassword) =>
+  api.post('/auth/change-password', { oldPassword, newPassword }).then(r => r.data);
 
 // Shops
 export const getShops = () =>
@@ -61,5 +63,36 @@ export const getOrders = (slug) =>
 
 export const getOrdersDownloadUrl = (slug) =>
   `/api/shops/${slug}/orders/download`;
+
+// Shop Files
+export const listShopFiles = (slug, dirPath = '.') =>
+  api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
+
+export const readShopFile = (slug, filePath) =>
+  api.get(`/shops/${slug}/files/read`, { params: { path: filePath } }).then(r => r.data);
+
+export const writeShopFile = (slug, filePath, content) =>
+  api.put(`/shops/${slug}/files/write`, { content }, { params: { path: filePath } }).then(r => r.data);
+
+export const deleteShopFile = (slug, filePath) =>
+  api.delete(`/shops/${slug}/files`, { params: { path: filePath } }).then(r => r.data);
+
+export const getShopImageUrl = (slug, filePath) =>
+  `/api/shops/${slug}/files/image?path=${encodeURIComponent(filePath)}`;
+
+export const uploadShopFiles = (slug, dirPath, formData) =>
+  api.post(`/shops/${slug}/files/upload`, formData, {
+    params: { path: dirPath },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+
+export const uploadDatabaseZip = (slug, dirPath, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post(`/shops/${slug}/files/upload-zip`, formData, {
+    params: { path: dirPath },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data);
+};
 
 export default api;

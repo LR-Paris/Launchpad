@@ -4,12 +4,22 @@ const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const router = express.Router();
-const SHOPS_DIR = path.join(__dirname, '..', '..', 'shops');
+const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {
   const { slug } = req.params;
-  const csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
+  // Try DATABASE/Orders/orders.csv first, then fallbacks
+  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv');
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
+  }
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  }
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
+  }
 
   if (!fs.existsSync(csvPath)) {
     return res.json({ orders: [] });
@@ -31,7 +41,16 @@ router.get('/:slug/orders', (req, res) => {
 // GET /api/shops/:slug/orders/download
 router.get('/:slug/orders/download', (req, res) => {
   const { slug } = req.params;
-  const csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
+  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv');
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
+  }
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
+  }
+  if (!fs.existsSync(csvPath)) {
+    csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
+  }
 
   if (!fs.existsSync(csvPath)) {
     return res.status(404).json({ error: 'No orders file found' });

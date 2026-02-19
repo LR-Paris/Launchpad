@@ -1,9 +1,10 @@
 services:
   web:
-    image: nginx:alpine
+    image: node:20-alpine
+    working_dir: /app
     volumes:
-      - ./:/usr/share/nginx/html:ro
-      - ./orders:/orders
+      - .:/app
     ports:
-      - "{PORT}:80"
+      - "{PORT}:3000"
+    command: sh -c "npm install && npm run build && npm start"
     restart: unless-stopped

@@ -15,8 +15,13 @@ const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
 const BASE_PORT = 8100;
 
 // When running inside Docker, docker compose needs HOST-side paths for volumes/files.
-// HOST_PROJECT_DIR is injected by docker-compose.yml via environment: HOST_PROJECT_DIR=${PWD}
+// HOST_PROJECT_DIR is injected by docker-compose.yml via environment: HOST_PROJECT_DIR=/host/project
 function getHostShopsDir() {
+  // If running in Docker with mounted project at /host/project
+  if (process.env.HOST_PROJECT_DIR && fs.existsSync('/host/project')) {
+    return '/host/project/shops';
+  }
+  // Fallback to env var or default
   return process.env.HOST_PROJECT_DIR
     ? path.join(process.env.HOST_PROJECT_DIR, 'shops')
     : SHOPS_DIR;

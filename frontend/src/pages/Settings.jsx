@@ -1,8 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction } from '../lib/api';
-import { ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw, Play, Square, RotateCcw } from 'lucide-react';
+import {
+  deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
+  listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
+  getShopImageUrl,
+} from '../lib/api';
+import {
+  ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
+  Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
+  Upload, Copy, ImageIcon, Store,
+} from 'lucide-react';
+
 
 export default function Settings() {
   const { slug } = useParams();
@@ -12,13 +21,34 @@ export default function Settings() {
   const [deployLog, setDeployLog] = useState('');
   const terminalRef = useRef(null);
 
-  // Edit state per shop slug
+  // DB table edit state
   const [editValues, setEditValues] = useState({});
   const [editingSlug, setEditingSlug] = useState(null);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState('');
 
-  // Fetch all shops for the database viewer
+  // File browser state
+  const [browsePath, setBrowsePath] = useState('DATABASE');
+  const [openFilePath, setOpenFilePath] = useState(null);
+  const [fileMode, setFileMode] = useState('text'); // 'text' | 'image'
+  const [fileContent, setFileContent] = useState('');
+  const [fileEdited, setFileEdited] = useState('');
+  const [fileDirty, setFileDirty] = useState(false);
+  const [fileSaving, setFileSaving] = useState(false);
+  const [fileError, setFileError] = useState('');
+  const [fileSuccess, setFileSuccess] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const uploadInputRef = useRef(null);
+
+  // DATABASE/Design/Details info
+  const [shopTitle, setShopTitle] = useState('');
+  const [shopDescription, setShopDescription] = useState('');
+
+  // DATABASE password file viewer
+  const [shopPassword, setShopPassword] = useState('');
+  const [passwordShown, setPasswordShown] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
     queryFn: getShops,
@@ -26,12 +56,50 @@ export default function Settings() {
   });
   const allShops = shopsData?.shops || [];
 
-  // Live logs for current shop
   const { data: logsData, refetch: refetchLogs } = useQuery({
     queryKey: ['shop-logs', slug],
     queryFn: () => getShopLogs(slug, 200),
     refetchInterval: 5000,
   });
+
+  const { data: filesData, isLoading: filesLoading, refetch: refetchFiles, error: filesError } = useQuery({
+    queryKey: ['shop-files', slug, browsePath],
+    queryFn: () => listShopFiles(slug, browsePath),
+  });
+
+  // Fall back to root if DATABASE folder doesn't exist
+  useEffect(() => {
+    if (filesError && browsePath === 'DATABASE') {
+      setBrowsePath('.');
+    }
+  }, [filesError, browsePath]);
+
+  // Load DATABASE/Design/Details/CompanyName.txt and Descriptions.txt
+  useEffect(() => {
+    readShopFile(slug, 'DATABASE/Design/Details/CompanyName.txt')
+      .then((d) => setShopTitle(d.content.trim()))
+      .catch(() => setShopTitle(''));
+    readShopFile(slug, 'DATABASE/Design/Details/Descriptions.txt')
+      .then((d) => {
+        const raw = d.content.trim();
+        // Parse "about: ..." line if present, otherwise show full content
+        const aboutMatch = raw.match(/^about:\s*(.+)/m);
+        setShopDescription(aboutMatch ? aboutMatch[1].trim() : raw);
+      })
+      .catch(() => setShopDescription(''));
+  }, [slug]);
+
+  // Load DATABASE/Design/Details/Password.txt
+  useEffect(() => {
+    readShopFile(slug, 'DATABASE/Design/Details/Password.txt')
+      .then((data) => setShopPassword(data.content.trim()))
+      .catch(() => {
+        // Try lowercase fallback
+        readShopFile(slug, 'DATABASE/design/details/Password.txt')
+          .then((d) => setShopPassword(d.content.trim()))
+          .catch(() => setShopPassword(''));
+      });
+  }, [slug]);
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -65,15 +133,13 @@ export default function Settings() {
   const updateMutation = useMutation({
     mutationFn: ({ targetSlug, data }) => updateShop(targetSlug, data),
     onSuccess: (data) => {
-      setSaveSuccess(`Saved changes for "${data.shop.slug}".`);
+      setSaveSuccess(`Saved "${data.shop.slug}".`);
       setSaveError('');
       setEditingSlug(null);
       queryClient.invalidateQueries({ queryKey: ['shops'] });
       setTimeout(() => setSaveSuccess(''), 3000);
     },
-    onError: (err) => {
-      setSaveError(err.response?.data?.error || 'Failed to save');
-    },
+    onError: (err) => setSaveError(err.response?.data?.error || 'Failed to save'),
   });
 
   const actionMutation = useMutation({
@@ -120,52 +186,163 @@ export default function Settings() {
     }));
   };
 
+  const openFile = async (filePath, entry) => {
+    setFileError('');
+    setFileSuccess('');
+    if (entry?.isImage) {
+      setOpenFilePath(filePath);
+      setFileMode('image');
+      return;
+    }
+    try {
+      const data = await readShopFile(slug, filePath);
+      setOpenFilePath(filePath);
+      setFileContent(data.content);
+      setFileEdited(data.content);
+      setFileDirty(false);
+      setFileMode('text');
+    } catch (err) {
+      setFileError(err.response?.data?.error || 'Failed to read file');
+    }
+  };
+
+  const handleFileSave = async () => {
+    if (!openFilePath) return;
+    setFileSaving(true);
+    setFileError('');
+    setFileSuccess('');
+    try {
+      await writeShopFile(slug, openFilePath, fileEdited);
+      setFileContent(fileEdited);
+      setFileDirty(false);
+      setFileSuccess('File saved.');
+      setTimeout(() => setFileSuccess(''), 3000);
+    } catch (err) {
+      setFileError(err.response?.data?.error || 'Failed to save file');
+    } finally {
+      setFileSaving(false);
+    }
+  };
+
+  const handleDeleteFile = async (filePath) => {
+    if (!window.confirm(`Delete "${filePath}"?`)) return;
+    try {
+      await deleteShopFile(slug, filePath);
+      if (openFilePath === filePath) setOpenFilePath(null);
+      refetchFiles();
+      setFileSuccess(`Deleted ${filePath}.`);
+      setTimeout(() => setFileSuccess(''), 3000);
+    } catch (err) {
+      setFileError(err.response?.data?.error || 'Failed to delete file');
+    }
+  };
+
+  const navigateTo = (newPath) => {
+    setOpenFilePath(null);
+    setBrowsePath(newPath);
+  };
+
+  const handleUpload = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setFileError('');
+    setFileSuccess('');
+    const formData = new FormData();
+    for (const file of files) formData.append('files', file);
+    try {
+      const result = await uploadShopFiles(slug, browsePath, formData);
+      setFileSuccess(result.message);
+      refetchFiles();
+      setTimeout(() => setFileSuccess(''), 4000);
+    } catch (err) {
+      setFileError(err.response?.data?.error || 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  };
+
+  const copyPassword = () => {
+    navigator.clipboard.writeText(shopPassword).then(() => {
+      setPasswordCopied(true);
+      setTimeout(() => setPasswordCopied(false), 2000);
+    });
+  };
+
+  const breadcrumbs = browsePath === '.' ? [] : browsePath.split('/').filter(Boolean);
   const logOutput = [deployLog, logsData?.logs].filter(Boolean).join('\n\n--- Live Logs ---\n');
   const currentShop = allShops.find((s) => s.slug === slug);
   const currentStatus = currentShop?.status ?? 'stopped';
 
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center gap-3 mb-6">
+    <div className="max-w-4xl lp-fadein">
+      <div className="flex items-center gap-3 mb-8">
         <Link
           to="/"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           Back
         </Link>
-        <h1 className="text-xl font-semibold">Settings — {slug}</h1>
+        <div>
+          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Shop Configuration</p>
+          <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{slug}</h1>
+        </div>
       </div>
 
       {message && (
-        <div className="rounded-md border bg-muted px-4 py-3 text-sm mb-4">{message}</div>
+        <div className="rounded-md border border-border bg-card px-4 py-3 text-sm mb-4 font-mono">{message}</div>
       )}
 
-      <div className="space-y-6">
-        {/* Container Control */}
-        <div className="rounded-lg border bg-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-medium">Container Control</h2>
-            <span
-              className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
-                currentStatus === 'running'
-                  ? 'bg-green-100 text-green-700'
-                  : currentStatus === 'error'
-                  ? 'bg-red-100 text-red-700'
-                  : 'bg-zinc-100 text-zinc-600'
-              }`}
-            >
-              {currentStatus}
-            </span>
+      <div className="space-y-5">
+
+        {/* Shop Info from DATABASE/Design/Details */}
+        {(shopTitle || shopDescription) && (
+          <div className="lp-card rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                   style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
+                <Store className="h-3.5 w-3.5 lp-glow" />
+              </div>
+              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Info</h2>
+            </div>
+            {shopTitle && (
+              <p className="text-base font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                {shopTitle}
+              </p>
+            )}
+            {shopDescription && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{shopDescription}</p>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+        )}
+
+        {/* Container Control */}
+        <div className="lp-card rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Container Control</h2>
+            <div className="flex items-center gap-1.5">
+              {currentStatus === 'running' ? (
+                <span className="w-2 h-2 status-dot-running" />
+              ) : (
+                <span className={`w-2 h-2 rounded-full ${currentStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+              )}
+              <span className={`text-xs font-mono font-medium ${
+                currentStatus === 'running' ? 'text-[hsl(142,70%,50%)]'
+                : currentStatus === 'error' ? 'text-destructive'
+                : 'text-muted-foreground'
+              }`}>{currentStatus}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
             {currentStatus !== 'running' && (
               <button
                 onClick={() => actionMutation.mutate('start')}
                 disabled={actionMutation.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
               >
-                <Play className="h-4 w-4" />
+                <Play className="h-3.5 w-3.5" />
                 {actionMutation.isPending ? 'Starting...' : 'Start'}
               </button>
             )}
@@ -173,96 +350,292 @@ export default function Settings() {
               <button
                 onClick={() => actionMutation.mutate('stop')}
                 disabled={actionMutation.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-secondary text-secondary-foreground px-3 py-2 text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
               >
-                <Square className="h-4 w-4" />
+                <Square className="h-3.5 w-3.5" />
                 {actionMutation.isPending ? 'Stopping...' : 'Stop'}
               </button>
             )}
             <button
               onClick={() => actionMutation.mutate('restart')}
               disabled={actionMutation.isPending}
-              className="inline-flex items-center gap-1.5 rounded-md bg-secondary text-secondary-foreground px-3 py-2 text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
             >
-              <RotateCcw className="h-4 w-4" />
+              <RotateCcw className="h-3.5 w-3.5" />
               {actionMutation.isPending ? 'Restarting...' : 'Restart'}
+            </button>
+            <button
+              onClick={() => deployMutation.mutate()}
+              disabled={deployMutation.isPending}
+              className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50 ml-auto"
+            >
+              <Rocket className="h-3.5 w-3.5" />
+              {deployMutation.isPending ? 'Redeploying...' : 'Redeploy'}
             </button>
           </div>
         </div>
 
-        {/* Redeploy */}
-        <div className="rounded-lg border bg-card p-5">
-          <h2 className="font-medium mb-2">Redeploy</h2>
-          <p className="text-sm text-muted-foreground mb-3">
-            Pull latest changes and rebuild the shop container.
-          </p>
-          <button
-            onClick={() => deployMutation.mutate()}
-            disabled={deployMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            <Rocket className="h-4 w-4" />
-            {deployMutation.isPending ? 'Deploying...' : 'Redeploy'}
-          </button>
-        </div>
-
-        {/* Terminal / Logs Panel */}
-        <div className="rounded-lg border bg-zinc-950 overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-900">
-            <Terminal className="h-3.5 w-3.5 text-zinc-400" />
-            <span className="text-xs font-mono text-zinc-400">container logs — {slug}</span>
+        {/* Terminal / Logs */}
+        <div className="rounded-xl border border-border/60 bg-[hsl(222,32%,4%)] overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-secondary/60">
+            <Terminal className="h-3.5 w-3.5 text-primary/70" />
+            <span className="text-xs font-mono text-muted-foreground">logs — {slug}</span>
             <div className="flex-1" />
             <button
               onClick={() => refetchLogs()}
-              className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
             >
               <RefreshCw className="h-3 w-3" /> Refresh
             </button>
           </div>
           <div
             ref={terminalRef}
-            className="p-4 h-64 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
+            className="p-4 h-56 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
           >
-            {logOutput || <span className="text-zinc-600">No logs available. Start the container to see output.</span>}
+            {logOutput || <span className="text-zinc-600">No logs. Start the container to see output.</span>}
           </div>
         </div>
 
-        {/* Database Viewer / Editor */}
-        <div className="rounded-lg border bg-card overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-3 border-b bg-muted/40">
-            <Database className="h-4 w-4 text-muted-foreground" />
-            <h2 className="font-medium text-sm">Database — shops.db</h2>
-            <span className="text-xs text-muted-foreground ml-1">({allShops.length} records)</span>
+        {/* Shop File Browser */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <FileText className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Files</h2>
+            <div className="flex-1" />
+            <button
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={uploading}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+            >
+              <Upload className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Upload'}
+            </button>
+            <input ref={uploadInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
+            <button
+              onClick={() => refetchFiles()}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors ml-2"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+          </div>
+
+          {/* Breadcrumbs */}
+          <div className="flex items-center gap-1 px-5 py-2 border-b border-border/30 bg-muted/40 text-xs font-mono">
+            <button onClick={() => navigateTo('.')} className="text-primary hover:underline">{slug}</button>
+            {breadcrumbs.map((part, i) => {
+              const pathTo = breadcrumbs.slice(0, i + 1).join('/');
+              return (
+                <span key={i} className="flex items-center gap-1">
+                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                  <button onClick={() => navigateTo(pathTo)} className="text-primary hover:underline">{part}</button>
+                </span>
+              );
+            })}
+          </div>
+
+          {fileError && (
+            <div className="px-5 py-2 text-xs text-destructive bg-destructive/5 border-b border-destructive/20">{fileError}</div>
+          )}
+          {fileSuccess && (
+            <div className="px-5 py-2 text-xs text-[hsl(142,70%,50%)] border-b border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)]">{fileSuccess}</div>
+          )}
+
+          <div className="flex" style={{ minHeight: '300px' }}>
+            {/* File tree */}
+            <div className="w-56 border-r border-border/40 overflow-y-auto flex-shrink-0 bg-card">
+              {filesLoading ? (
+                <p className="px-4 py-3 text-xs text-muted-foreground font-mono">Loading...</p>
+              ) : !filesData?.entries?.length ? (
+                <p className="px-4 py-3 text-xs text-muted-foreground font-mono">Empty directory.</p>
+              ) : (
+                <ul className="py-1">
+                  {browsePath !== '.' && (
+                    <li>
+                      <button
+                        onClick={() => {
+                          const parts = browsePath.split('/');
+                          parts.pop();
+                          navigateTo(parts.length ? parts.join('/') : '.');
+                        }}
+                        className="w-full flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground hover:bg-foreground/5 transition-colors"
+                      >
+                        <ArrowLeft className="h-3 w-3" /> ..
+                      </button>
+                    </li>
+                  )}
+                  {filesData.entries.map((entry) => {
+                    const entryPath = browsePath === '.' ? entry.name : `${browsePath}/${entry.name}`;
+                    const isOpen = openFilePath === entryPath;
+                    return (
+                      <li key={entry.name} className="group relative">
+                        <button
+                          onClick={() => {
+                            if (entry.isDirectory) navigateTo(entryPath);
+                            else if (entry.isImage || entry.readable) openFile(entryPath, entry);
+                          }}
+                          className={`w-full flex items-center gap-2 px-4 py-1.5 text-xs transition-colors pr-8 ${
+                            isOpen
+                              ? 'bg-primary/10 text-primary font-medium'
+                              : 'hover:bg-foreground/5 text-foreground'
+                          } ${!entry.isDirectory && !entry.readable && !entry.isImage ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          {entry.isDirectory ? (
+                            <Folder className="h-3 w-3 flex-shrink-0 text-yellow-400/80" />
+                          ) : entry.isImage ? (
+                            <ImageIcon className="h-3 w-3 flex-shrink-0 text-pink-400/80" />
+                          ) : (
+                            <FileText className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                          )}
+                          <span className="truncate">{entry.name}</span>
+                        </button>
+                        {!entry.isDirectory && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteFile(entryPath); }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
+                            title="Delete file"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Editor / Image preview */}
+            <div className="flex-1 flex flex-col min-w-0 bg-card">
+              {openFilePath && fileMode === 'image' ? (
+                <div className="flex-1 flex flex-col">
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-secondary/60">
+                    <ImageIcon className="h-3 w-3 text-pink-400/80" />
+                    <span className="text-xs font-mono text-muted-foreground flex-1 truncate">{openFilePath}</span>
+                    <button
+                      onClick={() => setOpenFilePath(null)}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex-1 flex items-center justify-center p-6 overflow-auto">
+                    <img
+                      src={getShopImageUrl(slug, openFilePath)}
+                      alt={openFilePath}
+                      className="max-w-full max-h-full object-contain rounded-lg border border-border/40"
+                    />
+                  </div>
+                </div>
+              ) : openFilePath && fileMode === 'text' ? (
+                <>
+                  <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40 bg-secondary/60">
+                    <span className="text-xs font-mono text-muted-foreground flex-1 truncate">{openFilePath}</span>
+                    {fileDirty && <span className="text-xs text-amber-400 font-mono">unsaved</span>}
+                    <button
+                      onClick={handleFileSave}
+                      disabled={fileSaving || !fileDirty}
+                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-40 transition-colors"
+                    >
+                      <Save className="h-3 w-3" />
+                      {fileSaving ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setOpenFilePath(null); setFileDirty(false); }}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <textarea
+                    className="flex-1 w-full font-mono text-xs p-4 bg-transparent text-foreground resize-none outline-none leading-relaxed"
+                    value={fileEdited}
+                    onChange={(e) => {
+                      setFileEdited(e.target.value);
+                      setFileDirty(e.target.value !== fileContent);
+                    }}
+                    spellCheck={false}
+                    style={{ minHeight: '280px' }}
+                  />
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground font-mono">
+                  Select a file to view or edit
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Shop DATABASE Password Viewer */}
+        <div className="lp-card rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                 style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
+              <Database className="h-3.5 w-3.5 lp-glow" />
+            </div>
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Password</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/Design/Details/Password.txt</span>
+          </div>
+          {!shopPassword ? (
+            <p className="text-xs text-muted-foreground font-mono">
+              Password.txt not found at DATABASE/Design/Details/Password.txt.
+            </p>
+          ) : (
+            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/50 px-3 py-2.5">
+              <span className="text-xs font-mono text-muted-foreground flex-shrink-0">password</span>
+              <span className="text-xs font-mono text-foreground flex-1 truncate">
+                {passwordShown ? shopPassword : '•'.repeat(Math.min(shopPassword.length, 20))}
+              </span>
+              <button
+                onClick={() => setPasswordShown(v => !v)}
+                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                title={passwordShown ? 'Hide password' : 'Show password'}
+              >
+                {passwordShown ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+              <button
+                onClick={copyPassword}
+                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
+                title="Copy to clipboard"
+              >
+                {passwordCopied
+                  ? <span className="text-xs text-[hsl(142,70%,50%)] font-mono">copied</span>
+                  : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Shops Database Viewer */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <Database className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shops Database</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">({allShops.length} records)</span>
           </div>
 
           {saveSuccess && (
-            <div className="px-5 py-2 text-xs text-green-700 bg-green-50 border-b border-green-100">
-              {saveSuccess}
-            </div>
+            <div className="px-5 py-2 text-xs text-[hsl(142,70%,50%)] border-b border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)]">{saveSuccess}</div>
           )}
           {saveError && (
-            <div className="px-5 py-2 text-xs text-destructive bg-red-50 border-b border-red-100">
-              {saveError}
-            </div>
+            <div className="px-5 py-2 text-xs text-destructive bg-destructive/5 border-b border-destructive/20">{saveError}</div>
           )}
 
           {shopsLoading ? (
-            <p className="px-5 py-4 text-sm text-muted-foreground">Loading...</p>
+            <p className="px-5 py-4 text-sm text-muted-foreground font-mono">Loading...</p>
           ) : allShops.length === 0 ? (
-            <p className="px-5 py-4 text-sm text-muted-foreground">No shops in database.</p>
+            <p className="px-5 py-4 text-sm text-muted-foreground font-mono">No shops in database.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/30 text-xs text-muted-foreground">
-                    <th className="px-4 py-2.5 text-left font-medium">ID</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Slug</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Name</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Port</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Subdomain</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Status</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Created</th>
-                    <th className="px-4 py-2.5 text-left font-medium"></th>
+                  <tr className="border-b border-border/40 text-xs text-muted-foreground bg-muted/50">
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">ID</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Slug</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Name</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Port</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Status</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Created</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -273,65 +646,49 @@ export default function Settings() {
                     return (
                       <tr
                         key={shop.id}
-                        className={`border-b last:border-0 transition-colors ${
-                          isCurrentShop ? 'bg-primary/5' : 'hover:bg-muted/30'
+                        className={`border-b border-border/30 last:border-0 transition-colors ${
+                          isCurrentShop ? 'bg-primary/5' : 'hover:bg-foreground/[0.02]'
                         }`}
                       >
-                        <td className="px-4 py-2.5 text-muted-foreground text-xs">{shop.id}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{shop.id}</td>
                         <td className="px-4 py-2.5">
-                          <code className="text-xs bg-muted px-1 py-0.5 rounded">{shop.slug}</code>
-                          {isCurrentShop && (
-                            <span className="ml-1.5 text-xs text-primary font-medium">current</span>
-                          )}
+                          <code className="text-xs font-mono text-primary/80">{shop.slug}</code>
+                          {isCurrentShop && <span className="ml-1.5 text-xs text-primary">←</span>}
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-4 py-2.5 text-xs">
                           {isEditing ? (
                             <input
-                              className="w-full rounded border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                              className="w-full rounded border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
                               value={vals.name ?? shop.name}
                               onChange={(e) => setField(shop.slug, 'name', e.target.value)}
                             />
-                          ) : (
-                            shop.name
-                          )}
+                          ) : shop.name}
                         </td>
-                        <td className="px-4 py-2.5">
+                        <td className="px-4 py-2.5 text-xs font-mono">
                           {isEditing ? (
                             <input
-                              className="w-20 rounded border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
+                              className="w-20 rounded border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
                               value={vals.port ?? shop.port}
                               onChange={(e) => setField(shop.slug, 'port', e.target.value)}
                               type="number"
                             />
-                          ) : (
-                            shop.port
-                          )}
+                          ) : shop.port}
                         </td>
                         <td className="px-4 py-2.5">
-                          {isEditing ? (
-                            <input
-                              className="w-full rounded border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
-                              value={vals.subdomain ?? shop.subdomain}
-                              onChange={(e) => setField(shop.slug, 'subdomain', e.target.value)}
-                            />
-                          ) : (
-                            shop.subdomain
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            {shop.status === 'running' ? (
+                              <span className="w-1.5 h-1.5 status-dot-running" />
+                            ) : (
+                              <span className={`w-1.5 h-1.5 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                            )}
+                            <span className={`text-xs font-mono ${
+                              shop.status === 'running' ? 'text-[hsl(142,70%,50%)]'
+                              : shop.status === 'error' ? 'text-destructive'
+                              : 'text-muted-foreground'
+                            }`}>{shop.status}</span>
+                          </div>
                         </td>
-                        <td className="px-4 py-2.5">
-                          <span
-                            className={`inline-block text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                              shop.status === 'running'
-                                ? 'bg-green-100 text-green-700'
-                                : shop.status === 'error'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-zinc-100 text-zinc-600'
-                            }`}
-                          >
-                            {shop.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                        <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
                           {shop.created_at?.slice(0, 16).replace('T', ' ') ?? '—'}
                         </td>
                         <td className="px-4 py-2.5">
@@ -340,10 +697,9 @@ export default function Settings() {
                               <button
                                 onClick={() => handleSave(shop.slug)}
                                 disabled={updateMutation.isPending}
-                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 transition-colors"
                               >
-                                <Save className="h-3 w-3" />
-                                Save
+                                <Save className="h-3 w-3" /> Save
                               </button>
                               <button
                                 onClick={cancelEdit}
@@ -355,7 +711,7 @@ export default function Settings() {
                           ) : (
                             <button
                               onClick={() => startEdit(shop)}
-                              className="rounded px-2 py-1 text-xs bg-secondary hover:bg-accent transition-colors"
+                              className="rounded px-2 py-1 text-xs bg-secondary hover:bg-accent border border-border/60 transition-colors"
                             >
                               Edit
                             </button>
@@ -371,20 +727,23 @@ export default function Settings() {
         </div>
 
         {/* Danger Zone */}
-        <div className="rounded-lg border border-destructive/30 bg-card p-5">
-          <h2 className="font-medium text-destructive mb-2">Danger Zone</h2>
-          <p className="text-sm text-muted-foreground mb-3">
-            Permanently delete this shop, its container, and all associated files.
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5">
+          <h2 className="text-sm font-bold text-destructive mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+            Danger Zone
+          </h2>
+          <p className="text-xs text-muted-foreground mb-4">
+            Permanently delete this shop, its container, and all associated files. This cannot be undone.
           </p>
           <button
             onClick={handleDelete}
             disabled={deleteMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-sm font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5" />
             {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
           </button>
         </div>
+
       </div>
     </div>
   );
