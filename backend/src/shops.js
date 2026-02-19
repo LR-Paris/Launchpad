@@ -17,10 +17,10 @@ const BASE_PORT = 8100;
 // When running inside Docker, docker compose needs HOST-side paths for volumes/files.
 // HOST_PROJECT_DIR is injected by docker-compose.yml via environment and should be
 // the ACTUAL host filesystem path (e.g. /home/user/Launchpad), NOT a container path.
-// This is critical because docker-compose communicates with the host Docker daemon
+// This is critical because docker compose communicates with the host Docker daemon
 // via the socket, and bind-mount source paths must exist on the host.
 
-// Path used for docker-compose -f (must be readable from inside this container)
+// Path used for docker compose -f (must be readable from inside this container)
 function getComposeFilePath(slug) {
   if (fs.existsSync('/host/project')) {
     return path.join('/host/project/shops', slug, 'docker-compose.yml');
@@ -76,7 +76,7 @@ function getContainerStatus(slug) {
   try {
     const composeFile = getComposeFilePath(slug);
     const result = execSync(
-      `docker-compose -f ${composeFile} ps --format json`,
+      `docker compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8' }
     );
     if (result.trim()) {
@@ -162,6 +162,91 @@ function patchShopFetchCalls(shopDir) {
   return patched;
 }
 
+// Recursively find files matching any of the given extensions under a directory
+function findFilesByExtSync(dir, extensions) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.next') {
+      results.push(...findFilesByExtSync(full, extensions));
+    } else if (extensions.some(ext => entry.name.endsWith(ext))) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+// After cloning a shop, replace literal public asset paths (e.g. src="/logo.png")
+// with basePath-prefixed template literals so they resolve under path-based routing.
+function patchShopPublicAssets(shopDir, slug) {
+  const appDir = path.join(shopDir, 'app');
+  const componentsDir = path.join(shopDir, 'components');
+  let patched = 0;
+
+  // ── 1. Patch TSX/JSX files ──────────────────────────────
+  const tsxFiles = [
+    ...findFilesByExtSync(appDir, ['.tsx', '.jsx']),
+    ...findFilesByExtSync(componentsDir, ['.tsx', '.jsx']),
+  ];
+
+  // Asset extensions typically in /public
+  const assetExts = '(?:png|jpg|jpeg|svg|ico|gif|webp|woff2?|css)';
+  const srcPattern = new RegExp(`(src=)"(\\/[^"]+\\.${assetExts})"`, 'g');
+  const hrefPattern = new RegExp(`(href=)"(\\/[^"]+\\.${assetExts})"`, 'g');
+
+  for (const file of tsxFiles) {
+    let content = fs.readFileSync(file, 'utf8');
+    const origContent = content;
+
+    // src="/foo.png" → src={`${basePath}/foo.png`}
+    content = content.replace(srcPattern, (match, attr, assetPath) => {
+      return `${attr}{\`\${basePath}${assetPath}\`}`;
+    });
+
+    // href="/styles.css" → href={`${basePath}/styles.css`}
+    content = content.replace(hrefPattern, (match, attr, assetPath) => {
+      return `${attr}{\`\${basePath}${assetPath}\`}`;
+    });
+
+    if (content !== origContent) {
+      // Add basePath to the import from @/lib/api
+      if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
+        content = "import { basePath } from '@/lib/api';\n" + content;
+      } else if (!content.includes('basePath')) {
+        // Import exists but basePath isn't imported — add it
+        content = content.replace(
+          /import\s*\{([^}]*)\}\s*from\s*'@\/lib\/api'/,
+          (m, imports) => `import {${imports}, basePath } from '@/lib/api'`
+        );
+      }
+      fs.writeFileSync(file, content);
+      patched++;
+    }
+  }
+
+  // ── 2. Patch CSS files ──────────────────────────────────
+  // CSS can't use JS vars, so replace url('/...) with url('/slug/...') literally
+  const cssFiles = findFilesByExtSync(appDir, ['.css']);
+
+  for (const file of cssFiles) {
+    let content = fs.readFileSync(file, 'utf8');
+    const origContent = content;
+
+    // url('/  → url('/slug/   (but not url('// for protocol-relative)
+    content = content.replace(/url\(\s*'\/(?!\/)/g, `url('/${slug}/`);
+    content = content.replace(/url\(\s*"\/(?!\/)/g, `url("/${slug}/`);
+
+    if (content !== origContent) {
+      fs.writeFileSync(file, content);
+      patched++;
+    }
+  }
+
+  return patched;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description } = req.body;
@@ -231,6 +316,12 @@ router.post('/', (req, res) => {
       log.push(`Patched ${patchedCount} page file(s) to use apiFetch().`);
     }
 
+    // Patch public asset paths (images, fonts, CSS) to include basePath
+    const assetPatchCount = patchShopPublicAssets(shopDir, slug);
+    if (assetPatchCount > 0) {
+      log.push(`Patched ${assetPatchCount} file(s) with basePath for public assets.`);
+    }
+
     // Create orders directory
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
@@ -267,10 +358,10 @@ router.post('/', (req, res) => {
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
-    log.push(`Starting container with: docker-compose -f ${hostComposeFile} up -d`);
+    log.push(`Starting container with: docker compose -f ${hostComposeFile} up -d`);
     try {
       const upOut = execSync(
-        `docker-compose -f ${hostComposeFile} up -d 2>&1`,
+        `docker compose -f ${hostComposeFile} up -d 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
       log.push(upOut || 'Container started.');
@@ -366,7 +457,7 @@ router.patch('/:slug', (req, res) => {
       // Stop container
       const oldCompose = getComposeFilePath(slug);
       if (fs.existsSync(path.join(oldDir, 'docker-compose.yml'))) {
-        try { execSync(`docker-compose -f ${oldCompose} down 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+        try { execSync(`docker compose -f ${oldCompose} down 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
       }
 
       // Rename directory
@@ -403,7 +494,7 @@ router.patch('/:slug', (req, res) => {
 
       // Restart container
       const newCompose = getComposeFilePath(newSlug);
-      try { execSync(`docker-compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+      try { execSync(`docker compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
     }
 
     db.prepare(
@@ -432,7 +523,7 @@ router.get('/:slug/logs', (req, res) => {
     let logs = '';
     try {
       logs = execSync(
-        `docker-compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
+        `docker compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
     } catch (logErr) {
@@ -463,7 +554,7 @@ router.delete('/:slug', (req, res) => {
     const localComposeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
     if (fs.existsSync(localComposeFile)) {
       try {
-        execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
+        execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
       } catch { /* container may not be running */ }
     }
 
@@ -500,7 +591,7 @@ router.post('/:slug/start', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
-      out = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
+      out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -530,7 +621,7 @@ router.post('/:slug/stop', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
-      out = execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, {
+      out = execSync(`docker compose -f ${hostComposeFile} down 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -560,13 +651,13 @@ router.post('/:slug/restart', (req, res) => {
     let out = '';
     try {
       // Try restart first; if it fails (container not created), fall back to up -d
-      out = execSync(`docker-compose -f ${hostComposeFile} restart 2>&1`, {
+      out = execSync(`docker compose -f ${hostComposeFile} restart 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
     } catch {
       try {
-        out = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
+        out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
           stdio: 'pipe',
           encoding: 'utf8',
         });
@@ -610,8 +701,8 @@ router.post('/:slug/deploy', (req, res) => {
 
     // Rebuild container
     try {
-      execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker-compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });

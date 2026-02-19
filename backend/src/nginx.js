@@ -3,10 +3,10 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const NGINX_CONF_DIR = path.join(__dirname, '..', 'nginx', 'conf.d');
-const SHOPS_LOCATIONS_FILE = path.join(NGINX_CONF_DIR, 'shops-locations.conf');
+const SHOPS_LOCATIONS_FILE = path.join(NGINX_CONF_DIR, 'shops-locations.inc');
 
 // Generate a path-based location block for a shop and append it to the
-// shared shops-locations.conf file.  This replaces the old per-shop
+// shared shops-locations.inc file.  This replaces the old per-shop
 // subdomain server block approach so that shops are reachable at
 // domain.com/<slug> instead of <slug>.domain.com.
 function generateShopConfig(slug, port) {
@@ -45,14 +45,15 @@ location /${slug}/api/images/ {
   fs.appendFileSync(SHOPS_LOCATIONS_FILE, block);
 }
 
-// Remove a shop's location block from shops-locations.conf
+// Remove a shop's location blocks from shops-locations.inc
 function removeShopConfig(slug) {
   if (!fs.existsSync(SHOPS_LOCATIONS_FILE)) return;
 
   const content = fs.readFileSync(SHOPS_LOCATIONS_FILE, 'utf8');
-  // Each block is delimited by the "# Shop: <slug>" comment
+  // Each shop has two location blocks: main + /api/images/, both under a "# Shop:" comment
+  const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
-    `\\n# Shop: ${slug}\\n[\\s\\S]*?\\n}\\n`,
+    `\\n# Shop: ${escaped}\\nlocation /${escaped}[\\s\\S]*?\\n}\\n\\nlocation /${escaped}/api/images/[\\s\\S]*?\\n}\\n`,
     'g'
   );
   const updated = content.replace(pattern, '');

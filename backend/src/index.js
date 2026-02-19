@@ -37,7 +37,24 @@ if (users.length === 0) {
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin) return callback(null, true);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const baseDomain = process.env.BASE_DOMAIN;
+
+    if (origin === frontendUrl) return callback(null, true);
+
+    // Allow any subdomain of BASE_DOMAIN (http or https, any port)
+    if (baseDomain) {
+      const escaped = baseDomain.replace(/\./g, '\\.');
+      const domainPattern = new RegExp(`^https?://(.*\\.)?${escaped}(:\\d+)?$`);
+      if (domainPattern.test(origin)) return callback(null, true);
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 
