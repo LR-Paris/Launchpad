@@ -15,16 +15,26 @@ const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
 const BASE_PORT = 8100;
 
 // When running inside Docker, docker compose needs HOST-side paths for volumes/files.
-// HOST_PROJECT_DIR is injected by docker-compose.yml via environment: HOST_PROJECT_DIR=/host/project
-function getHostShopsDir() {
-  // If running in Docker with mounted project at /host/project
-  if (process.env.HOST_PROJECT_DIR && fs.existsSync('/host/project')) {
-    return '/host/project/shops';
+// HOST_PROJECT_DIR is injected by docker-compose.yml via environment and should be
+// the ACTUAL host filesystem path (e.g. /home/user/Launchpad), NOT a container path.
+// This is critical because docker-compose communicates with the host Docker daemon
+// via the socket, and bind-mount source paths must exist on the host.
+
+// Path used for docker-compose -f (must be readable from inside this container)
+function getComposeFilePath(slug) {
+  if (fs.existsSync('/host/project')) {
+    return path.join('/host/project/shops', slug, 'docker-compose.yml');
   }
-  // Fallback to env var or default
-  return process.env.HOST_PROJECT_DIR
-    ? path.join(process.env.HOST_PROJECT_DIR, 'shops')
-    : SHOPS_DIR;
+  return path.join(SHOPS_DIR, slug, 'docker-compose.yml');
+}
+
+// Actual host-side path for a shop directory (used in volume mounts so the
+// host Docker daemon can find the files)
+function getHostShopDir(slug) {
+  if (process.env.HOST_PROJECT_DIR) {
+    return path.join(process.env.HOST_PROJECT_DIR, 'shops', slug);
+  }
+  return path.join(SHOPS_DIR, slug);
 }
 
 function getDb() {
@@ -57,8 +67,7 @@ function getNextPort(db) {
 
 function getContainerStatus(slug) {
   try {
-    const hostShopsDir = getHostShopsDir();
-    const composeFile = path.join(hostShopsDir, slug, 'docker-compose.yml');
+    const composeFile = getComposeFilePath(slug);
     const result = execSync(
       `docker-compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8' }
@@ -158,9 +167,12 @@ router.post('/', (req, res) => {
       throw new Error(`Template not found at ${templatePath}. Check that the templates directory is mounted.`);
     }
     const template = fs.readFileSync(templatePath, 'utf8');
+    const hostShopDir = getHostShopDir(slug);
     fs.writeFileSync(
       path.join(shopDir, 'docker-compose.yml'),
-      template.replace(/{PORT}/g, String(port))
+      template
+        .replace(/{PORT}/g, String(port))
+        .replace(/{SHOP_DIR}/g, hostShopDir)
     );
     log.push(`Configured shop docker-compose.yml on port ${port}.`);
 
@@ -173,8 +185,8 @@ router.post('/', (req, res) => {
       'INSERT INTO shops (slug, name, status, port, subdomain) VALUES (?, ?, ?, ?, ?)'
     ).run(slug, name, 'stopped', port, subdomain);
 
-    // Start the container using host-side path
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    // Start the container using container-readable path
+    const hostComposeFile = getComposeFilePath(slug);
     log.push(`Starting container with: docker-compose -f ${hostComposeFile} up -d`);
     try {
       const upOut = execSync(
@@ -279,7 +291,7 @@ router.get('/:slug/logs', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     let logs = '';
     try {
       logs = execSync(
@@ -310,7 +322,7 @@ router.delete('/:slug', (req, res) => {
     }
 
     // Stop container using host-side path
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     const localComposeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
     if (fs.existsSync(localComposeFile)) {
       try {
@@ -348,7 +360,7 @@ router.post('/:slug/start', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
       out = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
@@ -378,7 +390,7 @@ router.post('/:slug/stop', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
       out = execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, {
@@ -407,7 +419,7 @@ router.post('/:slug/restart', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
       // Try restart first; if it fails (container not created), fall back to up -d
@@ -446,7 +458,7 @@ router.post('/:slug/deploy', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
     const shopDir = path.join(SHOPS_DIR, slug);
-    const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
+    const hostComposeFile = getComposeFilePath(slug);
     const log = [];
 
     // Pull latest if it's a git repo
