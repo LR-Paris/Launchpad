@@ -1,10 +1,14 @@
 services:
   web:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - .:/app
+    image: ghcr.io/lr-paris/shuttle:latest
+    pull_policy: always
     ports:
       - "{PORT}:3000"
-    command: sh -c "npm install && npm run build && npm start"
+    volumes:
+      - ./DATABASE:/app/DATABASE
+      - ./orders:/app/orders
+    environment:
+      - SHOP_NAME={SHOP_NAME}
+      - SHOP_SLUG={SHOP_SLUG}
+      - SHOP_PORT={PORT}
     restart: unless-stopped

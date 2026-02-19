@@ -11,7 +11,6 @@ const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
-const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
 const BASE_PORT = 8100;
 
 // When running inside Docker, docker compose needs HOST-side paths for volumes/files.
@@ -121,26 +120,14 @@ router.post('/', (req, res) => {
     const subdomain = slug;
     const log = [];
 
-    // Clone or copy shop files
+    // Create shop directory; optionally seed with files from a local folder
+    fs.mkdirSync(shopDir, { recursive: true });
     if (folderPath) {
       if (!fs.existsSync(folderPath)) {
         return res.status(400).json({ error: 'Source folder not found' });
       }
       copyDirSync(folderPath, shopDir);
       log.push(`Copied files from ${folderPath}`);
-    } else {
-      log.push(`Cloning template from ${TEMPLATE_REPO}...`);
-      try {
-        const cloneOut = execSync(`git clone ${TEMPLATE_REPO} ${shopDir} 2>&1`, {
-          stdio: 'pipe',
-          encoding: 'utf8',
-        });
-        log.push(cloneOut || 'Clone complete.');
-      } catch (cloneErr) {
-        const msg = cloneErr.stderr?.toString() || cloneErr.stdout?.toString() || cloneErr.message;
-        log.push(`Clone error: ${msg}`);
-        throw new Error(`git clone failed: ${msg}`);
-      }
     }
 
     // Create orders directory
@@ -160,7 +147,10 @@ router.post('/', (req, res) => {
     const template = fs.readFileSync(templatePath, 'utf8');
     fs.writeFileSync(
       path.join(shopDir, 'docker-compose.yml'),
-      template.replace(/{PORT}/g, String(port))
+      template
+        .replace(/{PORT}/g, String(port))
+        .replace(/{SHOP_NAME}/g, name)
+        .replace(/{SHOP_SLUG}/g, slug)
     );
     log.push(`Configured shop docker-compose.yml on port ${port}.`);
 
@@ -173,10 +163,15 @@ router.post('/', (req, res) => {
       'INSERT INTO shops (slug, name, status, port, subdomain) VALUES (?, ?, ?, ?, ?)'
     ).run(slug, name, 'stopped', port, subdomain);
 
-    // Start the container using host-side path
+    // Pull image then start the container using host-side path
     const hostComposeFile = path.join(getHostShopsDir(), slug, 'docker-compose.yml');
     log.push(`Starting container with: docker-compose -f ${hostComposeFile} up -d`);
     try {
+      const pullOut = execSync(
+        `docker-compose -f ${hostComposeFile} pull 2>&1`,
+        { stdio: 'pipe', encoding: 'utf8' }
+      );
+      log.push(pullOut || 'Image pulled.');
       const upOut = execSync(
         `docker-compose -f ${hostComposeFile} up -d 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
@@ -459,17 +454,18 @@ router.post('/:slug/deploy', (req, res) => {
       }
     }
 
-    // Rebuild container
+    // Pull latest image and restart container
     try {
+      execSync(`docker-compose -f ${hostComposeFile} pull 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
       execSync(`docker-compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker-compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      const upOut = execSync(`docker-compose -f ${hostComposeFile} up -d 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
-      log.push(upOut || 'Container rebuilt.');
+      log.push(upOut || 'Container redeployed.');
     } catch (buildErr) {
       const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
-      log.push(`Build error: ${msg}`);
+      log.push(`Deploy error: ${msg}`);
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
       return res.status(500).json({ error: msg, log: log.join('\n') });
     }
