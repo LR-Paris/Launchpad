@@ -107,6 +107,61 @@ function copyDirSync(src, dest) {
   }
 }
 
+// Recursively find files matching a pattern (e.g. page.tsx) under a directory
+function findFilesSync(dir, filename) {
+  const results = [];
+  if (!fs.existsSync(dir)) return results;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.next') {
+      results.push(...findFilesSync(full, filename));
+    } else if (entry.name === filename) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+// After cloning a shop, replace all fetch('/api/...') calls with apiFetch()
+// so path-based routing works correctly behind the nginx reverse proxy.
+function patchShopFetchCalls(shopDir) {
+  const appDir = path.join(shopDir, 'app');
+  if (!fs.existsSync(appDir)) return 0;
+
+  const pageFiles = findFilesSync(appDir, 'page.tsx');
+  let patched = 0;
+
+  for (const file of pageFiles) {
+    let content = fs.readFileSync(file, 'utf8');
+
+    // Skip files that don't use fetch('/api/
+    if (!content.includes("fetch('/api/") && !content.includes('fetch("/api/') && !content.includes('fetch(`/api/')) {
+      continue;
+    }
+
+    // Replace fetch('/api/...' with apiFetch('/...'
+    content = content
+      .replace(/fetch\('\/api\//g, "apiFetch('/")
+      .replace(/fetch\("\/api\//g, 'apiFetch("/')
+      .replace(/fetch\(`\/api\//g, "apiFetch(`/");
+
+    // Add the import if not already present
+    if (!content.includes('apiFetch')) {
+      // Shouldn't happen after replacement, but guard anyway
+      continue;
+    }
+    if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
+      content = "import { apiFetch } from '@/lib/api';\n" + content;
+    }
+
+    fs.writeFileSync(file, content);
+    patched++;
+  }
+
+  return patched;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description } = req.body;
@@ -168,6 +223,12 @@ router.post('/', (req, res) => {
     if (fs.existsSync(overridesDir)) {
       copyDirSync(overridesDir, shopDir);
       log.push('Applied path-based routing overrides.');
+    }
+
+    // Patch fetch('/api/...') → apiFetch('/...') in all page files
+    const patchedCount = patchShopFetchCalls(shopDir);
+    if (patchedCount > 0) {
+      log.push(`Patched ${patchedCount} page file(s) to use apiFetch().`);
     }
 
     // Create orders directory
