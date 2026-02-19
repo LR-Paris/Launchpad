@@ -4,12 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
-  getShopImageUrl,
+  getShopImageUrl, replaceShopFile,
 } from '../lib/api';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
-  Upload, Copy, ImageIcon, Store,
+  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check,
 } from 'lucide-react';
 
 
@@ -48,6 +48,19 @@ export default function Settings() {
   const [shopPassword, setShopPassword] = useState('');
   const [passwordShown, setPasswordShown] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
+
+  // Shop Settings UI — DATABASE/Design/Details
+  const [detailsEntries, setDetailsEntries] = useState([]);
+  const [detailsValues, setDetailsValues] = useState({});
+  const [detailsOriginal, setDetailsOriginal] = useState({});
+  const [detailsSaving, setDetailsSaving] = useState({});
+  const [detailsSuccess, setDetailsSuccess] = useState('');
+  const [detailsError, setDetailsError] = useState('');
+  const [detailsLoading, setDetailsLoading] = useState(true);
+  const [replacingImage, setReplacingImage] = useState(null);
+  const [imageTimestamps, setImageTimestamps] = useState({});
+  const imageInputRefs = useRef({});
+  const [detailsPasswordShown, setDetailsPasswordShown] = useState({});
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -100,6 +113,95 @@ export default function Settings() {
           .catch(() => setShopPassword(''));
       });
   }, [slug]);
+
+  // Load all files from DATABASE/Design/Details for the Shop Settings UI
+  useEffect(() => {
+    setDetailsLoading(true);
+    listShopFiles(slug, 'DATABASE/Design/Details')
+      .then(async (data) => {
+        const entries = (data.entries || []).filter(e => !e.isDirectory);
+        setDetailsEntries(entries);
+
+        const textEntries = entries.filter(e => e.readable);
+        const values = {};
+        const original = {};
+
+        await Promise.all(textEntries.map(async (entry) => {
+          const filePath = `DATABASE/Design/Details/${entry.name}`;
+          try {
+            const fileData = await readShopFile(slug, filePath);
+            values[filePath] = fileData.content;
+            original[filePath] = fileData.content;
+          } catch {
+            values[filePath] = '';
+            original[filePath] = '';
+          }
+        }));
+
+        setDetailsValues(values);
+        setDetailsOriginal(original);
+        setDetailsLoading(false);
+      })
+      .catch(() => {
+        setDetailsEntries([]);
+        setDetailsLoading(false);
+      });
+  }, [slug]);
+
+  const friendlyLabel = (filename) => {
+    const name = filename.replace(/\.[^.]+$/, '');
+    return name
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .replace(/[_-]/g, ' ')
+      .trim();
+  };
+
+  const saveDetailFile = async (filePath) => {
+    setDetailsSaving(prev => ({ ...prev, [filePath]: true }));
+    setDetailsError('');
+    setDetailsSuccess('');
+    try {
+      await writeShopFile(slug, filePath, detailsValues[filePath]);
+      setDetailsOriginal(prev => ({ ...prev, [filePath]: detailsValues[filePath] }));
+      const label = friendlyLabel(filePath.split('/').pop());
+      setDetailsSuccess(`${label} saved.`);
+      // Also update the header shop info if relevant
+      if (filePath.endsWith('CompanyName.txt')) {
+        setShopTitle(detailsValues[filePath].trim());
+      } else if (filePath.endsWith('Descriptions.txt')) {
+        const raw = detailsValues[filePath].trim();
+        const aboutMatch = raw.match(/^about:\s*(.+)/m);
+        setShopDescription(aboutMatch ? aboutMatch[1].trim() : raw);
+      } else if (filePath.endsWith('Password.txt')) {
+        setShopPassword(detailsValues[filePath].trim());
+      }
+      setTimeout(() => setDetailsSuccess(''), 3000);
+    } catch (err) {
+      setDetailsError(err.response?.data?.error || 'Failed to save file');
+    } finally {
+      setDetailsSaving(prev => ({ ...prev, [filePath]: false }));
+    }
+  };
+
+  const handleImageReplace = async (filePath, file) => {
+    if (!file) return;
+    setReplacingImage(filePath);
+    setDetailsError('');
+    setDetailsSuccess('');
+    try {
+      await replaceShopFile(slug, filePath, file);
+      // Force image refresh by adding a timestamp
+      setImageTimestamps(prev => ({ ...prev, [filePath]: Date.now() }));
+      const label = friendlyLabel(filePath.split('/').pop());
+      setDetailsSuccess(`${label} replaced.`);
+      setTimeout(() => setDetailsSuccess(''), 3000);
+    } catch (err) {
+      setDetailsError(err.response?.data?.error || 'Failed to replace image');
+    } finally {
+      setReplacingImage(null);
+    }
+  };
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -297,26 +399,186 @@ export default function Settings() {
 
       <div className="space-y-5">
 
-        {/* Shop Info from DATABASE/Design/Details */}
-        {(shopTitle || shopDescription) && (
-          <div className="lp-card rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                   style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
-                <Store className="h-3.5 w-3.5 lp-glow" />
-              </div>
-              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Info</h2>
-            </div>
-            {shopTitle && (
-              <p className="text-base font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
-                {shopTitle}
-              </p>
-            )}
-            {shopDescription && (
-              <p className="text-sm text-muted-foreground leading-relaxed">{shopDescription}</p>
-            )}
+        {/* Shop Settings — DATABASE/Design/Details */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <SlidersHorizontal className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Settings</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE / Design / Details</span>
           </div>
-        )}
+
+          {detailsSuccess && (
+            <div className="px-5 py-2 text-xs text-[hsl(142,70%,50%)] border-b border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)] flex items-center gap-1.5">
+              <Check className="h-3 w-3" />
+              {detailsSuccess}
+            </div>
+          )}
+          {detailsError && (
+            <div className="px-5 py-2 text-xs text-destructive bg-destructive/5 border-b border-destructive/20">{detailsError}</div>
+          )}
+
+          {detailsLoading ? (
+            <div className="px-5 py-8 text-center">
+              <p className="text-xs text-muted-foreground font-mono">Loading settings...</p>
+            </div>
+          ) : detailsEntries.length === 0 ? (
+            <div className="px-5 py-8 text-center">
+              <p className="text-xs text-muted-foreground font-mono">
+                No settings files found in DATABASE/Design/Details/.
+              </p>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                Upload a DATABASE.zip or create files via the file browser below.
+              </p>
+            </div>
+          ) : (
+            <div className="p-5 space-y-6">
+              {/* Text file settings */}
+              {detailsEntries
+                .filter(e => e.readable)
+                .map(entry => {
+                  const filePath = `DATABASE/Design/Details/${entry.name}`;
+                  const isPassword = entry.name.toLowerCase() === 'password.txt';
+                  const isLongText = entry.name.toLowerCase() === 'descriptions.txt';
+                  const isDirty = detailsValues[filePath] !== detailsOriginal[filePath];
+                  const isSaving = detailsSaving[filePath];
+                  const label = friendlyLabel(entry.name);
+                  const pwVisible = detailsPasswordShown[filePath];
+
+                  return (
+                    <div key={entry.name}>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium" style={{ fontFamily: 'Syne, sans-serif' }}>
+                          {label}
+                        </label>
+                        <span className="text-[10px] text-muted-foreground font-mono opacity-60">{entry.name}</span>
+                      </div>
+
+                      {isPassword ? (
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <input
+                              type={pwVisible ? 'text' : 'password'}
+                              value={detailsValues[filePath] ?? ''}
+                              onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
+                              className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all pr-10"
+                              placeholder="Enter password..."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setDetailsPasswordShown(prev => ({ ...prev, [filePath]: !prev[filePath] }))}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors"
+                              title={pwVisible ? 'Hide' : 'Show'}
+                            >
+                              {pwVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(detailsValues[filePath] || '');
+                              setDetailsSuccess('Password copied to clipboard.');
+                              setTimeout(() => setDetailsSuccess(''), 2000);
+                            }}
+                            className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0 p-2"
+                            title="Copy to clipboard"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : isLongText ? (
+                        <textarea
+                          value={detailsValues[filePath] ?? ''}
+                          onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
+                          className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-y leading-relaxed"
+                          rows={4}
+                          placeholder={`Enter ${label.toLowerCase()}...`}
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={detailsValues[filePath] ?? ''}
+                          onChange={(e) => setDetailsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
+                          className="w-full rounded-md border border-border/60 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all"
+                          placeholder={`Enter ${label.toLowerCase()}...`}
+                        />
+                      )}
+
+                      <div className="flex items-center gap-2 mt-2">
+                        {isDirty && <span className="text-xs text-amber-400 font-mono">unsaved changes</span>}
+                        <div className="flex-1" />
+                        <button
+                          onClick={() => saveDetailFile(filePath)}
+                          disabled={!isDirty || isSaving}
+                          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                        >
+                          <Save className="h-3 w-3" />
+                          {isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {/* Image file settings */}
+              {detailsEntries.filter(e => e.isImage).length > 0 && (
+                <div className="border-t border-border/40 pt-5">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-4">Images</p>
+                  <div className="space-y-5">
+                    {detailsEntries
+                      .filter(e => e.isImage)
+                      .map(entry => {
+                        const filePath = `DATABASE/Design/Details/${entry.name}`;
+                        const label = friendlyLabel(entry.name);
+                        const isReplacing = replacingImage === filePath;
+                        const ts = imageTimestamps[filePath];
+                        const imgUrl = getShopImageUrl(slug, filePath) + (ts ? `&_t=${ts}` : '');
+
+                        return (
+                          <div key={entry.name}>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-sm font-medium" style={{ fontFamily: 'Syne, sans-serif' }}>
+                                {label}
+                              </label>
+                              <span className="text-[10px] text-muted-foreground font-mono opacity-60">{entry.name}</span>
+                            </div>
+                            <div className="rounded-lg border border-border/40 bg-muted/30 p-4 flex flex-col items-center gap-3">
+                              <img
+                                src={imgUrl}
+                                alt={label}
+                                className="max-h-40 max-w-full object-contain rounded-md border border-border/30"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => imageInputRefs.current[filePath]?.click()}
+                                  disabled={isReplacing}
+                                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
+                                >
+                                  <Upload className="h-3 w-3" />
+                                  {isReplacing ? 'Replacing...' : 'Replace Image'}
+                                </button>
+                                <input
+                                  ref={el => { imageInputRefs.current[filePath] = el; }}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    if (e.target.files?.[0]) handleImageReplace(filePath, e.target.files[0]);
+                                    e.target.value = '';
+                                  }}
+                                />
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  {entry.size > 1024 ? `${(entry.size / 1024).toFixed(1)} KB` : `${entry.size} B`}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Container Control */}
         <div className="lp-card rounded-xl p-5">
@@ -563,46 +825,6 @@ export default function Settings() {
               )}
             </div>
           </div>
-        </div>
-
-        {/* Shop DATABASE Password Viewer */}
-        <div className="lp-card rounded-xl p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                 style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
-              <Database className="h-3.5 w-3.5 lp-glow" />
-            </div>
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Password</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/Design/Details/Password.txt</span>
-          </div>
-          {!shopPassword ? (
-            <p className="text-xs text-muted-foreground font-mono">
-              Password.txt not found at DATABASE/Design/Details/Password.txt.
-            </p>
-          ) : (
-            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/50 px-3 py-2.5">
-              <span className="text-xs font-mono text-muted-foreground flex-shrink-0">password</span>
-              <span className="text-xs font-mono text-foreground flex-1 truncate">
-                {passwordShown ? shopPassword : '•'.repeat(Math.min(shopPassword.length, 20))}
-              </span>
-              <button
-                onClick={() => setPasswordShown(v => !v)}
-                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                title={passwordShown ? 'Hide password' : 'Show password'}
-              >
-                {passwordShown ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
-              <button
-                onClick={copyPassword}
-                className="text-muted-foreground hover:text-primary transition-colors flex-shrink-0"
-                title="Copy to clipboard"
-              >
-                {passwordCopied
-                  ? <span className="text-xs text-[hsl(142,70%,50%)] font-mono">copied</span>
-                  : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Shops Database Viewer */}

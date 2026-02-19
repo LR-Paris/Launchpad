@@ -250,6 +250,23 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   }
 });
 
+// POST /api/shops/:slug/files/replace?path=DATABASE/Design/Details/Logo.png
+// Replaces a single file at the exact path specified (used for image replacement)
+router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
+  const { slug } = req.params;
+  const relPath = req.query.path;
+  if (!relPath) return res.status(400).json({ error: 'path query param required' });
+
+  const resolved = safeShopPath(slug, relPath);
+  if (!resolved) return res.status(400).json({ error: 'Invalid path' });
+
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, req.file.buffer);
+  res.json({ message: 'File replaced', path: relPath });
+});
+
 // POST /api/shops/:slug/files/upload?path=subdir
 router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
   const { slug } = req.params;
