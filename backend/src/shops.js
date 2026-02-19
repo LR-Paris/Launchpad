@@ -152,12 +152,19 @@ router.post('/', (req, res) => {
       }
     }
 
+    // Apply path-based routing overrides (next.config.js, lib/api.ts, etc.)
+    const overridesDir = path.join(TEMPLATES_DIR, 'shop-overrides');
+    if (fs.existsSync(overridesDir)) {
+      copyDirSync(overridesDir, shopDir);
+      log.push('Applied path-based routing overrides.');
+    }
+
     // Create orders directory
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
 
-    // Write .env for shop (includes BASE_PATH for path-based routing)
-    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\n`;
+    // Write .env for shop (includes base path vars for path-based routing)
+    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
     log.push('Wrote shop .env file.');
 
