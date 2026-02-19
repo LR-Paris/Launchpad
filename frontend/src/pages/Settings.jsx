@@ -74,13 +74,18 @@ export default function Settings() {
     }
   }, [filesError, browsePath]);
 
-  // Load DATABASE/Design/Details/Title.txt and Description.txt
+  // Load DATABASE/Design/Details/CompanyName.txt and Descriptions.txt
   useEffect(() => {
-    readShopFile(slug, 'DATABASE/Design/Details/Title.txt')
+    readShopFile(slug, 'DATABASE/Design/Details/CompanyName.txt')
       .then((d) => setShopTitle(d.content.trim()))
       .catch(() => setShopTitle(''));
-    readShopFile(slug, 'DATABASE/Design/Details/Description.txt')
-      .then((d) => setShopDescription(d.content.trim()))
+    readShopFile(slug, 'DATABASE/Design/Details/Descriptions.txt')
+      .then((d) => {
+        const raw = d.content.trim();
+        // Parse "about: ..." line if present, otherwise show full content
+        const aboutMatch = raw.match(/^about:\s*(.+)/m);
+        setShopDescription(aboutMatch ? aboutMatch[1].trim() : raw);
+      })
       .catch(() => setShopDescription(''));
   }, [slug]);
 

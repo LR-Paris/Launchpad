@@ -3,7 +3,7 @@ services:
     image: node:20-alpine
     working_dir: /app
     volumes:
-      - ./DATABASE:/app
+      - .:/app
     ports:
       - "{PORT}:3000"
     command: sh -c "npm install && npm run build && npm start"
