@@ -857,6 +857,176 @@ router.post('/:slug/deploy', (req, res) => {
   }
 });
 
+// GET /api/shops/:slug/check-update — Check if the Shuttle template has a newer version
+router.get('/:slug/check-update', (req, res) => {
+  const { slug } = req.params;
+  const shopDir = path.join(SHOPS_DIR, slug);
+
+  if (!fs.existsSync(shopDir)) {
+    return res.status(404).json({ error: 'Shop not found' });
+  }
+
+  const hasGit = fs.existsSync(path.join(shopDir, '.git'));
+  if (!hasGit) {
+    return res.json({ updateAvailable: false, reason: 'Shop is not a git repository' });
+  }
+
+  try {
+    // Get the local HEAD commit
+    const localCommit = execSync('git rev-parse HEAD', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const localCommitShort = localCommit.slice(0, 7);
+
+    // Get the local commit date for display
+    const localDate = execSync('git log -1 --format=%ci', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    // Fetch latest from remote without modifying working tree
+    try {
+      execSync('git fetch origin 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+    } catch {
+      return res.json({
+        updateAvailable: false,
+        localCommit: localCommitShort,
+        localDate,
+        reason: 'Could not reach remote repository',
+      });
+    }
+
+    // Get the remote HEAD commit
+    const remoteCommit = execSync('git rev-parse origin/HEAD 2>/dev/null || git rev-parse origin/main 2>/dev/null || git rev-parse origin/master', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const remoteCommitShort = remoteCommit.slice(0, 7);
+
+    // Count commits behind
+    let commitsBehind = 0;
+    try {
+      const count = execSync(`git rev-list HEAD..${remoteCommit} --count`, {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      }).trim();
+      commitsBehind = parseInt(count, 10) || 0;
+    } catch { /* ignore */ }
+
+    const remoteDate = execSync(`git log -1 --format=%ci ${remoteCommit}`, {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const updateAvailable = localCommit !== remoteCommit;
+
+    res.json({
+      updateAvailable,
+      localCommit: localCommitShort,
+      localDate,
+      remoteCommit: remoteCommitShort,
+      remoteDate,
+      commitsBehind,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/shops/:slug/update-template — Pull latest Shuttle, re-apply patches, rebuild
+router.post('/:slug/update-template', (req, res) => {
+  const { slug } = req.params;
+  const db = getDb();
+
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const shopDir = path.join(SHOPS_DIR, slug);
+    const hostComposeFile = getComposeFilePath(slug);
+    const log = [];
+
+    // 1. Pull latest from Shuttle template
+    if (!fs.existsSync(path.join(shopDir, '.git'))) {
+      return res.status(400).json({ error: 'Shop is not a git repository — cannot update.' });
+    }
+
+    try {
+      // Stash any local changes (patches) before pulling
+      const stash = execSync('git stash 2>&1', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      });
+      log.push(`git stash: ${stash.trim()}`);
+    } catch (e) {
+      log.push(`git stash warning: ${e.message}`);
+    }
+
+    try {
+      const pull = execSync('git pull origin main 2>&1 || git pull origin master 2>&1', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8', shell: true,
+      });
+      log.push(`git pull: ${pull.trim()}`);
+    } catch (pullErr) {
+      const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
+      log.push(`git pull error: ${msg}`);
+      // Try to pop stash back
+      try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
+    }
+
+    // Don't pop stash — we'll re-apply all patches fresh below
+
+    // 2. Re-apply path-based routing overrides
+    const overridesDir = path.join(TEMPLATES_DIR, 'shop-overrides');
+    if (fs.existsSync(overridesDir)) {
+      copyDirSync(overridesDir, shopDir);
+      log.push('Re-applied path-based routing overrides.');
+    }
+
+    // 3. Re-apply all patches
+    const fetchPatchCount = patchShopFetchCalls(shopDir);
+    if (fetchPatchCount > 0) log.push(`Patched ${fetchPatchCount} file(s) with apiFetch().`);
+
+    const assetPatchCount = patchShopPublicAssets(shopDir, slug);
+    if (assetPatchCount > 0) log.push(`Patched ${assetPatchCount} file(s) with basePath for assets.`);
+
+    const dynamicPatchCount = patchShopDynamicUrls(shopDir);
+    if (dynamicPatchCount > 0) log.push(`Patched ${dynamicPatchCount} layout file(s) with assetUrl().`);
+
+    const imagePatchCount = patchShopImageUrls(shopDir);
+    if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    // 4. Rebuild container
+    log.push('Rebuilding container...');
+    try {
+      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+        stdio: 'pipe', encoding: 'utf8',
+      });
+      log.push(upOut || 'Container rebuilt and started.');
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    } catch (buildErr) {
+      const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
+      log.push(`Build error: ${msg}`);
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: msg, log: log.join('\n') });
+    }
+
+    // Get the new commit info
+    let newCommit = '';
+    try {
+      newCommit = execSync('git rev-parse --short HEAD', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      }).trim();
+    } catch { /* ignore */ }
+
+    log.push(`Update complete. Now at commit ${newCommit}.`);
+    res.json({ message: `Shop "${slug}" updated successfully`, commit: newCommit, log: log.join('\n') });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
 function initDb() {
   const db = getDb();
   db.close();

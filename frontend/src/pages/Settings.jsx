@@ -4,12 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
-  getShopImageUrl, replaceShopFile,
+  getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate,
 } from '../lib/api';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
-  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check,
+  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
@@ -45,6 +45,13 @@ export default function Settings() {
   // DATABASE/Design/Details info
   const [shopTitle, setShopTitle] = useState('');
   const [shopDescription, setShopDescription] = useState('');
+
+  // Shuttle template update state
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState('');
+  const [updateError, setUpdateError] = useState('');
 
   // DATABASE password file viewer
   const [shopPassword, setShopPassword] = useState('');
@@ -377,6 +384,40 @@ export default function Settings() {
     });
   };
 
+  const handleCheckUpdate = async () => {
+    setUpdateChecking(true);
+    setUpdateError('');
+    setUpdateMessage('');
+    try {
+      const data = await checkShopUpdate(slug);
+      setUpdateInfo(data);
+    } catch (err) {
+      setUpdateError(err.response?.data?.error || 'Failed to check for updates');
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!window.confirm('Update the Shuttle template? The shop will be rebuilt and restarted.')) return;
+    setUpdateInstalling(true);
+    setUpdateError('');
+    setUpdateMessage('');
+    try {
+      const data = await installShopUpdate(slug);
+      setUpdateMessage(data.message || 'Update installed successfully');
+      setDeployLog(data.log || '');
+      setUpdateInfo(null); // Reset so user can check again
+      queryClient.invalidateQueries({ queryKey: ['shops'] });
+      queryClient.invalidateQueries({ queryKey: ['shop-logs', slug] });
+    } catch (err) {
+      setUpdateError(err.response?.data?.error || 'Update failed');
+      if (err.response?.data?.log) setDeployLog(err.response.data.log);
+    } finally {
+      setUpdateInstalling(false);
+    }
+  };
+
   const breadcrumbs = browsePath === '.' ? [] : browsePath.split('/').filter(Boolean);
   const logOutput = [deployLog, logsData?.logs].filter(Boolean).join('\n\n--- Live Logs ---\n');
   const currentShop = allShops.find((s) => s.slug === slug);
@@ -511,6 +552,94 @@ export default function Settings() {
               {deployMutation.isPending ? 'Redeploying...' : 'Redeploy'}
             </button>
           </div>
+        </div>
+
+        {/* Shuttle Template Update */}
+        <div className="lp-card rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Download className="h-4 w-4 text-primary/70" />
+              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
+            </div>
+          </div>
+
+          {updateError && (
+            <div className="mb-3 px-3 py-2 rounded-md text-xs text-destructive bg-destructive/5 border border-destructive/20">{updateError}</div>
+          )}
+          {updateMessage && (
+            <div className="mb-3 px-3 py-2 rounded-md text-xs text-[hsl(142,70%,50%)] bg-[hsl(142,70%,5%)] border border-[hsl(142,70%,20%)] flex items-center gap-1.5">
+              <Check className="h-3 w-3" />
+              {updateMessage}
+            </div>
+          )}
+
+          {updateInfo ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-4 text-xs font-mono">
+                <div>
+                  <span className="text-muted-foreground">Local: </span>
+                  <span className="text-foreground">{updateInfo.localCommit}</span>
+                  <span className="text-muted-foreground ml-1.5">{updateInfo.localDate?.slice(0, 10)}</span>
+                </div>
+                {updateInfo.remoteCommit && (
+                  <div>
+                    <span className="text-muted-foreground">Remote: </span>
+                    <span className="text-foreground">{updateInfo.remoteCommit}</span>
+                    <span className="text-muted-foreground ml-1.5">{updateInfo.remoteDate?.slice(0, 10)}</span>
+                  </div>
+                )}
+              </div>
+
+              {updateInfo.updateAvailable ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-amber-400 font-medium">
+                    Update available ({updateInfo.commitsBehind} commit{updateInfo.commitsBehind !== 1 ? 's' : ''} behind)
+                  </span>
+                  <button
+                    onClick={handleInstallUpdate}
+                    disabled={updateInstalling}
+                    className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {updateInstalling ? 'Updating...' : 'Install Update'}
+                  </button>
+                  <button
+                    onClick={handleCheckUpdate}
+                    disabled={updateChecking}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${updateChecking ? 'animate-spin' : ''}`} /> Re-check
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-[hsl(142,70%,50%)] font-medium flex items-center gap-1">
+                    <Check className="h-3 w-3" /> Up to date
+                  </span>
+                  <button
+                    onClick={handleCheckUpdate}
+                    disabled={updateChecking}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${updateChecking ? 'animate-spin' : ''}`} /> Re-check
+                  </button>
+                </div>
+              )}
+
+              {updateInfo.reason && (
+                <p className="text-xs text-muted-foreground">{updateInfo.reason}</p>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={handleCheckUpdate}
+              disabled={updateChecking}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${updateChecking ? 'animate-spin' : ''}`} />
+              {updateChecking ? 'Checking...' : 'Check for Update'}
+            </button>
+          )}
         </div>
 
         {/* Terminal / Logs */}

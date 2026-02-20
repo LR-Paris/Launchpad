@@ -104,6 +104,13 @@ export const uploadDatabaseZip = (slug, dirPath, file) => {
   }).then(r => r.data);
 };
 
+// Shop Template Updates
+export const checkShopUpdate = (slug) =>
+  api.get(`/shops/${slug}/check-update`).then(r => r.data);
+
+export const installShopUpdate = (slug) =>
+  api.post(`/shops/${slug}/update-template`).then(r => r.data);
+
 // System / Updates
 export const getSystemVersion = () =>
   api.get('/system/version').then(r => r.data);
