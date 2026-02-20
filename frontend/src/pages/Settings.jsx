@@ -4,12 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
-  getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate,
+  getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
 } from '../lib/api';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
-  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download,
+  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
@@ -89,6 +89,12 @@ export default function Settings() {
   // Delete confirmation state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTyped, setDeleteTyped] = useState('');
+
+  // Wipe orders state
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [wipeTyped, setWipeTyped] = useState('');
+  const [wiping, setWiping] = useState(false);
+  const [wipeMessage, setWipeMessage] = useState('');
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -292,6 +298,23 @@ export default function Settings() {
       setShowDeleteConfirm(false);
       setDeleteTyped('');
       deleteMutation.mutate();
+    }
+  };
+
+  const handleWipeOrders = async () => {
+    if (wipeTyped !== currentShop?.name) return;
+    setWiping(true);
+    setWipeMessage('');
+    try {
+      const data = await wipeOrders(slug);
+      setWipeMessage(data.message || 'Orders wiped successfully.');
+      setShowWipeConfirm(false);
+      setWipeTyped('');
+      setTimeout(() => setWipeMessage(''), 5000);
+    } catch (err) {
+      setWipeMessage(err.response?.data?.error || 'Failed to wipe orders');
+    } finally {
+      setWiping(false);
     }
   };
 
@@ -1000,53 +1023,121 @@ export default function Settings() {
         </div>
 
         {/* Danger Zone */}
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 space-y-6">
           <h2 className="text-sm font-bold text-destructive mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
             Danger Zone
           </h2>
-          <p className="text-xs text-muted-foreground mb-4">
-            Permanently delete this shop, its container, and all associated files. This cannot be undone.
-          </p>
-          {showDeleteConfirm ? (
-            <div className="space-y-3">
-              <p className="text-xs text-destructive font-medium">
-                Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm deletion:
-              </p>
-              <input
-                type="text"
-                value={deleteTyped}
-                onChange={(e) => setDeleteTyped(e.target.value)}
-                placeholder={currentShop?.name}
-                className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
-                autoFocus
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleDelete}
-                  disabled={deleteMutation.isPending || deleteTyped !== currentShop?.name}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
-                </button>
-                <button
-                  onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(''); }}
-                  className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
+
+          {/* Wipe Orders */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <ShoppingCart className="h-3.5 w-3.5 text-destructive/70" />
+              <h3 className="text-xs font-semibold text-destructive">Wipe Orders</h3>
             </div>
-          ) : (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={deleteMutation.isPending}
-              className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete Shop
-            </button>
-          )}
+            <p className="text-xs text-muted-foreground mb-3">
+              Clear all orders from the CSV file. The header row is preserved but all order data will be permanently deleted.
+            </p>
+            {wipeMessage && (
+              <div className={`mb-3 px-3 py-2 rounded-md text-xs border ${
+                wipeMessage.includes('fail') || wipeMessage.includes('Failed')
+                  ? 'text-destructive bg-destructive/5 border-destructive/20'
+                  : 'text-[hsl(142,70%,50%)] bg-[hsl(142,70%,5%)] border-[hsl(142,70%,20%)]'
+              }`}>{wipeMessage}</div>
+            )}
+            {showWipeConfirm ? (
+              <div className="space-y-3">
+                <p className="text-xs text-destructive font-medium">
+                  Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={wipeTyped}
+                  onChange={(e) => setWipeTyped(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleWipeOrders(); if (e.key === 'Escape') { setShowWipeConfirm(false); setWipeTyped(''); } }}
+                  placeholder={currentShop?.name}
+                  className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleWipeOrders}
+                    disabled={wiping || wipeTyped !== currentShop?.name}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                  >
+                    <ShoppingCart className="h-3.5 w-3.5" />
+                    {wiping ? 'Wiping...' : 'Wipe All Orders'}
+                  </button>
+                  <button
+                    onClick={() => { setShowWipeConfirm(false); setWipeTyped(''); }}
+                    className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowWipeConfirm(true)}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors"
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Wipe Orders
+              </button>
+            )}
+          </div>
+
+          <div className="border-t border-destructive/20" />
+
+          {/* Delete Shop */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Trash2 className="h-3.5 w-3.5 text-destructive/70" />
+              <h3 className="text-xs font-semibold text-destructive">Delete Shop</h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Permanently delete this shop, its container, and all associated files. This cannot be undone.
+            </p>
+          {showDeleteConfirm ? (
+              <div className="space-y-3">
+                <p className="text-xs text-destructive font-medium">
+                  Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm deletion:
+                </p>
+                <input
+                  type="text"
+                  value={deleteTyped}
+                  onChange={(e) => setDeleteTyped(e.target.value)}
+                  placeholder={currentShop?.name}
+                  className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleteMutation.isPending || deleteTyped !== currentShop?.name}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
+                  </button>
+                  <button
+                    onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(''); }}
+                    className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deleteMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete Shop
+              </button>
+            )}
+          </div>
         </div>
 
       </div>

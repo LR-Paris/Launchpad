@@ -61,4 +61,32 @@ router.get('/:slug/orders/download', (req, res) => {
   fs.createReadStream(csvPath).pipe(res);
 });
 
+// POST /api/shops/:slug/orders/wipe — Replace orders CSV with header-only file
+router.post('/:slug/orders/wipe', (req, res) => {
+  const { slug } = req.params;
+  // Find the existing CSV to preserve its header
+  const candidates = [
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'orders', 'orders.csv'),
+  ];
+
+  let csvPath = candidates.find(p => fs.existsSync(p));
+
+  if (!csvPath) {
+    return res.status(404).json({ error: 'No orders file found' });
+  }
+
+  try {
+    const content = fs.readFileSync(csvPath, 'utf8');
+    const firstLine = content.split('\n')[0];
+    // Write back just the header row
+    fs.writeFileSync(csvPath, firstLine + '\n');
+    res.json({ message: 'Orders wiped. CSV header preserved.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

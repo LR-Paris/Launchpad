@@ -64,6 +64,9 @@ export const getOrders = (slug) =>
 export const getOrdersDownloadUrl = (slug) =>
   `/api/shops/${slug}/orders/download`;
 
+export const wipeOrders = (slug) =>
+  api.post(`/shops/${slug}/orders/wipe`).then(r => r.data);
+
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
   api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
