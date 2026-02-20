@@ -227,7 +227,7 @@ function patchShopPublicAssets(shopDir, slug) {
   ];
 
   // Asset extensions typically in /public
-  const assetExts = '(?:png|jpg|jpeg|svg|ico|gif|webp|woff2?|css)';
+  const assetExts = '(?:png|jpg|jpeg|svg|ico|gif|webp|woff2?|otf|ttf|eot|css)';
   const srcPattern = new RegExp(`(src=)"(\\/[^"]+\\.${assetExts})"`, 'g');
   const hrefPattern = new RegExp(`(href=)"(\\/[^"]+\\.${assetExts})"`, 'g');
 
@@ -254,7 +254,7 @@ function patchShopPublicAssets(shopDir, slug) {
 
   // ── 2. Patch CSS files ──────────────────────────────────
   // CSS can't use JS vars, so replace url('/...) with url('/slug/...') literally
-  const cssFiles = findFilesByExtSync(appDir, ['.css']);
+  const cssFiles = findFilesByExtSync(shopDir, ['.css']);
 
   for (const file of cssFiles) {
     let content = fs.readFileSync(file, 'utf8');
