@@ -308,6 +308,90 @@ function patchShopDynamicUrls(shopDir) {
   return patched;
 }
 
+// Rewrite image URLs in the Shuttle template's lib/design.ts and lib/catalog.ts
+// from path-based (/api/images/showcase/file.jpg) to query-param-based
+// (/api/image?folder=ShowcasePhotos&file=file.jpg) so that Next.js App Router
+// doesn't intercept them as static file requests and cache 404s.
+function patchShopImageUrls(shopDir) {
+  let patched = 0;
+
+  // ── lib/design.ts ───────────────────────────────────────
+  const designPath = path.join(shopDir, 'lib', 'design.ts');
+  if (fs.existsSync(designPath)) {
+    let content = fs.readFileSync(designPath, 'utf8');
+    const orig = content;
+
+    // Logo URLs:  `/api/images/logos/${file}`  →  `/api/image?folder=Logos&file=${encodeURIComponent(file)}`
+    content = content.replace(
+      /`\$\{[^}]*\}\/api\/images\/logos\/\$\{([^}]+)\}`/g,
+      '`${BASE_PATH}/api/image?folder=Logos&file=${encodeURIComponent($1)}`'
+    );
+    // Also catch non-template forms: '/api/images/logos/' + file
+    content = content.replace(
+      /['"]\/api\/images\/logos\//g,
+      "'/api/image?folder=Logos&file="
+    );
+
+    // Showcase collection images: /api/images/showcase/Collections/${file}
+    content = content.replace(
+      /`\$\{[^}]*\}\/api\/images\/showcase\/Collections\/\$\{([^}]+)\}`/g,
+      "`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent('Collections/' + $1)}`"
+    );
+
+    // Showcase/hero images: /api/images/showcase/${file}
+    content = content.replace(
+      /`\$\{[^}]*\}\/api\/images\/showcase\/\$\{([^}]+)\}`/g,
+      '`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent($1)}`'
+    );
+    // Non-template forms
+    content = content.replace(
+      /['"]\/api\/images\/showcase\//g,
+      "'/api/image?folder=ShowcasePhotos&file="
+    );
+
+    // Ensure BASE_PATH is defined at the top of the file
+    if (content !== orig) {
+      if (!content.includes("const BASE_PATH") && !content.includes("let BASE_PATH")) {
+        content = "const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';\n" + content;
+      }
+      fs.writeFileSync(designPath, content);
+      patched++;
+    }
+  }
+
+  // ── lib/catalog.ts ──────────────────────────────────────
+  const catalogPath = path.join(shopDir, 'lib', 'catalog.ts');
+  if (fs.existsSync(catalogPath)) {
+    let content = fs.readFileSync(catalogPath, 'utf8');
+    const orig = content;
+
+    // Product images: /api/images/products/${...}/${file}
+    // Common patterns:
+    //   `${BASE_PATH}/api/images/products/${productId}/${file}`
+    //   `/api/images/products/${collectionId}-${slug}/${file}`
+    content = content.replace(
+      /`\$\{[^}]*\}\/api\/images\/products\/\$\{([^}]+)\}\/\$\{([^}]+)\}`/g,
+      '`${BASE_PATH}/api/image?folder=Products&collection=${encodeURIComponent($1)}&product=${encodeURIComponent($1)}&file=${encodeURIComponent($2)}`'
+    );
+    // Non-template forms
+    content = content.replace(
+      /['"]\/api\/images\/products\//g,
+      "'/api/image?folder=Products&collection="
+    );
+
+    // Ensure BASE_PATH is defined
+    if (content !== orig) {
+      if (!content.includes("const BASE_PATH") && !content.includes("let BASE_PATH")) {
+        content = "const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';\n" + content;
+      }
+      fs.writeFileSync(catalogPath, content);
+      patched++;
+    }
+  }
+
+  return patched;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description } = req.body;
@@ -387,6 +471,13 @@ router.post('/', (req, res) => {
     const dynamicPatchCount = patchShopDynamicUrls(shopDir);
     if (dynamicPatchCount > 0) {
       log.push(`Patched ${dynamicPatchCount} layout file(s) with assetUrl() for dynamic URLs.`);
+    }
+
+    // Rewrite image URLs from path-based to query-param-based so Next.js
+    // doesn't cache them as static 404s (file extensions in URLs trick the router)
+    const imagePatchCount = patchShopImageUrls(shopDir);
+    if (imagePatchCount > 0) {
+      log.push(`Patched ${imagePatchCount} lib file(s) with query-param image URLs.`);
     }
 
     // Create orders directory
