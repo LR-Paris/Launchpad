@@ -123,6 +123,18 @@ function findFilesSync(dir, filename) {
   return results;
 }
 
+// Insert an import line into file content, respecting 'use client' / 'use server'
+// directives which must remain the very first statement in Next.js App Router files.
+function insertImport(content, importLine) {
+  const directivePattern = /^(\s*(['"`])use (client|server)\2[;\s]*\n)/;
+  const match = content.match(directivePattern);
+  if (match) {
+    // Insert after the directive line
+    return match[1] + importLine + '\n' + content.slice(match[1].length);
+  }
+  return importLine + '\n' + content;
+}
+
 // After cloning a shop, replace all fetch('/api/...') calls with apiFetch()
 // so path-based routing works correctly behind the nginx reverse proxy.
 // Scans all .tsx/.ts/.jsx files in app/ and components/ (not just page.tsx)
@@ -156,7 +168,7 @@ function patchShopFetchCalls(shopDir) {
       continue;
     }
     if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-      content = "import { apiFetch } from '@/lib/api';\n" + content;
+      content = insertImport(content, "import { apiFetch } from '@/lib/api';");
     }
 
     fs.writeFileSync(file, content);
@@ -217,7 +229,7 @@ function patchShopPublicAssets(shopDir, slug) {
     if (content !== origContent) {
       // Add basePath to the import from @/lib/api
       if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-        content = "import { basePath } from '@/lib/api';\n" + content;
+        content = insertImport(content, "import { basePath } from '@/lib/api';");
       } else if (!content.includes('basePath')) {
         // Import exists but basePath isn't imported — add it
         content = content.replace(
@@ -279,7 +291,7 @@ function patchShopDynamicUrls(shopDir) {
     if (content !== origContent) {
       // Ensure assetUrl is imported
       if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-        content = "import { assetUrl } from '@/lib/api';\n" + content;
+        content = insertImport(content, "import { assetUrl } from '@/lib/api';");
       } else if (!content.includes('assetUrl')) {
         content = content.replace(
           /import\s*\{([^}]*)\}\s*from\s*'@\/lib\/api'/,
