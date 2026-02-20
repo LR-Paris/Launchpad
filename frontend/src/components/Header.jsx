@@ -31,8 +31,8 @@ export default function Header({ user, theme, toggleTheme }) {
             to="/shops/new"
             className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border/60 hover:border-primary/40 rounded-md px-3 py-1.5 transition-all"
           >
-            <Plus className="h-3.5 w-3.5" />
-            New Shop
+            <Rocket className="h-3.5 w-3.5" />
+            Launch Shop
           </Link>
           <Link
             to="/settings"

@@ -14,6 +14,23 @@ import {
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
 
+// Sort order for DATABASE/Design/Details files
+const SETTINGS_ORDER = [
+  'companyname', 'password', 'descriptions', 'colors', 'fonts', 'style',
+];
+
+function sortEntries(entries) {
+  return [...entries].sort((a, b) => {
+    const aKey = a.name.replace(/\.[^.]+$/, '').toLowerCase();
+    const bKey = b.name.replace(/\.[^.]+$/, '').toLowerCase();
+    const aIdx = SETTINGS_ORDER.indexOf(aKey);
+    const bIdx = SETTINGS_ORDER.indexOf(bKey);
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+    if (aIdx !== -1) return -1;
+    if (bIdx !== -1) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
 
 export default function Settings() {
   const { slug } = useParams();
@@ -68,6 +85,10 @@ export default function Settings() {
   const [detailsLoading, setDetailsLoading] = useState(true);
   const [replacingImage, setReplacingImage] = useState(null);
   const [imageTimestamps, setImageTimestamps] = useState({});
+
+  // Delete confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState('');
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -267,7 +288,9 @@ export default function Settings() {
   });
 
   const handleDelete = () => {
-    if (window.confirm(`Permanently delete shop "${slug}" and all its files?`)) {
+    if (deleteTyped === currentShop?.name) {
+      setShowDeleteConfirm(false);
+      setDeleteTyped('');
       deleteMutation.mutate();
     }
   };
@@ -479,7 +502,7 @@ export default function Settings() {
           ) : (
             <KeyValueEditor
               slug={slug}
-              entries={detailsEntries}
+              entries={sortEntries(detailsEntries)}
               basePath="DATABASE/Design/Details"
               values={detailsValues}
               originalValues={detailsOriginal}
@@ -549,7 +572,7 @@ export default function Settings() {
               className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50 ml-auto"
             >
               <Rocket className="h-3.5 w-3.5" />
-              {deployMutation.isPending ? 'Redeploying...' : 'Redeploy'}
+              {deployMutation.isPending ? 'Relaunching...' : 'Relaunch'}
             </button>
           </div>
         </div>
@@ -657,17 +680,17 @@ export default function Settings() {
           </div>
           <div
             ref={terminalRef}
-            className="p-4 h-56 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
+            className="p-4 h-80 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
           >
             {logOutput || <span className="text-zinc-600">No logs. Start the container to see output.</span>}
           </div>
         </div>
 
-        {/* Shop File Browser */}
+        {/* File Explorer */}
         <div className="lp-card rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
-            <FileText className="h-4 w-4 text-primary/70" />
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Files</h2>
+            <Folder className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>File Explorer</h2>
             <div className="flex-1" />
             <button
               onClick={() => uploadInputRef.current?.click()}
@@ -984,14 +1007,46 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground mb-4">
             Permanently delete this shop, its container, and all associated files. This cannot be undone.
           </p>
-          <button
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
-          </button>
+          {showDeleteConfirm ? (
+            <div className="space-y-3">
+              <p className="text-xs text-destructive font-medium">
+                Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm deletion:
+              </p>
+              <input
+                type="text"
+                value={deleteTyped}
+                onChange={(e) => setDeleteTyped(e.target.value)}
+                placeholder={currentShop?.name}
+                className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+                autoFocus
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending || deleteTyped !== currentShop?.name}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(''); }}
+                  className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deleteMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete Shop
+            </button>
+          )}
         </div>
 
       </div>
