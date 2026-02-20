@@ -1,12 +1,15 @@
 {
   "name": "shuttle-platform-frontend",
   "private": true,
-  "version": "1.18.0",
+  "version": "1.18.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",
