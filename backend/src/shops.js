@@ -308,10 +308,9 @@ function patchShopDynamicUrls(shopDir) {
   return patched;
 }
 
-// Rewrite image URLs in the Shuttle template's lib/design.ts and lib/catalog.ts
-// from path-based (/api/images/showcase/file.jpg) to query-param-based
-// (/api/image?folder=ShowcasePhotos&file=file.jpg) so that Next.js App Router
-// doesn't intercept them as static file requests and cache 404s.
+// Add BASE_PATH prefix to image URLs in the Shuttle template's lib/design.ts
+// and lib/catalog.ts so that images resolve correctly when the shop is deployed
+// to a subdirectory (e.g. /michael-kors/api/images/...).
 function patchShopImageUrls(shopDir) {
   let patched = 0;
 
@@ -321,32 +320,16 @@ function patchShopImageUrls(shopDir) {
     let content = fs.readFileSync(designPath, 'utf8');
     const orig = content;
 
-    // Logo URLs:  `/api/images/logos/${file}`  →  `/api/image?folder=Logos&file=${encodeURIComponent(file)}`
+    // Logo URLs:  `/api/images/logos/${filename}`  →  `${BASE_PATH}/api/images/logos/${filename}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/logos\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=Logos&file=${encodeURIComponent($1)}`'
-    );
-    // Also catch non-template forms: '/api/images/logos/' + file
-    content = content.replace(
-      /['"]\/api\/images\/logos\//g,
-      "'/api/image?folder=Logos&file="
+      /`\/api\/images\/logos\//g,
+      '`${BASE_PATH}/api/images/logos/'
     );
 
-    // Showcase collection images: /api/images/showcase/Collections/${file}
+    // Showcase/hero images:  `/api/images/showcase/${file}`  →  `${BASE_PATH}/api/images/showcase/${file}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/showcase\/Collections\/\$\{([^}]+)\}`/g,
-      "`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent('Collections/' + $1)}`"
-    );
-
-    // Showcase/hero images: /api/images/showcase/${file}
-    content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/showcase\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent($1)}`'
-    );
-    // Non-template forms
-    content = content.replace(
-      /['"]\/api\/images\/showcase\//g,
-      "'/api/image?folder=ShowcasePhotos&file="
+      /`\/api\/images\/showcase\//g,
+      '`${BASE_PATH}/api/images/showcase/'
     );
 
     // Ensure BASE_PATH is defined at the top of the file
@@ -365,18 +348,10 @@ function patchShopImageUrls(shopDir) {
     let content = fs.readFileSync(catalogPath, 'utf8');
     const orig = content;
 
-    // Product images: /api/images/products/${...}/${file}
-    // Common patterns:
-    //   `${BASE_PATH}/api/images/products/${productId}/${file}`
-    //   `/api/images/products/${collectionId}-${slug}/${file}`
+    // Product images:  `/api/images/products/${productId}/${file}`  →  `${BASE_PATH}/api/images/products/${productId}/${file}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/products\/\$\{([^}]+)\}\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=Products&collection=${encodeURIComponent($1)}&product=${encodeURIComponent($1)}&file=${encodeURIComponent($2)}`'
-    );
-    // Non-template forms
-    content = content.replace(
-      /['"]\/api\/images\/products\//g,
-      "'/api/image?folder=Products&collection="
+      /`\/api\/images\/products\//g,
+      '`${BASE_PATH}/api/images/products/'
     );
 
     // Ensure BASE_PATH is defined
