@@ -53,6 +53,11 @@ app.use(cors({
       if (domainPattern.test(origin)) return callback(null, true);
     }
 
+    // Allow raw IP access (same server) and local dev
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -104,6 +109,12 @@ app.use('/api/system', requireAuth, updateRouter);
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Global error handler — surface useful error messages instead of bare 500s
+app.use((err, req, res, next) => {
+  console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

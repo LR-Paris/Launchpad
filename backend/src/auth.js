@@ -11,7 +11,12 @@ function loadUsers() {
   if (!fs.existsSync(USERS_FILE)) {
     return [];
   }
-  return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Failed to parse users.json:', err.message);
+    return [];
+  }
 }
 
 function saveUsers(users) {
