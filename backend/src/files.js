@@ -9,7 +9,7 @@ const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per file
+  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB per file
 });
 
 function safeShopPath(slug, relPath) {
@@ -175,7 +175,7 @@ router.delete('/:slug/files', (req, res) => {
 });
 
 // POST /api/shops/:slug/files/upload-zip?path=DATABASE
-const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 1024 } }); // 1GB
 router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';

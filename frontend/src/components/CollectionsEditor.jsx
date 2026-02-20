@@ -625,12 +625,15 @@ export default function CollectionsEditor({ slug }) {
                       <div>
                         <div className="flex items-center justify-between mb-3">
                           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Photos</p>
-                          <button
-                            onClick={() => photoUploadRef.current?.click()}
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
-                          >
-                            <Upload className="h-3 w-3" /> Upload
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => photoUploadRef.current?.click()}
+                              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+                            >
+                              <Upload className="h-3 w-3" /> Upload
+                            </button>
+                            <span className="text-[10px] text-muted-foreground/60">Max 1 GB</span>
+                          </div>
                           <input
                             ref={photoUploadRef}
                             type="file"

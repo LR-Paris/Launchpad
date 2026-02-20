@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
-import { changePassword } from '../lib/api';
-import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server } from 'lucide-react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { changePassword, getSystemVersion, checkForUpdate, installUpdate } from '../lib/api';
+import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server, RefreshCw, Download, CheckCircle } from 'lucide-react';
 
 export default function GlobalSettings({ theme, toggleTheme }) {
   const [oldPassword, setOldPassword] = useState('');
@@ -10,6 +10,7 @@ export default function GlobalSettings({ theme, toggleTheme }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
+  const [updateLog, setUpdateLog] = useState('');
 
   const changePwMutation = useMutation({
     mutationFn: () => changePassword(oldPassword, newPassword),
@@ -40,6 +41,35 @@ export default function GlobalSettings({ theme, toggleTheme }) {
     }
     changePwMutation.mutate();
   };
+
+  // Version info
+  const versionQuery = useQuery({
+    queryKey: ['system-version'],
+    queryFn: getSystemVersion,
+  });
+
+  // Check for update (manual trigger)
+  const updateCheckMutation = useMutation({
+    mutationFn: checkForUpdate,
+  });
+
+  // Install update
+  const installMutation = useMutation({
+    mutationFn: installUpdate,
+    onSuccess: (data) => {
+      setUpdateLog(data.log || 'Update completed successfully.');
+      // Refresh version info
+      versionQuery.refetch();
+      updateCheckMutation.reset();
+    },
+    onError: (err) => {
+      setUpdateLog(err.response?.data?.log || err.response?.data?.error || 'Update failed.');
+    },
+  });
+
+  const version = versionQuery.data?.version || '...';
+  const git = versionQuery.data?.git || {};
+  const updateData = updateCheckMutation.data;
 
   return (
     <div className="max-w-2xl lp-fadein">
@@ -173,7 +203,7 @@ export default function GlobalSettings({ theme, toggleTheme }) {
           </form>
         </div>
 
-        {/* Platform Info */}
+        {/* Platform Info & Updates */}
         <div className="lp-card rounded-xl p-5">
           <div className="flex items-center gap-2 mb-4">
             <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
@@ -182,10 +212,19 @@ export default function GlobalSettings({ theme, toggleTheme }) {
             </div>
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Platform</h2>
           </div>
+
           <div className="space-y-2.5 font-mono text-xs">
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
-              <span className="text-muted-foreground">Template</span>
-              <span className="text-foreground">Shuttle LC-0.13</span>
+              <span className="text-muted-foreground">Shuttle Version</span>
+              <span className="text-[hsl(188,100%,42%)]">{version}</span>
+            </div>
+            <div className="flex items-center justify-between py-1.5 border-b border-border/30">
+              <span className="text-muted-foreground">Git Branch</span>
+              <span className="text-foreground">{git.branch || '...'}</span>
+            </div>
+            <div className="flex items-center justify-between py-1.5 border-b border-border/30">
+              <span className="text-muted-foreground">Git Commit</span>
+              <span className="text-foreground">{git.commit || '...'}</span>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
               <span className="text-muted-foreground">Database zip extraction</span>
@@ -198,6 +237,72 @@ export default function GlobalSettings({ theme, toggleTheme }) {
             <div className="flex items-center justify-between py-1.5">
               <span className="text-muted-foreground">Password path</span>
               <span className="text-foreground">DATABASE/Design/Details/Password.txt</span>
+            </div>
+          </div>
+
+          {/* Update Section */}
+          <div className="mt-5 pt-4 border-t border-border/30">
+            <div className="flex items-center gap-2 mb-4">
+              <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Updates</h3>
+            </div>
+
+            {/* Check for update result */}
+            {updateData && (
+              <div className={`rounded-md border px-4 py-2.5 text-xs font-mono mb-4 ${
+                updateData.updateAvailable
+                  ? 'border-[hsl(48,100%,30%)] bg-[hsl(48,100%,5%)] text-[hsl(48,100%,60%)]'
+                  : 'border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)] text-[hsl(142,70%,50%)]'
+              }`}>
+                {updateData.updateAvailable ? (
+                  <span>Update available: <strong>{updateData.remoteVersion}</strong> (current: {updateData.localVersion})</span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Up to date ({updateData.localVersion})
+                  </span>
+                )}
+              </div>
+            )}
+
+            {updateCheckMutation.isError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs text-destructive font-mono mb-4">
+                Failed to check for updates: {updateCheckMutation.error?.response?.data?.error || updateCheckMutation.error?.message}
+              </div>
+            )}
+
+            {installMutation.isError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs text-destructive font-mono mb-4">
+                Update failed: {installMutation.error?.response?.data?.error || installMutation.error?.message}
+              </div>
+            )}
+
+            {updateLog && (
+              <pre className="rounded-md border border-border/40 bg-black/30 px-4 py-3 text-xs text-muted-foreground font-mono mb-4 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
+                {updateLog}
+              </pre>
+            )}
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setUpdateLog(''); updateCheckMutation.mutate(); }}
+                disabled={updateCheckMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/40 transition-all disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${updateCheckMutation.isPending ? 'animate-spin' : ''}`} />
+                {updateCheckMutation.isPending ? 'Checking...' : 'Check for Update'}
+              </button>
+
+              {updateData?.updateAvailable && (
+                <button
+                  onClick={() => installMutation.mutate()}
+                  disabled={installMutation.isPending}
+                  className="btn-launch inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm disabled:opacity-50"
+                >
+                  <Download className={`h-4 w-4 ${installMutation.isPending ? 'animate-bounce' : ''}`} />
+                  {installMutation.isPending ? 'Installing...' : 'Install Update'}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -49,15 +49,18 @@ export default function ShopCard({ shop }) {
             <code className="text-xs text-muted-foreground font-mono">{shop.slug}</code>
             <span className="text-border">·</span>
             <a
-              href={`http://localhost:${shop.port}`}
+              href={`/${shop.slug}/`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs font-mono text-primary hover:underline flex items-center gap-0.5"
             >
-              :{shop.port}
+              /{shop.slug}
               <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-60" />
             </a>
           </div>
+          {shop.description && (
+            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shop.description}</p>
+          )}
         </div>
         {/* Status */}
         <div className="flex items-center gap-1.5 shrink-0">

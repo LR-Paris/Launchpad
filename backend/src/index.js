@@ -12,8 +12,11 @@ const { router: authRouter, requireAuth, loadUsers } = require('./auth');
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
+const updateRouter = require('./update');
 
 const app = express();
+// Trust proxy (required when behind nginx)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
@@ -34,7 +37,24 @@ if (users.length === 0) {
 // Middleware
 app.use(express.json());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin) return callback(null, true);
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const baseDomain = process.env.BASE_DOMAIN;
+
+    if (origin === frontendUrl) return callback(null, true);
+
+    // Allow any subdomain of BASE_DOMAIN (http or https, any port)
+    if (baseDomain) {
+      const escaped = baseDomain.replace(/\./g, '\\.');
+      const domainPattern = new RegExp(`^https?://(.*\\.)?${escaped}(:\\d+)?$`);
+      if (domainPattern.test(origin)) return callback(null, true);
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 
@@ -77,6 +97,9 @@ app.use('/api/auth', authRouter);
 app.use('/api/shops', requireAuth, shopsRouter);
 app.use('/api/shops', requireAuth, ordersRouter);
 app.use('/api/shops', requireAuth, filesRouter);
+
+// System / update routes (protected)
+app.use('/api/system', requireAuth, updateRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

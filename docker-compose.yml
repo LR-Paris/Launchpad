@@ -30,6 +30,8 @@ services:
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     container_name: nginx-proxy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     profiles:
       - proxy

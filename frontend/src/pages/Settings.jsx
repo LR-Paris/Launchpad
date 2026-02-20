@@ -234,12 +234,17 @@ export default function Settings() {
 
   const updateMutation = useMutation({
     mutationFn: ({ targetSlug, data }) => updateShop(targetSlug, data),
-    onSuccess: (data) => {
-      setSaveSuccess(`Saved "${data.shop.slug}".`);
+    onSuccess: (data, variables) => {
+      const newSlug = data.shop.slug;
+      setSaveSuccess(`Saved "${newSlug}".`);
       setSaveError('');
       setEditingSlug(null);
       queryClient.invalidateQueries({ queryKey: ['shops'] });
       setTimeout(() => setSaveSuccess(''), 3000);
+      // If the current shop's slug was changed, navigate to the new URL
+      if (variables.targetSlug === slug && newSlug !== slug) {
+        navigate(`/shops/${newSlug}/settings`, { replace: true });
+      }
     },
     onError: (err) => setSaveError(err.response?.data?.error || 'Failed to save'),
   });
@@ -264,7 +269,7 @@ export default function Settings() {
     setEditingSlug(shop.slug);
     setEditValues((prev) => ({
       ...prev,
-      [shop.slug]: { name: shop.name, port: String(shop.port), subdomain: shop.subdomain },
+      [shop.slug]: { name: shop.name, description: shop.description || '', slug: shop.slug },
     }));
     setSaveError('');
     setSaveSuccess('');
@@ -278,7 +283,7 @@ export default function Settings() {
   const handleSave = (targetSlug) => {
     const vals = editValues[targetSlug];
     if (!vals) return;
-    updateMutation.mutate({ targetSlug, data: { name: vals.name, port: vals.port, subdomain: vals.subdomain } });
+    updateMutation.mutate({ targetSlug, data: { name: vals.name, description: vals.description, slug: vals.slug } });
   };
 
   const setField = (shopSlug, field, value) => {
@@ -542,6 +547,7 @@ export default function Settings() {
             >
               <Upload className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Upload'}
             </button>
+            <span className="text-[10px] text-muted-foreground/60">Max 1 GB</span>
             <input ref={uploadInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
             <button
               onClick={() => refetchFiles()}
@@ -723,9 +729,9 @@ export default function Settings() {
                 <thead>
                   <tr className="border-b border-border/40 text-xs text-muted-foreground bg-muted/50">
                     <th className="px-4 py-2.5 text-left font-medium font-mono">ID</th>
-                    <th className="px-4 py-2.5 text-left font-medium font-mono">Slug</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Name</th>
-                    <th className="px-4 py-2.5 text-left font-medium font-mono">Port</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Description</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">URL Path</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Status</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono">Created</th>
                     <th className="px-4 py-2.5 text-left font-medium font-mono"></th>
@@ -743,10 +749,9 @@ export default function Settings() {
                           isCurrentShop ? 'bg-primary/5' : 'hover:bg-foreground/[0.02]'
                         }`}
                       >
-                        <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{shop.id}</td>
-                        <td className="px-4 py-2.5">
-                          <code className="text-xs font-mono text-primary/80">{shop.slug}</code>
-                          {isCurrentShop && <span className="ml-1.5 text-xs text-primary">←</span>}
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">
+                          {shop.id}
+                          {isCurrentShop && <span className="ml-1 text-primary">←</span>}
                         </td>
                         <td className="px-4 py-2.5 text-xs">
                           {isEditing ? (
@@ -757,15 +762,38 @@ export default function Settings() {
                             />
                           ) : shop.name}
                         </td>
-                        <td className="px-4 py-2.5 text-xs font-mono">
+                        <td className="px-4 py-2.5 text-xs">
                           {isEditing ? (
                             <input
-                              className="w-20 rounded border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
-                              value={vals.port ?? shop.port}
-                              onChange={(e) => setField(shop.slug, 'port', e.target.value)}
-                              type="number"
+                              className="w-full rounded border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
+                              value={vals.description ?? (shop.description || '')}
+                              onChange={(e) => setField(shop.slug, 'description', e.target.value)}
+                              placeholder="Short description"
                             />
-                          ) : shop.port}
+                          ) : (
+                            <span className="text-muted-foreground">{shop.description || '—'}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs font-mono">
+                          {isEditing ? (
+                            <div className="flex items-center gap-0 rounded border border-border/60 bg-input overflow-hidden focus-within:ring-1 focus-within:ring-primary/60">
+                              <span className="pl-1.5 text-[10px] text-muted-foreground select-none">/</span>
+                              <input
+                                className="w-full bg-transparent px-1 py-1 text-xs font-mono outline-none"
+                                value={vals.slug ?? shop.slug}
+                                onChange={(e) => setField(shop.slug, 'slug', e.target.value)}
+                              />
+                            </div>
+                          ) : (
+                            <a
+                              href={`/${shop.slug}/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              /{shop.slug}
+                            </a>
+                          )}
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1.5">
