@@ -135,6 +135,27 @@ function insertImport(content, importLine) {
   return importLine + '\n' + content;
 }
 
+// Ensure a named export is imported from '@/lib/api'.  If the file has no
+// import from that module yet, add a fresh import line (respecting 'use client').
+// If one exists but is missing the requested name, append it to the specifier list.
+function ensureApiImport(content, name) {
+  const importPattern = /import\s*\{([^}]*)\}\s*from\s*['"]@\/lib\/api['"]/;
+  const match = content.match(importPattern);
+
+  if (!match) {
+    return insertImport(content, `import { ${name} } from '@/lib/api';`);
+  }
+
+  // Check whether this name is already in the import specifiers
+  const specifiers = match[1].split(',').map(s => s.trim());
+  if (specifiers.includes(name)) return content;
+
+  // Append the name to the existing import
+  return content.replace(importPattern, (m, existing) => {
+    return `import {${existing}, ${name} } from '@/lib/api'`;
+  });
+}
+
 // After cloning a shop, replace all fetch('/api/...') calls with apiFetch()
 // so path-based routing works correctly behind the nginx reverse proxy.
 // Scans all .tsx/.ts/.jsx files in app/ and components/ (not just page.tsx)
@@ -167,9 +188,7 @@ function patchShopFetchCalls(shopDir) {
       // Shouldn't happen after replacement, but guard anyway
       continue;
     }
-    if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-      content = insertImport(content, "import { apiFetch } from '@/lib/api';");
-    }
+    content = ensureApiImport(content, 'apiFetch');
 
     fs.writeFileSync(file, content);
     patched++;
@@ -227,16 +246,7 @@ function patchShopPublicAssets(shopDir, slug) {
     });
 
     if (content !== origContent) {
-      // Add basePath to the import from @/lib/api
-      if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-        content = insertImport(content, "import { basePath } from '@/lib/api';");
-      } else if (!content.includes('basePath')) {
-        // Import exists but basePath isn't imported — add it
-        content = content.replace(
-          /import\s*\{([^}]*)\}\s*from\s*'@\/lib\/api'/,
-          (m, imports) => `import {${imports}, basePath } from '@/lib/api'`
-        );
-      }
+      content = ensureApiImport(content, 'basePath');
       fs.writeFileSync(file, content);
       patched++;
     }
@@ -289,15 +299,7 @@ function patchShopDynamicUrls(shopDir) {
     );
 
     if (content !== origContent) {
-      // Ensure assetUrl is imported
-      if (!content.includes("from '@/lib/api'") && !content.includes('from "@/lib/api"')) {
-        content = insertImport(content, "import { assetUrl } from '@/lib/api';");
-      } else if (!content.includes('assetUrl')) {
-        content = content.replace(
-          /import\s*\{([^}]*)\}\s*from\s*'@\/lib\/api'/,
-          (m, imports) => `import {${imports}, assetUrl } from '@/lib/api'`
-        );
-      }
+      content = ensureApiImport(content, 'assetUrl');
       fs.writeFileSync(file, content);
       patched++;
     }
