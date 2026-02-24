@@ -2,7 +2,30 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { createShop, getShopLogs, uploadDatabaseZip } from '../lib/api';
-import { ArrowLeft, Terminal, Rocket, Database, FileArchive } from 'lucide-react';
+import { ArrowLeft, Terminal, Rocket, Database, FileArchive, Zap } from 'lucide-react';
+
+const SHOP_PRESETS = [
+  {
+    label: 'Basic Free Shop',
+    shopType: 'free',
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false },
+  },
+  {
+    label: 'PO Required Shop',
+    shopType: 'po',
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false },
+  },
+  {
+    label: 'Hotel Event Shop',
+    shopType: 'free',
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: false, hotel_list: true },
+  },
+  {
+    label: 'Minimal Free Shop',
+    shopType: 'free',
+    dataRequired: { address: false, details: false, extra_notes: false, shipping_handler: true, hotel_list: false },
+  },
+];
 
 export default function NewShop() {
   const [name, setName] = useState('');
@@ -19,6 +42,17 @@ export default function NewShop() {
   const dbInputRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  // STS-2.00: Shop type & preset state
+  const [shopType, setShopType] = useState('free');
+  const [dataRequired, setDataRequired] = useState({
+    address: true,
+    details: true,
+    extra_notes: true,
+    shipping_handler: true,
+    hotel_list: false,
+  });
+  const [hotelList, setHotelList] = useState('');
 
   const mutation = useMutation({
     mutationFn: createShop,
@@ -69,6 +103,20 @@ export default function NewShop() {
     ? customSlug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     : autoSlug;
 
+  const applyPreset = (preset) => {
+    setShopType(preset.shopType);
+    setDataRequired({ ...preset.dataRequired });
+    if (!preset.dataRequired.hotel_list) setHotelList('');
+  };
+
+  const toggleDataRequired = (key) => {
+    setDataRequired(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (key === 'hotel_list' && !next.hotel_list) setHotelList('');
+      return next;
+    });
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
@@ -76,16 +124,25 @@ export default function NewShop() {
     setLiveLogs('');
     setUploadStatus('');
     setCreatedSlug(null);
-    const payload = { name };
+    const payload = { name, shopType, dataRequired };
     if (customSlug.trim()) payload.slug = customSlug.trim();
     if (description.trim()) payload.description = description.trim();
     if (folderPath.trim()) payload.folderPath = folderPath.trim();
+    if (dataRequired.hotel_list && hotelList.trim()) payload.hotelList = hotelList.trim();
     mutation.mutate(payload);
   };
 
   const terminalContent = [creationLog, uploadStatus, liveLogs]
     .filter(Boolean)
     .join('\n\n');
+
+  const dataRequiredLabels = {
+    address: 'Address',
+    details: 'Details',
+    extra_notes: 'Extra Notes',
+    shipping_handler: 'Shipping Handler',
+    hotel_list: 'Hotel List',
+  };
 
   return (
     <div className="max-w-2xl lp-fadein">
@@ -166,6 +223,91 @@ export default function NewShop() {
               </p>
             )}
           </div>
+
+          {/* Template Presets */}
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+              Quick Setup
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {SHOP_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => applyPreset(preset)}
+                  disabled={mutation.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
+                >
+                  <Zap className="h-3 w-3" />
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Shop Type */}
+          <div>
+            <label className="block text-sm font-semibold mb-1.5" htmlFor="shopType"
+                   style={{ fontFamily: 'Syne, sans-serif' }}>
+              Shop Type
+            </label>
+            <select
+              id="shopType"
+              value={shopType}
+              onChange={(e) => setShopType(e.target.value)}
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all"
+              disabled={mutation.isPending}
+            >
+              <option value="free">Free</option>
+              <option value="po">Purchase Order</option>
+              <option value="stripe" disabled>Stripe (Coming Soon)</option>
+            </select>
+          </div>
+
+          {/* Data Required Checkboxes */}
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+              Checkout Fields
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(dataRequiredLabels).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={dataRequired[key]}
+                    onChange={() => toggleDataRequired(key)}
+                    disabled={mutation.isPending}
+                    className="rounded border-border accent-primary"
+                  />
+                  <span className={dataRequired[key] ? 'text-foreground' : 'text-muted-foreground'}>
+                    {label}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Hotel List (conditional) */}
+          {dataRequired.hotel_list && (
+            <div>
+              <label className="block text-sm font-semibold mb-1.5" htmlFor="hotelList"
+                     style={{ fontFamily: 'Syne, sans-serif' }}>
+                Hotel List
+              </label>
+              <textarea
+                id="hotelList"
+                value={hotelList}
+                onChange={(e) => setHotelList(e.target.value)}
+                placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency"}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-none"
+                rows={4}
+                disabled={mutation.isPending}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                One hotel per line. Shown as a dropdown during checkout.
+              </p>
+            </div>
+          )}
 
           {/* Source folder (optional) */}
           <div>

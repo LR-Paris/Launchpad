@@ -5,11 +5,13 @@ import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
   getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
+  getShopVersion, upgradeShop,
 } from '../lib/api';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
+  ArrowUpCircle, Settings2,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
@@ -96,6 +98,23 @@ export default function Settings() {
   const [wiping, setWiping] = useState(false);
   const [wipeMessage, setWipeMessage] = useState('');
 
+  // STS-2.00: Shop Configuration (Presets) state
+  const [presetShopType, setPresetShopType] = useState('free');
+  const [presetDataRequired, setPresetDataRequired] = useState({
+    address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false,
+  });
+  const [presetHotelList, setPresetHotelList] = useState('');
+  const [presetLoading, setPresetLoading] = useState(true);
+  const [presetSaving, setPresetSaving] = useState(false);
+  const [presetSuccess, setPresetSuccess] = useState('');
+  const [presetError, setPresetError] = useState('');
+  const [presetExists, setPresetExists] = useState(false);
+
+  // STS-2.00: Version management state
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [versionChecking, setVersionChecking] = useState(false);
+  const [upgradeLog, setUpgradeLog] = useState('');
+
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
     queryFn: getShops,
@@ -181,6 +200,90 @@ export default function Settings() {
         setDetailsLoading(false);
       });
   }, [slug]);
+
+  // Load STS-2.00 preset files
+  useEffect(() => {
+    setPresetLoading(true);
+    Promise.all([
+      readShopFile(slug, 'DATABASE/Presets/ShopType.txt').catch(() => null),
+      readShopFile(slug, 'DATABASE/Presets/DataRequired.txt').catch(() => null),
+      readShopFile(slug, 'DATABASE/Design/Details/Hotels.txt').catch(() => null),
+    ]).then(([shopTypeData, dataReqData, hotelsData]) => {
+      if (shopTypeData) {
+        setPresetExists(true);
+        const typeMatch = shopTypeData.content.match(/type:\s*(\w+)/);
+        if (typeMatch) setPresetShopType(typeMatch[1]);
+      }
+      if (dataReqData) {
+        setPresetExists(true);
+        const dr = {};
+        for (const line of dataReqData.content.split('\n')) {
+          const match = line.match(/^(\w+):\s*(true|false)/);
+          if (match) dr[match[1]] = match[2] === 'true';
+        }
+        setPresetDataRequired(prev => ({ ...prev, ...dr }));
+      }
+      if (hotelsData) {
+        setPresetHotelList(hotelsData.content);
+      }
+      setPresetLoading(false);
+    });
+  }, [slug]);
+
+  const savePresets = async () => {
+    setPresetSaving(true);
+    setPresetError('');
+    setPresetSuccess('');
+    try {
+      await writeShopFile(slug, 'DATABASE/Presets/ShopType.txt', `type: ${presetShopType}`);
+      const drContent = Object.entries(presetDataRequired)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n');
+      await writeShopFile(slug, 'DATABASE/Presets/DataRequired.txt', drContent);
+      if (presetDataRequired.hotel_list && presetHotelList.trim()) {
+        await writeShopFile(slug, 'DATABASE/Design/Details/Hotels.txt', presetHotelList);
+      }
+      setPresetExists(true);
+      setPresetSuccess('Shop configuration saved.');
+      setTimeout(() => setPresetSuccess(''), 3000);
+    } catch (err) {
+      setPresetError(err.response?.data?.error || 'Failed to save configuration');
+    } finally {
+      setPresetSaving(false);
+    }
+  };
+
+  const checkVersion = async () => {
+    setVersionChecking(true);
+    try {
+      const data = await getShopVersion(slug);
+      setVersionInfo(data);
+    } catch {
+      setVersionInfo(null);
+    } finally {
+      setVersionChecking(false);
+    }
+  };
+
+  const upgradeMutation = useMutation({
+    mutationFn: () => upgradeShop(slug),
+    onSuccess: (data) => {
+      setUpgradeLog(data.log || '');
+      setMessage(data.message);
+      queryClient.invalidateQueries({ queryKey: ['shops'] });
+      checkVersion();
+    },
+    onError: (err) => {
+      setUpgradeLog(err.response?.data?.log || '');
+      setMessage(err.response?.data?.error || 'Upgrade failed');
+    },
+  });
+
+  const handleUpgrade = () => {
+    if (window.confirm('Upgrade this shop to the latest Shuttle version? The container will be rebuilt.')) {
+      upgradeMutation.mutate();
+    }
+  };
 
   const friendlyLabel = (filename) => {
     const name = filename.replace(/\.[^.]+$/, '');
@@ -543,6 +646,113 @@ export default function Settings() {
         {/* Shop Collections — DATABASE/ShopCollections */}
         <CollectionsEditor slug={slug} />
 
+        {/* Shop Configuration — STS-2.00 Presets */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <Settings2 className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Configuration</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.00 Presets</span>
+          </div>
+
+          {presetSuccess && (
+            <div className="px-5 py-2 text-xs text-[hsl(142,70%,50%)] border-b border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)] flex items-center gap-1.5">
+              <Check className="h-3 w-3" />
+              {presetSuccess}
+            </div>
+          )}
+          {presetError && (
+            <div className="px-5 py-2 text-xs text-destructive bg-destructive/5 border-b border-destructive/20">{presetError}</div>
+          )}
+
+          {presetLoading ? (
+            <div className="px-5 py-8 text-center">
+              <p className="text-xs text-muted-foreground font-mono">Loading configuration...</p>
+            </div>
+          ) : (
+            <div className="p-5 space-y-4">
+              {!presetExists && (
+                <div className="rounded-md border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  No presets configured yet. This shop may be pre-STS-2.00. Configure and save to create preset files.
+                </div>
+              )}
+
+              {/* Shop Type */}
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                  Shop Type
+                </label>
+                <select
+                  value={presetShopType}
+                  onChange={(e) => setPresetShopType(e.target.value)}
+                  className="w-full max-w-xs rounded-md border border-border bg-input px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary/60 transition-all"
+                >
+                  <option value="free">Free</option>
+                  <option value="po">Purchase Order</option>
+                  <option value="stripe" disabled>Stripe (Coming Soon)</option>
+                </select>
+              </div>
+
+              {/* Data Required */}
+              <div>
+                <label className="block text-xs font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+                  Checkout Fields
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {[
+                    ['address', 'Address'],
+                    ['details', 'Details'],
+                    ['extra_notes', 'Extra Notes'],
+                    ['shipping_handler', 'Shipping Handler'],
+                    ['hotel_list', 'Hotel List'],
+                  ].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={presetDataRequired[key]}
+                        onChange={() => setPresetDataRequired(prev => {
+                          const next = { ...prev, [key]: !prev[key] };
+                          if (key === 'hotel_list' && !next.hotel_list) setPresetHotelList('');
+                          return next;
+                        })}
+                        className="rounded border-border accent-primary"
+                      />
+                      <span className={presetDataRequired[key] ? 'text-foreground' : 'text-muted-foreground'}>
+                        {label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Hotel List */}
+              {presetDataRequired.hotel_list && (
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                    Hotel List
+                  </label>
+                  <textarea
+                    value={presetHotelList}
+                    onChange={(e) => setPresetHotelList(e.target.value)}
+                    placeholder={"Hilton Downtown\nMarriott Convention Center"}
+                    className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-none"
+                    rows={4}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">One hotel per line.</p>
+                </div>
+              )}
+
+              <button
+                onClick={savePresets}
+                disabled={presetSaving}
+                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 transition-colors"
+              >
+                <Save className="h-3 w-3" />
+                {presetSaving ? 'Saving...' : 'Save Configuration'}
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Container Control */}
         <div className="lp-card rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
@@ -607,6 +817,9 @@ export default function Settings() {
               <Download className="h-4 w-4 text-primary/70" />
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
+            <span className="text-xs font-mono text-muted-foreground">
+              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.00)'}
+            </span>
           </div>
 
           {updateError && (
@@ -685,6 +898,12 @@ export default function Settings() {
               <RefreshCw className={`h-3.5 w-3.5 ${updateChecking ? 'animate-spin' : ''}`} />
               {updateChecking ? 'Checking...' : 'Check for Update'}
             </button>
+          )}
+
+          {upgradeLog && (
+            <div className="mt-3 rounded-md bg-[hsl(222,32%,4%)] border border-border/40 p-3 font-mono text-xs text-zinc-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
+              {upgradeLog}
+            </div>
           )}
         </div>
 

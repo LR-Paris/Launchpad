@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
-import { ArrowUpDown } from 'lucide-react';
+import { ArrowUpDown, FileDown } from 'lucide-react';
+import { getPoFileUrl } from '../lib/api';
 
-export default function OrderTable({ orders }) {
+export default function OrderTable({ orders, slug }) {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
 
@@ -33,6 +34,24 @@ export default function OrderTable({ orders }) {
     return <p className="text-muted-foreground text-sm">No orders found.</p>;
   }
 
+  const renderCell = (col, value) => {
+    // Render PO File column as a download link
+    if (col === 'PO File' && value && slug) {
+      return (
+        <a
+          href={getPoFileUrl(slug, value)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-primary hover:underline"
+        >
+          <FileDown className="h-3 w-3" />
+          {value}
+        </a>
+      );
+    }
+    return value;
+  };
+
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-sm">
@@ -57,7 +76,7 @@ export default function OrderTable({ orders }) {
             <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
               {columns.map((col) => (
                 <td key={col} className="px-4 py-2.5">
-                  {row[col]}
+                  {renderCell(col, row[col])}
                 </td>
               ))}
             </tr>
