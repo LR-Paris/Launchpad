@@ -63,6 +63,9 @@ function getDb() {
   if (!cols.includes('description')) {
     db.exec("ALTER TABLE shops ADD COLUMN description TEXT DEFAULT ''");
   }
+  if (!cols.includes('shuttle_version')) {
+    db.exec("ALTER TABLE shops ADD COLUMN shuttle_version TEXT DEFAULT NULL");
+  }
 
   return db;
 }
@@ -394,7 +397,7 @@ function patchShopImageUrls(shopDir) {
 
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
-  const { name, folderPath, description } = req.body;
+  const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
   let { slug: customSlug } = req.body;
 
   if (!name) {
@@ -484,6 +487,39 @@ router.post('/', (req, res) => {
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
 
+    // Write STS-2.00 preset files if shop type specified
+    if (shopType) {
+      fs.mkdirSync(path.join(shopDir, 'DATABASE', 'Presets'), { recursive: true });
+
+      fs.writeFileSync(
+        path.join(shopDir, 'DATABASE', 'Presets', 'ShopType.txt'),
+        `type: ${shopType}`
+      );
+
+      const dr = dataRequired || {};
+      const drContent = [
+        `address: ${dr.address !== false}`,
+        `details: ${dr.details !== false}`,
+        `extra_notes: ${dr.extra_notes !== false}`,
+        `shipping_handler: ${dr.shipping_handler !== false}`,
+        `hotel_list: ${dr.hotel_list === true}`,
+      ].join('\n');
+      fs.writeFileSync(
+        path.join(shopDir, 'DATABASE', 'Presets', 'DataRequired.txt'),
+        drContent
+      );
+
+      if (dr.hotel_list && hotelList) {
+        fs.mkdirSync(path.join(shopDir, 'DATABASE', 'Design', 'Details'), { recursive: true });
+        fs.writeFileSync(
+          path.join(shopDir, 'DATABASE', 'Design', 'Details', 'Hotels.txt'),
+          hotelList
+        );
+      }
+
+      log.push(`Configured shop presets: type=${shopType}.`);
+    }
+
     // Write .env for shop (includes base path vars for path-based routing)
     const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
@@ -511,8 +547,8 @@ router.post('/', (req, res) => {
 
     // Register in database
     db.prepare(
-      'INSERT INTO shops (slug, name, description, status, port, subdomain) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(slug, name, description || '', 'stopped', port, subdomain);
+      'INSERT INTO shops (slug, name, description, status, port, subdomain, shuttle_version) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.00');
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
@@ -876,6 +912,92 @@ router.post('/:slug/deploy', (req, res) => {
     res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n') });
   } catch (err) {
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
+// GET /api/shops/:slug/version — Check shop's Shuttle version
+router.get('/:slug/version', (req, res) => {
+  const { slug } = req.params;
+  const db = getDb();
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const result = { dbVersion: shop.shuttle_version || null };
+
+    // Try to query the running shop's /api/version endpoint
+    const shopDir = path.join(SHOPS_DIR, slug);
+    if (shop.shuttle_version) {
+      result.currentVersion = shop.shuttle_version;
+    }
+
+    // Check what version is available in the Shuttle repo by reading the cloned .git
+    // For now, return just what we know from the DB
+    result.latestAvailable = 'STS-2.00';
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
+// POST /api/shops/:slug/upgrade — Opt-in Shuttle upgrade
+router.post('/:slug/upgrade', (req, res) => {
+  const { slug } = req.params;
+  const { confirm } = req.body;
+
+  if (!confirm) {
+    return res.status(400).json({ error: 'Upgrade requires confirmation. Send { confirm: true }.' });
+  }
+
+  const db = getDb();
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const shopDir = path.join(SHOPS_DIR, slug);
+    const hostComposeFile = getComposeFilePath(slug);
+    const log = [];
+
+    // Pull latest from Shuttle repo
+    if (fs.existsSync(path.join(shopDir, '.git'))) {
+      try {
+        const pullOut = execSync('git pull origin main 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+        log.push(pullOut || 'git pull complete.');
+      } catch (pullErr) {
+        log.push(`git pull error: ${pullErr.message}`);
+        return res.status(500).json({ error: 'git pull failed', log: log.join('\n') });
+      }
+    } else {
+      return res.status(400).json({ error: 'Shop directory is not a git repo — cannot upgrade.' });
+    }
+
+    // Rebuild container
+    try {
+      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+      log.push(upOut || 'Container rebuilt.');
+    } catch (buildErr) {
+      const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
+      log.push(`Build error: ${msg}`);
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: msg, log: log.join('\n') });
+    }
+
+    // Update version in DB
+    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.00', 'running', slug);
+    log.push('Updated shop version to STS-2.00.');
+
+    res.json({ message: `Shop "${slug}" upgraded to STS-2.00`, log: log.join('\n') });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
     db.close();
