@@ -57,12 +57,21 @@ export const deployShop = (slug) =>
 export const getShopLogs = (slug, lines = 100) =>
   api.get(`/shops/${slug}/logs?lines=${lines}`).then(r => r.data);
 
+export const getShopVersion = (slug) =>
+  api.get(`/shops/${slug}/version`).then(r => r.data);
+
+export const upgradeShop = (slug) =>
+  api.post(`/shops/${slug}/upgrade`, { confirm: true }).then(r => r.data);
+
 // Orders
 export const getOrders = (slug) =>
   api.get(`/shops/${slug}/orders`).then(r => r.data);
 
 export const getOrdersDownloadUrl = (slug) =>
   `/api/shops/${slug}/orders/download`;
+
+export const getPoFileUrl = (slug, filename) =>
+  `/api/shops/${slug}/orders/po/${encodeURIComponent(filename)}`;
 
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
