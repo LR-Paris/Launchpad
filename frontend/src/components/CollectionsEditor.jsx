@@ -362,8 +362,8 @@ export default function CollectionsEditor({ slug }) {
       {/* Header */}
       <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
         <Package className="h-4 w-4 text-primary/70" />
-        <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Collections</h2>
-        <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE / ShopCollections</span>
+        <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Product Catalog</h2>
+        <span className="text-xs text-muted-foreground font-mono ml-1">Manage collections &amp; items</span>
         <div className="flex-1" />
         {showAddCollection ? (
           <div className="flex items-center gap-1.5">

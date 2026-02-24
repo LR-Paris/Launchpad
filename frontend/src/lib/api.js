@@ -64,6 +64,9 @@ export const getOrders = (slug) =>
 export const getOrdersDownloadUrl = (slug) =>
   `/api/shops/${slug}/orders/download`;
 
+export const wipeOrders = (slug) =>
+  api.post(`/shops/${slug}/orders/wipe`).then(r => r.data);
+
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
   api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
@@ -103,6 +106,13 @@ export const uploadDatabaseZip = (slug, dirPath, file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 };
+
+// Shop Template Updates
+export const checkShopUpdate = (slug) =>
+  api.get(`/shops/${slug}/check-update`).then(r => r.data);
+
+export const installShopUpdate = (slug) =>
+  api.post(`/shops/${slug}/update-template`).then(r => r.data);
 
 // System / Updates
 export const getSystemVersion = () =>

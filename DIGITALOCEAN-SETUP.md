@@ -158,6 +158,8 @@ server {
     }
 
     location /api/ {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header CDN-Cache-Control "no-store";
         proxy_pass http://backend:3001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -169,6 +171,8 @@ server {
     index index.html;
 
     location / {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header CDN-Cache-Control "no-store";
         try_files $uri $uri/ /index.html;
     }
 
@@ -250,6 +254,8 @@ server {
     ssl_prefer_server_ciphers on;
 
     location /api/ {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header CDN-Cache-Control "no-store";
         proxy_pass http://backend:3001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -261,6 +267,8 @@ server {
     index index.html;
 
     location / {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        add_header CDN-Cache-Control "no-store";
         try_files $uri $uri/ /index.html;
     }
 

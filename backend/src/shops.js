@@ -227,7 +227,7 @@ function patchShopPublicAssets(shopDir, slug) {
   ];
 
   // Asset extensions typically in /public
-  const assetExts = '(?:png|jpg|jpeg|svg|ico|gif|webp|woff2?|css)';
+  const assetExts = '(?:png|jpg|jpeg|svg|ico|gif|webp|woff2?|otf|ttf|eot|css)';
   const srcPattern = new RegExp(`(src=)"(\\/[^"]+\\.${assetExts})"`, 'g');
   const hrefPattern = new RegExp(`(href=)"(\\/[^"]+\\.${assetExts})"`, 'g');
 
@@ -254,7 +254,7 @@ function patchShopPublicAssets(shopDir, slug) {
 
   // ── 2. Patch CSS files ──────────────────────────────────
   // CSS can't use JS vars, so replace url('/...) with url('/slug/...') literally
-  const cssFiles = findFilesByExtSync(appDir, ['.css']);
+  const cssFiles = findFilesByExtSync(shopDir, ['.css']);
 
   for (const file of cssFiles) {
     let content = fs.readFileSync(file, 'utf8');
@@ -308,10 +308,9 @@ function patchShopDynamicUrls(shopDir) {
   return patched;
 }
 
-// Rewrite image URLs in the Shuttle template's lib/design.ts and lib/catalog.ts
-// from path-based (/api/images/showcase/file.jpg) to query-param-based
-// (/api/image?folder=ShowcasePhotos&file=file.jpg) so that Next.js App Router
-// doesn't intercept them as static file requests and cache 404s.
+// Add BASE_PATH prefix to image URLs in the Shuttle template's lib/design.ts
+// and lib/catalog.ts so that images resolve correctly when the shop is deployed
+// to a subdirectory (e.g. /michael-kors/api/images/...).
 function patchShopImageUrls(shopDir) {
   let patched = 0;
 
@@ -321,32 +320,16 @@ function patchShopImageUrls(shopDir) {
     let content = fs.readFileSync(designPath, 'utf8');
     const orig = content;
 
-    // Logo URLs:  `/api/images/logos/${file}`  →  `/api/image?folder=Logos&file=${encodeURIComponent(file)}`
+    // Logo URLs:  `/api/images/logos/${filename}`  →  `${BASE_PATH}/api/images/logos/${filename}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/logos\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=Logos&file=${encodeURIComponent($1)}`'
-    );
-    // Also catch non-template forms: '/api/images/logos/' + file
-    content = content.replace(
-      /['"]\/api\/images\/logos\//g,
-      "'/api/image?folder=Logos&file="
+      /`\/api\/images\/logos\//g,
+      '`${BASE_PATH}/api/images/logos/'
     );
 
-    // Showcase collection images: /api/images/showcase/Collections/${file}
+    // Showcase/hero images:  `/api/images/showcase/${file}`  →  `${BASE_PATH}/api/images/showcase/${file}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/showcase\/Collections\/\$\{([^}]+)\}`/g,
-      "`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent('Collections/' + $1)}`"
-    );
-
-    // Showcase/hero images: /api/images/showcase/${file}
-    content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/showcase\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=ShowcasePhotos&file=${encodeURIComponent($1)}`'
-    );
-    // Non-template forms
-    content = content.replace(
-      /['"]\/api\/images\/showcase\//g,
-      "'/api/image?folder=ShowcasePhotos&file="
+      /`\/api\/images\/showcase\//g,
+      '`${BASE_PATH}/api/images/showcase/'
     );
 
     // Ensure BASE_PATH is defined at the top of the file
@@ -365,18 +348,10 @@ function patchShopImageUrls(shopDir) {
     let content = fs.readFileSync(catalogPath, 'utf8');
     const orig = content;
 
-    // Product images: /api/images/products/${...}/${file}
-    // Common patterns:
-    //   `${BASE_PATH}/api/images/products/${productId}/${file}`
-    //   `/api/images/products/${collectionId}-${slug}/${file}`
+    // Product images:  `/api/images/products/${productId}/${file}`  →  `${BASE_PATH}/api/images/products/${productId}/${file}`
     content = content.replace(
-      /`\$\{[^}]*\}\/api\/images\/products\/\$\{([^}]+)\}\/\$\{([^}]+)\}`/g,
-      '`${BASE_PATH}/api/image?folder=Products&collection=${encodeURIComponent($1)}&product=${encodeURIComponent($1)}&file=${encodeURIComponent($2)}`'
-    );
-    // Non-template forms
-    content = content.replace(
-      /['"]\/api\/images\/products\//g,
-      "'/api/image?folder=Products&collection="
+      /`\/api\/images\/products\//g,
+      '`${BASE_PATH}/api/images/products/'
     );
 
     // Ensure BASE_PATH is defined
@@ -876,6 +851,176 @@ router.post('/:slug/deploy', (req, res) => {
     res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n') });
   } catch (err) {
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
+});
+
+// GET /api/shops/:slug/check-update — Check if the Shuttle template has a newer version
+router.get('/:slug/check-update', (req, res) => {
+  const { slug } = req.params;
+  const shopDir = path.join(SHOPS_DIR, slug);
+
+  if (!fs.existsSync(shopDir)) {
+    return res.status(404).json({ error: 'Shop not found' });
+  }
+
+  const hasGit = fs.existsSync(path.join(shopDir, '.git'));
+  if (!hasGit) {
+    return res.json({ updateAvailable: false, reason: 'Shop is not a git repository' });
+  }
+
+  try {
+    // Get the local HEAD commit
+    const localCommit = execSync('git rev-parse HEAD', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const localCommitShort = localCommit.slice(0, 7);
+
+    // Get the local commit date for display
+    const localDate = execSync('git log -1 --format=%ci', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    // Fetch latest from remote without modifying working tree
+    try {
+      execSync('git fetch origin 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+    } catch {
+      return res.json({
+        updateAvailable: false,
+        localCommit: localCommitShort,
+        localDate,
+        reason: 'Could not reach remote repository',
+      });
+    }
+
+    // Get the remote HEAD commit
+    const remoteCommit = execSync('git rev-parse origin/HEAD 2>/dev/null || git rev-parse origin/main 2>/dev/null || git rev-parse origin/master', {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const remoteCommitShort = remoteCommit.slice(0, 7);
+
+    // Count commits behind
+    let commitsBehind = 0;
+    try {
+      const count = execSync(`git rev-list HEAD..${remoteCommit} --count`, {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      }).trim();
+      commitsBehind = parseInt(count, 10) || 0;
+    } catch { /* ignore */ }
+
+    const remoteDate = execSync(`git log -1 --format=%ci ${remoteCommit}`, {
+      cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+    }).trim();
+
+    const updateAvailable = localCommit !== remoteCommit;
+
+    res.json({
+      updateAvailable,
+      localCommit: localCommitShort,
+      localDate,
+      remoteCommit: remoteCommitShort,
+      remoteDate,
+      commitsBehind,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/shops/:slug/update-template — Pull latest Shuttle, re-apply patches, rebuild
+router.post('/:slug/update-template', (req, res) => {
+  const { slug } = req.params;
+  const db = getDb();
+
+  try {
+    const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    const shopDir = path.join(SHOPS_DIR, slug);
+    const hostComposeFile = getComposeFilePath(slug);
+    const log = [];
+
+    // 1. Pull latest from Shuttle template
+    if (!fs.existsSync(path.join(shopDir, '.git'))) {
+      return res.status(400).json({ error: 'Shop is not a git repository — cannot update.' });
+    }
+
+    try {
+      // Stash any local changes (patches) before pulling
+      const stash = execSync('git stash 2>&1', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      });
+      log.push(`git stash: ${stash.trim()}`);
+    } catch (e) {
+      log.push(`git stash warning: ${e.message}`);
+    }
+
+    try {
+      const pull = execSync('git pull origin main 2>&1 || git pull origin master 2>&1', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8', shell: true,
+      });
+      log.push(`git pull: ${pull.trim()}`);
+    } catch (pullErr) {
+      const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
+      log.push(`git pull error: ${msg}`);
+      // Try to pop stash back
+      try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
+    }
+
+    // Don't pop stash — we'll re-apply all patches fresh below
+
+    // 2. Re-apply path-based routing overrides
+    const overridesDir = path.join(TEMPLATES_DIR, 'shop-overrides');
+    if (fs.existsSync(overridesDir)) {
+      copyDirSync(overridesDir, shopDir);
+      log.push('Re-applied path-based routing overrides.');
+    }
+
+    // 3. Re-apply all patches
+    const fetchPatchCount = patchShopFetchCalls(shopDir);
+    if (fetchPatchCount > 0) log.push(`Patched ${fetchPatchCount} file(s) with apiFetch().`);
+
+    const assetPatchCount = patchShopPublicAssets(shopDir, slug);
+    if (assetPatchCount > 0) log.push(`Patched ${assetPatchCount} file(s) with basePath for assets.`);
+
+    const dynamicPatchCount = patchShopDynamicUrls(shopDir);
+    if (dynamicPatchCount > 0) log.push(`Patched ${dynamicPatchCount} layout file(s) with assetUrl().`);
+
+    const imagePatchCount = patchShopImageUrls(shopDir);
+    if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    // 4. Rebuild container
+    log.push('Rebuilding container...');
+    try {
+      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+        stdio: 'pipe', encoding: 'utf8',
+      });
+      log.push(upOut || 'Container rebuilt and started.');
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    } catch (buildErr) {
+      const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
+      log.push(`Build error: ${msg}`);
+      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      return res.status(500).json({ error: msg, log: log.join('\n') });
+    }
+
+    // Get the new commit info
+    let newCommit = '';
+    try {
+      newCommit = execSync('git rev-parse --short HEAD', {
+        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+      }).trim();
+    } catch { /* ignore */ }
+
+    log.push(`Update complete. Now at commit ${newCommit}.`);
+    res.json({ message: `Shop "${slug}" updated successfully`, commit: newCommit, log: log.join('\n') });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
     db.close();

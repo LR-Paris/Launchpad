@@ -4,16 +4,33 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
-  getShopImageUrl, replaceShopFile,
+  getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
 } from '../lib/api';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
-  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check,
+  Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
 
+// Sort order for DATABASE/Design/Details files
+const SETTINGS_ORDER = [
+  'companyname', 'password', 'descriptions', 'colors', 'fonts', 'style',
+];
+
+function sortEntries(entries) {
+  return [...entries].sort((a, b) => {
+    const aKey = a.name.replace(/\.[^.]+$/, '').toLowerCase();
+    const bKey = b.name.replace(/\.[^.]+$/, '').toLowerCase();
+    const aIdx = SETTINGS_ORDER.indexOf(aKey);
+    const bIdx = SETTINGS_ORDER.indexOf(bKey);
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+    if (aIdx !== -1) return -1;
+    if (bIdx !== -1) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
 
 export default function Settings() {
   const { slug } = useParams();
@@ -46,6 +63,13 @@ export default function Settings() {
   const [shopTitle, setShopTitle] = useState('');
   const [shopDescription, setShopDescription] = useState('');
 
+  // Shuttle template update state
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState('');
+  const [updateError, setUpdateError] = useState('');
+
   // DATABASE password file viewer
   const [shopPassword, setShopPassword] = useState('');
   const [passwordShown, setPasswordShown] = useState(false);
@@ -61,6 +85,16 @@ export default function Settings() {
   const [detailsLoading, setDetailsLoading] = useState(true);
   const [replacingImage, setReplacingImage] = useState(null);
   const [imageTimestamps, setImageTimestamps] = useState({});
+
+  // Delete confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState('');
+
+  // Wipe orders state
+  const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [wipeTyped, setWipeTyped] = useState('');
+  const [wiping, setWiping] = useState(false);
+  const [wipeMessage, setWipeMessage] = useState('');
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -260,8 +294,27 @@ export default function Settings() {
   });
 
   const handleDelete = () => {
-    if (window.confirm(`Permanently delete shop "${slug}" and all its files?`)) {
+    if (deleteTyped === currentShop?.name) {
+      setShowDeleteConfirm(false);
+      setDeleteTyped('');
       deleteMutation.mutate();
+    }
+  };
+
+  const handleWipeOrders = async () => {
+    if (wipeTyped !== currentShop?.name) return;
+    setWiping(true);
+    setWipeMessage('');
+    try {
+      const data = await wipeOrders(slug);
+      setWipeMessage(data.message || 'Orders wiped successfully.');
+      setShowWipeConfirm(false);
+      setWipeTyped('');
+      setTimeout(() => setWipeMessage(''), 5000);
+    } catch (err) {
+      setWipeMessage(err.response?.data?.error || 'Failed to wipe orders');
+    } finally {
+      setWiping(false);
     }
   };
 
@@ -377,6 +430,40 @@ export default function Settings() {
     });
   };
 
+  const handleCheckUpdate = async () => {
+    setUpdateChecking(true);
+    setUpdateError('');
+    setUpdateMessage('');
+    try {
+      const data = await checkShopUpdate(slug);
+      setUpdateInfo(data);
+    } catch (err) {
+      setUpdateError(err.response?.data?.error || 'Failed to check for updates');
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    if (!window.confirm('Update the Shuttle template? The shop will be rebuilt and restarted.')) return;
+    setUpdateInstalling(true);
+    setUpdateError('');
+    setUpdateMessage('');
+    try {
+      const data = await installShopUpdate(slug);
+      setUpdateMessage(data.message || 'Update installed successfully');
+      setDeployLog(data.log || '');
+      setUpdateInfo(null); // Reset so user can check again
+      queryClient.invalidateQueries({ queryKey: ['shops'] });
+      queryClient.invalidateQueries({ queryKey: ['shop-logs', slug] });
+    } catch (err) {
+      setUpdateError(err.response?.data?.error || 'Update failed');
+      if (err.response?.data?.log) setDeployLog(err.response.data.log);
+    } finally {
+      setUpdateInstalling(false);
+    }
+  };
+
   const breadcrumbs = browsePath === '.' ? [] : browsePath.split('/').filter(Boolean);
   const logOutput = [deployLog, logsData?.logs].filter(Boolean).join('\n\n--- Live Logs ---\n');
   const currentShop = allShops.find((s) => s.slug === slug);
@@ -438,7 +525,7 @@ export default function Settings() {
           ) : (
             <KeyValueEditor
               slug={slug}
-              entries={detailsEntries}
+              entries={sortEntries(detailsEntries)}
               basePath="DATABASE/Design/Details"
               values={detailsValues}
               originalValues={detailsOriginal}
@@ -508,9 +595,97 @@ export default function Settings() {
               className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50 ml-auto"
             >
               <Rocket className="h-3.5 w-3.5" />
-              {deployMutation.isPending ? 'Redeploying...' : 'Redeploy'}
+              {deployMutation.isPending ? 'Relaunching...' : 'Relaunch'}
             </button>
           </div>
+        </div>
+
+        {/* Shuttle Template Update */}
+        <div className="lp-card rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Download className="h-4 w-4 text-primary/70" />
+              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
+            </div>
+          </div>
+
+          {updateError && (
+            <div className="mb-3 px-3 py-2 rounded-md text-xs text-destructive bg-destructive/5 border border-destructive/20">{updateError}</div>
+          )}
+          {updateMessage && (
+            <div className="mb-3 px-3 py-2 rounded-md text-xs text-[hsl(142,70%,50%)] bg-[hsl(142,70%,5%)] border border-[hsl(142,70%,20%)] flex items-center gap-1.5">
+              <Check className="h-3 w-3" />
+              {updateMessage}
+            </div>
+          )}
+
+          {updateInfo ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-4 text-xs font-mono">
+                <div>
+                  <span className="text-muted-foreground">Local: </span>
+                  <span className="text-foreground">{updateInfo.localCommit}</span>
+                  <span className="text-muted-foreground ml-1.5">{updateInfo.localDate?.slice(0, 10)}</span>
+                </div>
+                {updateInfo.remoteCommit && (
+                  <div>
+                    <span className="text-muted-foreground">Remote: </span>
+                    <span className="text-foreground">{updateInfo.remoteCommit}</span>
+                    <span className="text-muted-foreground ml-1.5">{updateInfo.remoteDate?.slice(0, 10)}</span>
+                  </div>
+                )}
+              </div>
+
+              {updateInfo.updateAvailable ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-amber-400 font-medium">
+                    Update available ({updateInfo.commitsBehind} commit{updateInfo.commitsBehind !== 1 ? 's' : ''} behind)
+                  </span>
+                  <button
+                    onClick={handleInstallUpdate}
+                    disabled={updateInstalling}
+                    className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {updateInstalling ? 'Updating...' : 'Install Update'}
+                  </button>
+                  <button
+                    onClick={handleCheckUpdate}
+                    disabled={updateChecking}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${updateChecking ? 'animate-spin' : ''}`} /> Re-check
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-[hsl(142,70%,50%)] font-medium flex items-center gap-1">
+                    <Check className="h-3 w-3" /> Up to date
+                  </span>
+                  <button
+                    onClick={handleCheckUpdate}
+                    disabled={updateChecking}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${updateChecking ? 'animate-spin' : ''}`} /> Re-check
+                  </button>
+                </div>
+              )}
+
+              {updateInfo.reason && (
+                <p className="text-xs text-muted-foreground">{updateInfo.reason}</p>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={handleCheckUpdate}
+              disabled={updateChecking}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${updateChecking ? 'animate-spin' : ''}`} />
+              {updateChecking ? 'Checking...' : 'Check for Update'}
+            </button>
+          )}
         </div>
 
         {/* Terminal / Logs */}
@@ -528,17 +703,17 @@ export default function Settings() {
           </div>
           <div
             ref={terminalRef}
-            className="p-4 h-56 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
+            className="p-4 h-80 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
           >
             {logOutput || <span className="text-zinc-600">No logs. Start the container to see output.</span>}
           </div>
         </div>
 
-        {/* Shop File Browser */}
+        {/* File Explorer */}
         <div className="lp-card rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
-            <FileText className="h-4 w-4 text-primary/70" />
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Files</h2>
+            <Folder className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>File Explorer</h2>
             <div className="flex-1" />
             <button
               onClick={() => uploadInputRef.current?.click()}
@@ -848,21 +1023,121 @@ export default function Settings() {
         </div>
 
         {/* Danger Zone */}
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5">
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 space-y-6">
           <h2 className="text-sm font-bold text-destructive mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
             Danger Zone
           </h2>
-          <p className="text-xs text-muted-foreground mb-4">
-            Permanently delete this shop, its container, and all associated files. This cannot be undone.
-          </p>
-          <button
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
-          </button>
+
+          {/* Wipe Orders */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <ShoppingCart className="h-3.5 w-3.5 text-destructive/70" />
+              <h3 className="text-xs font-semibold text-destructive">Wipe Orders</h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Clear all orders from the CSV file. The header row is preserved but all order data will be permanently deleted.
+            </p>
+            {wipeMessage && (
+              <div className={`mb-3 px-3 py-2 rounded-md text-xs border ${
+                wipeMessage.includes('fail') || wipeMessage.includes('Failed')
+                  ? 'text-destructive bg-destructive/5 border-destructive/20'
+                  : 'text-[hsl(142,70%,50%)] bg-[hsl(142,70%,5%)] border-[hsl(142,70%,20%)]'
+              }`}>{wipeMessage}</div>
+            )}
+            {showWipeConfirm ? (
+              <div className="space-y-3">
+                <p className="text-xs text-destructive font-medium">
+                  Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={wipeTyped}
+                  onChange={(e) => setWipeTyped(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleWipeOrders(); if (e.key === 'Escape') { setShowWipeConfirm(false); setWipeTyped(''); } }}
+                  placeholder={currentShop?.name}
+                  className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleWipeOrders}
+                    disabled={wiping || wipeTyped !== currentShop?.name}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                  >
+                    <ShoppingCart className="h-3.5 w-3.5" />
+                    {wiping ? 'Wiping...' : 'Wipe All Orders'}
+                  </button>
+                  <button
+                    onClick={() => { setShowWipeConfirm(false); setWipeTyped(''); }}
+                    className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowWipeConfirm(true)}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors"
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                Wipe Orders
+              </button>
+            )}
+          </div>
+
+          <div className="border-t border-destructive/20" />
+
+          {/* Delete Shop */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Trash2 className="h-3.5 w-3.5 text-destructive/70" />
+              <h3 className="text-xs font-semibold text-destructive">Delete Shop</h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Permanently delete this shop, its container, and all associated files. This cannot be undone.
+            </p>
+          {showDeleteConfirm ? (
+              <div className="space-y-3">
+                <p className="text-xs text-destructive font-medium">
+                  Type <code className="font-mono bg-destructive/10 px-1.5 py-0.5 rounded">{currentShop?.name}</code> to confirm deletion:
+                </p>
+                <input
+                  type="text"
+                  value={deleteTyped}
+                  onChange={(e) => setDeleteTyped(e.target.value)}
+                  placeholder={currentShop?.name}
+                  className="w-full max-w-xs rounded-md border border-destructive/40 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleteMutation.isPending || deleteTyped !== currentShop?.name}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {deleteMutation.isPending ? 'Deleting...' : 'Delete Shop'}
+                  </button>
+                  <button
+                    onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(''); }}
+                    className="rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deleteMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete Shop
+              </button>
+            )}
+          </div>
         </div>
 
       </div>

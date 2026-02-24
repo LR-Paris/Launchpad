@@ -23,7 +23,7 @@ export default function Dashboard() {
             Mission Control
           </p>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-            Deployed Shops
+            Launched Shops
           </h1>
         </div>
         <div className="flex items-center gap-3">
@@ -49,7 +49,7 @@ export default function Dashboard() {
             className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm disabled:opacity-50"
           >
             <Rocket className="h-4 w-4" />
-            Deploy Shop
+            Launch Shop
           </Link>
         </div>
       </div>
@@ -71,7 +71,7 @@ export default function Dashboard() {
             <Rocket className="h-7 w-7 lp-glow" />
           </div>
           <h2 className="font-bold text-lg mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
-            No shops deployed yet
+            No shops launched yet
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
             Launch your first shop to get started.
@@ -81,7 +81,7 @@ export default function Dashboard() {
             className="btn-launch inline-flex items-center gap-1.5 rounded-md px-5 py-2.5 text-sm"
           >
             <Rocket className="h-4 w-4" />
-            Deploy your first shop
+            Launch your first shop
           </Link>
         </div>
       )}

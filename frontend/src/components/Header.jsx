@@ -19,8 +19,8 @@ export default function Header({ user, theme, toggleTheme }) {
         <div className="flex items-center gap-6">
           <Link to="/" className="flex items-center gap-2 group">
             <div className="w-7 h-7 rounded-md flex items-center justify-center"
-                 style={{ background: 'linear-gradient(135deg, hsl(188 100% 38%), hsl(210 100% 52%))' }}>
-              <Rocket className="h-4 w-4 text-[hsl(222,32%,5%)]" />
+                 style={{ background: '#39C5BB' }}>
+              <Rocket className="h-4 w-4 text-white" />
             </div>
             <span className="font-bold text-base tracking-tight lp-glow"
                   style={{ fontFamily: 'Syne, sans-serif' }}>
@@ -31,8 +31,8 @@ export default function Header({ user, theme, toggleTheme }) {
             to="/shops/new"
             className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border/60 hover:border-primary/40 rounded-md px-3 py-1.5 transition-all"
           >
-            <Plus className="h-3.5 w-3.5" />
-            New Shop
+            <Rocket className="h-3.5 w-3.5" />
+            Launch Shop
           </Link>
           <Link
             to="/settings"

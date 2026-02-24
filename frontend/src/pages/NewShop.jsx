@@ -98,8 +98,8 @@ export default function NewShop() {
           Back
         </Link>
         <div>
-          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">New Deployment</p>
-          <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Deploy Shop</h1>
+          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">New Launch</p>
+          <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Launch Shop</h1>
         </div>
       </div>
 
@@ -245,7 +245,7 @@ export default function NewShop() {
               className="btn-launch inline-flex items-center gap-1.5 rounded-md px-5 py-2.5 text-sm disabled:opacity-50"
             >
               <Rocket className="h-4 w-4" />
-              {mutation.isPending ? 'Deploying...' : 'Deploy Shop'}
+              {mutation.isPending ? 'Launching...' : 'Launch Shop'}
             </button>
             <button
               type="button"
@@ -259,13 +259,30 @@ export default function NewShop() {
         </form>
       )}
 
+      {/* Launch success */}
+      {createdSlug && !mutation.isPending && (
+        <div className="lp-card rounded-xl p-6 mb-4 text-center lp-fadein">
+          <img
+            src="https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExOG42ZDY2ZzNoeWNoNWZ5eTN0bmdqaDdqcGtvMm8xbjExaThjbTVhNyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/jV65cP2S4mphrQfJkk/giphy.gif"
+            alt="Launching!"
+            className="mx-auto rounded-lg mb-4 max-h-48"
+          />
+          <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+            Launching Site Now!
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Your shop <code className="text-primary font-mono">/{createdSlug}</code> has been created.
+          </p>
+        </div>
+      )}
+
       {/* Terminal panel */}
       {(mutation.isPending || creationLog || createdSlug) && (
         <div className="rounded-xl border border-border/60 bg-[hsl(222,32%,4%)] overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/40 bg-[hsl(222,28%,7%)]">
             <Terminal className="h-3.5 w-3.5 text-primary/70" />
             <span className="text-xs font-mono text-muted-foreground">
-              {createdSlug ? `shop: ${createdSlug}` : 'deploying...'}
+              {createdSlug ? `shop: ${createdSlug}` : 'launching...'}
             </span>
             <div className="flex-1" />
             {createdSlug && (
@@ -286,7 +303,14 @@ export default function NewShop() {
             className="p-4 h-80 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed"
           >
             {mutation.isPending && !creationLog && (
-              <span className="text-zinc-500">Deploying to server — cloning template &amp; starting container...</span>
+              <span className="text-zinc-500">Launching shop — cloning template &amp; starting container...</span>
+            )}
+            {mutation.isPending && (
+              <div className="text-amber-400/80 mb-2">
+                Building the shop — this may take a few minutes.{'\n'}
+                The shop will be ready when the terminal shows:{'\n'}
+                <span className="text-[hsl(142,70%,50%)]">  ✓ Starting...{'\n'}  ✓ Ready in Xms</span>
+              </div>
             )}
             {terminalContent || (mutation.isPending ? '' : <span className="text-zinc-500">No output.</span>)}
             {mutation.isPending && <span className="term-cursor" />}

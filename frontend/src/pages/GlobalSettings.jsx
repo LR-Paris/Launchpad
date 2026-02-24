@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { changePassword, getSystemVersion, checkForUpdate, installUpdate } from '../lib/api';
-import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server, RefreshCw, Download, CheckCircle } from 'lucide-react';
+import { changePassword, getSystemVersion, checkForUpdate, installUpdate, getShops } from '../lib/api';
+import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server, RefreshCw, Download, CheckCircle, Database, ExternalLink, Settings } from 'lucide-react';
 
 export default function GlobalSettings({ theme, toggleTheme }) {
   const [oldPassword, setOldPassword] = useState('');
@@ -66,6 +66,14 @@ export default function GlobalSettings({ theme, toggleTheme }) {
       setUpdateLog(err.response?.data?.log || err.response?.data?.error || 'Update failed.');
     },
   });
+
+  // Shops data for database panel
+  const { data: shopsData, isLoading: shopsLoading } = useQuery({
+    queryKey: ['shops'],
+    queryFn: getShops,
+    refetchInterval: 10000,
+  });
+  const allShops = shopsData?.shops || [];
 
   const version = versionQuery.data?.version || '...';
   const git = versionQuery.data?.git || {};
@@ -305,6 +313,75 @@ export default function GlobalSettings({ theme, toggleTheme }) {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Shops Database */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <Database className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shops Database</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">({allShops.length} records)</span>
+          </div>
+
+          {shopsLoading ? (
+            <p className="px-5 py-4 text-sm text-muted-foreground font-mono">Loading...</p>
+          ) : allShops.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-muted-foreground font-mono">No shops in database.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/40 text-xs text-muted-foreground bg-muted/50">
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">ID</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Name</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">URL Path</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Status</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono">Created</th>
+                    <th className="px-4 py-2.5 text-left font-medium font-mono"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allShops.map((shop) => (
+                    <tr key={shop.id} className="border-b border-border/30 last:border-0 hover:bg-foreground/[0.02] transition-colors">
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs font-mono">{shop.id}</td>
+                      <td className="px-4 py-2.5 text-xs">{shop.name}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono">
+                        <a href={`/${shop.slug}/`} target="_blank" rel="noopener noreferrer"
+                           className="text-primary hover:underline inline-flex items-center gap-0.5">
+                          /{shop.slug} <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                        </a>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {shop.status === 'running' ? (
+                            <span className="w-1.5 h-1.5 status-dot-running" />
+                          ) : (
+                            <span className={`w-1.5 h-1.5 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                          )}
+                          <span className={`text-xs font-mono ${
+                            shop.status === 'running' ? 'text-[hsl(142,70%,50%)]'
+                            : shop.status === 'error' ? 'text-destructive'
+                            : 'text-muted-foreground'
+                          }`}>{shop.status}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                        {shop.created_at?.slice(0, 16).replace('T', ' ') ?? '—'}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <Link
+                          to={`/shops/${shop.slug}/settings`}
+                          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-secondary hover:bg-accent border border-border/60 transition-colors"
+                        >
+                          <Settings className="h-3 w-3" /> Settings
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
       </div>

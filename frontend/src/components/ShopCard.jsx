@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { shopAction, deleteShop } from '../lib/api';
@@ -11,6 +12,8 @@ const STATUS_COLORS = {
 
 export default function ShopCard({ shop }) {
   const queryClient = useQueryClient();
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState('');
 
   const actionMutation = useMutation({
     mutationFn: ({ slug, action }) => shopAction(slug, action),
@@ -23,7 +26,9 @@ export default function ShopCard({ shop }) {
   });
 
   const handleDelete = () => {
-    if (window.confirm(`Delete shop "${shop.name}"? This will remove all files.`)) {
+    if (deleteTyped === shop.name) {
+      setShowDeleteConfirm(false);
+      setDeleteTyped('');
       deleteMutation.mutate(shop.slug);
     }
   };
@@ -32,7 +37,7 @@ export default function ShopCard({ shop }) {
   const statusColor = STATUS_COLORS[shop.status] || STATUS_COLORS.stopped;
 
   return (
-    <div className="rounded-xl p-5 flex flex-col gap-4 border border-border/60 hover:border-primary/25 transition-all duration-300"
+    <div className="rounded-xl p-5 flex flex-col border border-border/60 hover:border-primary/25 transition-all duration-300 h-full"
          style={{
            background: 'hsl(var(--card) / 0.65)',
            backdropFilter: 'blur(12px)',
@@ -40,8 +45,8 @@ export default function ShopCard({ shop }) {
            boxShadow: '0 4px 24px hsl(0 0% 0% / 0.08), inset 0 1px 0 hsl(var(--card) / 0.3)',
          }}>
       {/* Header row */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0 flex-1">
           <h3 className="font-bold text-base truncate" style={{ fontFamily: 'Syne, sans-serif' }}>
             {shop.name}
           </h3>
@@ -58,9 +63,9 @@ export default function ShopCard({ shop }) {
               <ExternalLink className="h-2.5 w-2.5 ml-0.5 opacity-60" />
             </a>
           </div>
-          {shop.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shop.description}</p>
-          )}
+          <p className="text-xs text-muted-foreground mt-1 truncate">
+            {shop.description || 'No description provided.'}
+          </p>
         </div>
         {/* Status */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -74,6 +79,42 @@ export default function ShopCard({ shop }) {
           </span>
         </div>
       </div>
+
+      {/* Spacer to push actions to bottom */}
+      <div className="flex-1" />
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <div className="mb-3 p-3 rounded-lg border border-destructive/30 bg-destructive/5 space-y-2">
+          <p className="text-xs text-destructive font-medium">
+            Type <code className="font-mono bg-destructive/10 px-1 py-0.5 rounded">{shop.name}</code> to confirm:
+          </p>
+          <input
+            type="text"
+            value={deleteTyped}
+            onChange={(e) => setDeleteTyped(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleDelete(); if (e.key === 'Escape') { setShowDeleteConfirm(false); setDeleteTyped(''); } }}
+            placeholder={shop.name}
+            className="w-full rounded-md border border-destructive/40 bg-input px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-destructive/60 transition-all"
+            autoFocus
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDelete}
+              disabled={busy || deleteTyped !== shop.name}
+              className="inline-flex items-center gap-1 rounded-md bg-destructive text-destructive-foreground px-2 py-1 text-xs font-medium hover:bg-destructive/90 disabled:opacity-50 transition-colors"
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </button>
+            <button
+              onClick={() => { setShowDeleteConfirm(false); setDeleteTyped(''); }}
+              className="rounded-md px-2 py-1 text-xs bg-secondary hover:bg-accent border border-border/60 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -119,7 +160,7 @@ export default function ShopCard({ shop }) {
         </Link>
         <button
           disabled={busy}
-          onClick={handleDelete}
+          onClick={() => setShowDeleteConfirm(true)}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-destructive bg-secondary hover:bg-destructive/10 border border-border/60 hover:border-destructive/40 transition-all disabled:opacity-50"
         >
           <Trash2 className="h-3 w-3" />
