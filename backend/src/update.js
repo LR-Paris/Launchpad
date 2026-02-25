@@ -1,5 +1,5 @@
 const express = require('express');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -8,7 +8,8 @@ const router = express.Router();
 
 // Project root — when running in Docker the host project is bind-mounted
 // at /host/project; outside Docker fall back to two levels up from this file.
-const PROJECT_DIR = fs.existsSync('/host/project')
+const IS_DOCKER = fs.existsSync('/host/project');
+const PROJECT_DIR = IS_DOCKER
   ? '/host/project'
   : path.join(__dirname, '..', '..');
 
@@ -41,6 +42,19 @@ function getGitInfo() {
   } catch {
     return { branch: 'unknown', commit: 'unknown' };
   }
+}
+
+// Simple semver comparison: returns true if remote is newer than local
+function isNewer(remote, local) {
+  const r = remote.split('.').map(Number);
+  const l = local.split('.').map(Number);
+  for (let i = 0; i < Math.max(r.length, l.length); i++) {
+    const rv = r[i] || 0;
+    const lv = l[i] || 0;
+    if (rv > lv) return true;
+    if (rv < lv) return false;
+  }
+  return false;
 }
 
 // Simple https GET helper that returns a promise
@@ -78,7 +92,7 @@ router.get('/check-update', async (req, res) => {
   try {
     const localVersion = readLocalVersion();
 
-    // Try releases first, fall back to tags
+    // Try releases first, fall back to tags, then raw package.json
     let remoteVersion = null;
     let releaseUrl = null;
 
@@ -90,7 +104,6 @@ router.get('/check-update', async (req, res) => {
       remoteVersion = (release.tag_name || '').replace(/^v/, '');
       releaseUrl = release.html_url;
     } catch {
-      // No releases — try tags
       try {
         const tagsData = await httpsGet(
           `https://api.github.com/repos/${GITHUB_REPO}/tags?per_page=1`
@@ -100,7 +113,6 @@ router.get('/check-update', async (req, res) => {
           remoteVersion = (tags[0].name || '').replace(/^v/, '');
         }
       } catch {
-        // No tags either — check the remote package.json on main
         try {
           const raw = await httpsGet(
             `https://raw.githubusercontent.com/${GITHUB_REPO}/main/frontend/package.json`
@@ -113,7 +125,7 @@ router.get('/check-update', async (req, res) => {
       }
     }
 
-    const updateAvailable = remoteVersion && remoteVersion !== localVersion;
+    const updateAvailable = !!(remoteVersion && isNewer(remoteVersion, localVersion));
 
     res.json({
       localVersion,
@@ -151,12 +163,20 @@ router.post('/update', async (req, res) => {
     }
 
     // Pull latest
-    const pull = execSync('git pull origin main 2>&1', {
-      cwd: PROJECT_DIR,
-      stdio: 'pipe',
-      encoding: 'utf8',
-    });
-    log.push(`git pull: ${pull.trim()}`);
+    try {
+      const pull = execSync('git pull origin main 2>&1', {
+        cwd: PROJECT_DIR,
+        stdio: 'pipe',
+        encoding: 'utf8',
+        timeout: 60000,
+      });
+      log.push(`git pull: ${pull.trim()}`);
+    } catch (e) {
+      log.push(`git pull failed: ${e.stderr || e.message}`);
+      // Try to restore stash before returning error
+      try { execSync('git stash pop 2>&1', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch {}
+      return res.status(500).json({ error: 'Git pull failed.', log: log.join('\n') });
+    }
 
     // Pop stash if we had one
     try {
@@ -173,6 +193,30 @@ router.post('/update', async (req, res) => {
     // Read new version
     const newVersion = readLocalVersion();
     log.push(`Updated to version: ${newVersion}`);
+
+    // In Docker: attempt to trigger container rebuild so changes take effect
+    if (IS_DOCKER) {
+      const hostDir = process.env.HOST_PROJECT_DIR;
+      if (hostDir) {
+        try {
+          // Spawn a helper container that mounts the host project at its REAL host path
+          // so docker compose can correctly resolve relative volume mounts
+          execSync(
+            `docker run -d --rm --name launchpad-updater ` +
+            `-v /var/run/docker.sock:/var/run/docker.sock ` +
+            `-v "${hostDir}":"${hostDir}" ` +
+            `-w "${hostDir}" ` +
+            `docker:cli sh -c "sleep 5 && docker compose up -d --build"`,
+            { stdio: 'pipe', encoding: 'utf8', timeout: 30000 }
+          );
+          log.push('Rebuild triggered — containers will restart in ~30 seconds.');
+        } catch {
+          log.push(`Auto-rebuild not available. Run on host: cd ${hostDir} && docker compose up -d --build`);
+        }
+      } else {
+        log.push('Run on host to apply: docker compose up -d --build');
+      }
+    }
 
     res.json({ message: 'Update complete', version: newVersion, log: log.join('\n') });
   } catch (err) {
