@@ -89,7 +89,20 @@ router.post('/:slug/orders/wipe', (req, res) => {
   }
 });
 
-// GET /api/shops/:slug/orders/po/:filename — Download a PO file (PDF)
+// Content-Type mapping for common PO file formats
+const MIME_TYPES = {
+  '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
+  '.csv': 'text/csv',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+};
+
+// GET /api/shops/:slug/orders/po/:filename — Download/open a PO file
 router.get('/:slug/orders/po/:filename', (req, res) => {
   const { slug, filename } = req.params;
 
@@ -114,8 +127,12 @@ router.get('/:slug/orders/po/:filename', (req, res) => {
     return res.status(404).json({ error: 'PO file not found' });
   }
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  const ext = path.extname(safeName).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const isInlineable = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg';
+
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `${isInlineable ? 'inline' : 'attachment'}; filename="${safeName}"`);
   fs.createReadStream(filePath).pipe(res);
 });
 

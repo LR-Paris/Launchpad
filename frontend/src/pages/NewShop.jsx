@@ -43,7 +43,7 @@ export default function NewShop() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // STS-2.00: Shop type & preset state
+  // STS-2.01: Shop type & preset state
   const [shopType, setShopType] = useState('free');
   const [dataRequired, setDataRequired] = useState({
     address: true,

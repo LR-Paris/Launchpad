@@ -462,7 +462,7 @@ router.post('/', (req, res) => {
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
 
-    // Write STS-2.00 preset files if shop type specified
+    // Write STS-2.01 preset files if shop type specified
     if (shopType) {
       fs.mkdirSync(path.join(shopDir, 'DATABASE', 'Presets'), { recursive: true });
 
@@ -523,7 +523,7 @@ router.post('/', (req, res) => {
     // Register in database
     db.prepare(
       'INSERT INTO shops (slug, name, description, status, port, subdomain, shuttle_version) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.00');
+    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.01');
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
@@ -981,7 +981,7 @@ router.get('/:slug/version', (req, res) => {
       result.currentVersion = shop.shuttle_version;
     }
 
-    result.latestAvailable = 'STS-2.00';
+    result.latestAvailable = 'STS-2.01';
 
     res.json(result);
   } catch (err) {
@@ -1078,7 +1078,7 @@ router.post('/:slug/update-template', (req, res) => {
       }).trim();
     } catch { /* ignore */ }
 
-    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run('STS-2.00', slug);
+    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run('STS-2.01', slug);
 
     log.push(`Update complete. Now at commit ${newCommit}.`);
     res.json({ message: `Shop "${slug}" updated successfully`, commit: newCommit, log: log.join('\n') });
@@ -1169,10 +1169,10 @@ router.post('/:slug/upgrade', (req, res) => {
     }
 
     // Update version in DB
-    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.00', 'running', slug);
-    log.push('Updated shop version to STS-2.00.');
+    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.01', 'running', slug);
+    log.push('Updated shop version to STS-2.01.');
 
-    res.json({ message: `Shop "${slug}" upgraded to STS-2.00`, log: log.join('\n') });
+    res.json({ message: `Shop "${slug}" upgraded to STS-2.01`, log: log.join('\n') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
