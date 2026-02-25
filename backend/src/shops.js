@@ -1031,14 +1031,13 @@ router.post('/:slug/update-template', (req, res) => {
     if (fs.existsSync(envPath)) envBackup = fs.readFileSync(envPath, 'utf8');
     if (fs.existsSync(composePath)) composeBackup = fs.readFileSync(composePath, 'utf8');
 
+    // Reset working tree to clean state (backup already saved shop data above)
     try {
-      // Stash any local changes (patches) before pulling
-      const stash = execSync('git stash 2>&1', {
-        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
-      });
-      log.push(`git stash: ${stash.trim()}`);
+      execSync('git checkout -- . 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+      execSync('git clean -fd -e __DATABASE_BACKUP__ -e __ORDERS_BACKUP__ 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+      log.push('Reset working tree to clean state.');
     } catch (e) {
-      log.push(`git stash warning: ${e.message}`);
+      log.push(`git reset warning: ${e.message}`);
     }
 
     try {
@@ -1049,15 +1048,11 @@ router.post('/:slug/update-template', (req, res) => {
     } catch (pullErr) {
       const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
       log.push(`git pull error: ${msg}`);
-      // Try to pop stash back
-      try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
       // Clean up backups
       if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
       if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
       return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
     }
-
-    // Don't pop stash — we'll re-apply all patches fresh below
 
     // 2. Re-apply path-based routing overrides
     const overridesDir = path.join(TEMPLATES_DIR, 'shop-overrides');
@@ -1173,13 +1168,13 @@ router.post('/:slug/upgrade', (req, res) => {
     if (fs.existsSync(envPath)) envBackup = fs.readFileSync(envPath, 'utf8');
     if (fs.existsSync(composePath)) composeBackup = fs.readFileSync(composePath, 'utf8');
 
+    // Reset working tree to clean state (backup already saved shop data above)
     try {
-      const stash = execSync('git stash 2>&1', {
-        cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
-      });
-      log.push(`git stash: ${stash.trim()}`);
+      execSync('git checkout -- . 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+      execSync('git clean -fd -e __DATABASE_BACKUP__ -e __ORDERS_BACKUP__ 2>&1', { cwd: shopDir, stdio: 'pipe', encoding: 'utf8' });
+      log.push('Reset working tree to clean state.');
     } catch (e) {
-      log.push(`git stash warning: ${e.message}`);
+      log.push(`git reset warning: ${e.message}`);
     }
 
     try {
@@ -1190,7 +1185,6 @@ router.post('/:slug/upgrade', (req, res) => {
     } catch (pullErr) {
       const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
       log.push(`git pull error: ${msg}`);
-      try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
       // Clean up backups
       if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
       if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
