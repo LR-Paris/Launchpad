@@ -1009,6 +1009,28 @@ router.post('/:slug/update-template', (req, res) => {
       return res.status(400).json({ error: 'Shop is not a git repository — cannot update.' });
     }
 
+    // Back up shop-specific data before pulling template updates
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const ordersDir = path.join(shopDir, 'orders');
+    const dbBackupDir = path.join(shopDir, '__DATABASE_BACKUP__');
+    const ordersBackupDir = path.join(shopDir, '__ORDERS_BACKUP__');
+    const envPath = path.join(shopDir, '.env');
+    const composePath = path.join(shopDir, 'docker-compose.yml');
+    let envBackup = null, composeBackup = null;
+
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackupDir);
+      log.push('Backed up DATABASE folder.');
+    }
+    if (fs.existsSync(ordersDir)) {
+      if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
+      copyDirSync(ordersDir, ordersBackupDir);
+      log.push('Backed up orders folder.');
+    }
+    if (fs.existsSync(envPath)) envBackup = fs.readFileSync(envPath, 'utf8');
+    if (fs.existsSync(composePath)) composeBackup = fs.readFileSync(composePath, 'utf8');
+
     try {
       // Stash any local changes (patches) before pulling
       const stash = execSync('git stash 2>&1', {
@@ -1029,6 +1051,9 @@ router.post('/:slug/update-template', (req, res) => {
       log.push(`git pull error: ${msg}`);
       // Try to pop stash back
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Clean up backups
+      if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
+      if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
       return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
     }
 
@@ -1054,7 +1079,21 @@ router.post('/:slug/update-template', (req, res) => {
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
 
-    // 4. Rebuild container
+    // 4. Restore shop-specific data from backup
+    if (fs.existsSync(dbBackupDir)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackupDir, dbDir);
+      log.push('Restored DATABASE folder from backup.');
+    }
+    if (fs.existsSync(ordersBackupDir)) {
+      if (fs.existsSync(ordersDir)) fs.rmSync(ordersDir, { recursive: true, force: true });
+      fs.renameSync(ordersBackupDir, ordersDir);
+      log.push('Restored orders folder from backup.');
+    }
+    if (envBackup !== null) { fs.writeFileSync(envPath, envBackup); log.push('Restored .env from backup.'); }
+    if (composeBackup !== null) { fs.writeFileSync(composePath, composeBackup); log.push('Restored docker-compose.yml from backup.'); }
+
+    // 5. Rebuild container
     log.push('Rebuilding container...');
     try {
       execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
@@ -1112,6 +1151,28 @@ router.post('/:slug/upgrade', (req, res) => {
       return res.status(400).json({ error: 'Shop directory is not a git repo — cannot upgrade.' });
     }
 
+    // Back up shop-specific data before pulling template updates
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const ordersDir = path.join(shopDir, 'orders');
+    const dbBackupDir = path.join(shopDir, '__DATABASE_BACKUP__');
+    const ordersBackupDir = path.join(shopDir, '__ORDERS_BACKUP__');
+    const envPath = path.join(shopDir, '.env');
+    const composePath = path.join(shopDir, 'docker-compose.yml');
+    let envBackup = null, composeBackup = null;
+
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackupDir);
+      log.push('Backed up DATABASE folder.');
+    }
+    if (fs.existsSync(ordersDir)) {
+      if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
+      copyDirSync(ordersDir, ordersBackupDir);
+      log.push('Backed up orders folder.');
+    }
+    if (fs.existsSync(envPath)) envBackup = fs.readFileSync(envPath, 'utf8');
+    if (fs.existsSync(composePath)) composeBackup = fs.readFileSync(composePath, 'utf8');
+
     try {
       const stash = execSync('git stash 2>&1', {
         cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
@@ -1130,6 +1191,9 @@ router.post('/:slug/upgrade', (req, res) => {
       const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
       log.push(`git pull error: ${msg}`);
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Clean up backups
+      if (fs.existsSync(dbBackupDir)) fs.rmSync(dbBackupDir, { recursive: true, force: true });
+      if (fs.existsSync(ordersBackupDir)) fs.rmSync(ordersBackupDir, { recursive: true, force: true });
       return res.status(500).json({ error: 'git pull failed', log: log.join('\n') });
     }
 
@@ -1152,6 +1216,20 @@ router.post('/:slug/upgrade', (req, res) => {
 
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    // Restore shop-specific data from backup
+    if (fs.existsSync(dbBackupDir)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackupDir, dbDir);
+      log.push('Restored DATABASE folder from backup.');
+    }
+    if (fs.existsSync(ordersBackupDir)) {
+      if (fs.existsSync(ordersDir)) fs.rmSync(ordersDir, { recursive: true, force: true });
+      fs.renameSync(ordersBackupDir, ordersDir);
+      log.push('Restored orders folder from backup.');
+    }
+    if (envBackup !== null) { fs.writeFileSync(envPath, envBackup); log.push('Restored .env from backup.'); }
+    if (composeBackup !== null) { fs.writeFileSync(composePath, composeBackup); log.push('Restored docker-compose.yml from backup.'); }
 
     // Rebuild container
     try {
