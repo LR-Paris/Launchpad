@@ -7,6 +7,7 @@ import {
   listShopFiles, readShopFile, writeShopFile, deleteShopFile,
   uploadShopFiles, replaceShopFile, getShopImageUrl,
 } from '../lib/api';
+import FadeImage from './FadeImage';
 
 const DETAIL_FIELDS = {
   'Name.txt':        { type: 'text',     label: 'Name' },
@@ -517,10 +518,10 @@ export default function CollectionsEditor({ slug }) {
                           }`}
                         >
                           {item.thumbnailFile ? (
-                            <img
+                            <FadeImage
                               src={getShopImageUrl(slug, item.thumbnailFile)}
                               alt={item.name}
-                              className="w-full h-24 object-cover rounded-md mb-2 border border-border/30"
+                              className="w-full h-24 rounded-md mb-2 border border-border/30"
                             />
                           ) : (
                             <div className="w-full h-24 rounded-md mb-2 bg-muted/50 flex items-center justify-center border border-border/30">
@@ -661,10 +662,10 @@ export default function CollectionsEditor({ slug }) {
                               const imgUrl = getShopImageUrl(slug, photo.path) + (ts ? `&_t=${ts}` : '');
                               return (
                                 <div key={photo.name} className="relative group rounded-md border border-border/40 overflow-hidden">
-                                  <img
+                                  <FadeImage
                                     src={imgUrl}
                                     alt={photo.name}
-                                    className="w-full h-28 object-cover"
+                                    className="w-full h-28"
                                   />
                                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                     <button

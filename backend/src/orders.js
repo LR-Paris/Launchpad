@@ -92,6 +92,8 @@ router.post('/:slug/orders/wipe', (req, res) => {
 // Content-type map for common PO file extensions
 const PO_CONTENT_TYPES = {
   '.pdf': 'application/pdf',
+  '.html': 'text/html',
+  '.htm': 'text/html',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.xls': 'application/vnd.ms-excel',
   '.csv': 'text/csv',
@@ -130,8 +132,8 @@ router.get('/:slug/orders/po/:filename', (req, res) => {
   const ext = path.extname(safeName).toLowerCase();
   const contentType = PO_CONTENT_TYPES[ext] || 'application/octet-stream';
 
-  // PDFs and images can be shown inline; everything else triggers download
-  const isInline = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg';
+  // PDFs, HTML, and images can be shown inline; everything else triggers download
+  const isInline = ext === '.pdf' || ext === '.html' || ext === '.htm' || ext === '.png' || ext === '.jpg' || ext === '.jpeg';
   const disposition = isInline ? 'inline' : 'attachment';
 
   res.setHeader('Content-Type', contentType);

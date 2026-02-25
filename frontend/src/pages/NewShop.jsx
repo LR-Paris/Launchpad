@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { createShop, getShopLogs, uploadDatabaseZip } from '../lib/api';
 import { ArrowLeft, Terminal, Rocket, Database, FileArchive, Zap } from 'lucide-react';
+import FadeImage from '../components/FadeImage';
 
 const SHOP_PRESETS = [
   {
@@ -409,7 +410,7 @@ export default function NewShop() {
       {/* Launch success */}
       {createdSlug && !mutation.isPending && (
         <div className="lp-card rounded-xl p-6 mb-4 text-center lp-fadein">
-          <img
+          <FadeImage
             src="https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExOG42ZDY2ZzNoeWNoNWZ5eTN0bmdqaDdqcGtvMm8xbjExaThjbTVhNyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/jV65cP2S4mphrQfJkk/giphy.gif"
             alt="Launching!"
             className="mx-auto rounded-lg mb-4 max-h-48"

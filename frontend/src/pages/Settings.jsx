@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
+import FadeImage from '../components/FadeImage';
 
 // Sort order for DATABASE/Design/Details files
 const SETTINGS_ORDER = [
@@ -1237,10 +1238,11 @@ export default function Settings() {
                     </button>
                   </div>
                   <div className="flex-1 flex items-center justify-center p-6 overflow-auto">
-                    <img
+                    <FadeImage
                       src={getShopImageUrl(slug, openFilePath)}
                       alt={openFilePath}
-                      className="max-w-full max-h-full object-contain rounded-lg border border-border/40"
+                      className="max-w-full max-h-full rounded-lg border border-border/40"
+                      style={{ objectFit: 'contain' }}
                     />
                   </div>
                 </div>

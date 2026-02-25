@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Save, Eye, EyeOff, Copy, Upload, Check } from 'lucide-react';
 import { getShopImageUrl } from '../lib/api';
+import FadeImage from './FadeImage';
 
 const HIDDEN_FILES = new Set(['readme.md', 'readme.txt', '.gitkeep', '.ds_store']);
 
@@ -229,7 +230,7 @@ export default function KeyValueEditor({
                     <span className="text-[10px] text-muted-foreground font-mono opacity-60">{entry.name}</span>
                   </div>
                   <div className="rounded-lg border border-border/40 bg-muted/30 p-4 flex flex-col items-center gap-3">
-                    <img src={imgUrl} alt={label} className="max-h-40 max-w-full object-contain rounded-md border border-border/30" />
+                    <FadeImage src={imgUrl} alt={label} className="max-h-40 max-w-full rounded-md border border-border/30" style={{ objectFit: 'contain' }} />
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => imageInputRefs.current[filePath]?.click()}

@@ -67,7 +67,7 @@ export default function OrderTable({ orders, slug }) {
               </th>
             ))}
             {hasPo && (
-              <th className="px-4 py-3 text-left font-medium text-muted-foreground select-none">
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground select-none" title="Supports PDF, HTML, Excel, and image files">
                 <span className="inline-flex items-center gap-1">
                   <FileSpreadsheet className="h-3 w-3" />
                   Open PO
