@@ -8,22 +8,22 @@ const SHOP_PRESETS = [
   {
     label: 'Basic Free Shop',
     shopType: 'free',
-    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false },
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false, hotel_collection: false },
   },
   {
     label: 'PO Required Shop',
     shopType: 'po',
-    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false },
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false, hotel_collection: false },
   },
   {
     label: 'Hotel Event Shop',
     shopType: 'free',
-    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: false, hotel_list: true },
+    dataRequired: { address: true, details: true, extra_notes: true, shipping_handler: false, hotel_list: false, hotel_collection: true },
   },
   {
     label: 'Minimal Free Shop',
     shopType: 'free',
-    dataRequired: { address: false, details: false, extra_notes: false, shipping_handler: true, hotel_list: false },
+    dataRequired: { address: false, details: false, extra_notes: false, shipping_handler: true, hotel_list: false, hotel_collection: false },
   },
 ];
 
@@ -43,7 +43,7 @@ export default function NewShop() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // STS-2.00: Shop type & preset state
+  // STS-2.01: Shop type & preset state
   const [shopType, setShopType] = useState('free');
   const [dataRequired, setDataRequired] = useState({
     address: true,
@@ -51,6 +51,7 @@ export default function NewShop() {
     extra_notes: true,
     shipping_handler: true,
     hotel_list: false,
+    hotel_collection: false,
   });
   const [hotelList, setHotelList] = useState('');
 
@@ -106,13 +107,16 @@ export default function NewShop() {
   const applyPreset = (preset) => {
     setShopType(preset.shopType);
     setDataRequired({ ...preset.dataRequired });
-    if (!preset.dataRequired.hotel_list) setHotelList('');
+    if (!preset.dataRequired.hotel_list && !preset.dataRequired.hotel_collection) setHotelList('');
   };
 
   const toggleDataRequired = (key) => {
     setDataRequired(prev => {
       const next = { ...prev, [key]: !prev[key] };
-      if (key === 'hotel_list' && !next.hotel_list) setHotelList('');
+      if ((key === 'hotel_list' && !next.hotel_list && !next.hotel_collection) ||
+          (key === 'hotel_collection' && !next.hotel_collection && !next.hotel_list)) {
+        setHotelList('');
+      }
       return next;
     });
   };
@@ -128,7 +132,7 @@ export default function NewShop() {
     if (customSlug.trim()) payload.slug = customSlug.trim();
     if (description.trim()) payload.description = description.trim();
     if (folderPath.trim()) payload.folderPath = folderPath.trim();
-    if (dataRequired.hotel_list && hotelList.trim()) payload.hotelList = hotelList.trim();
+    if ((dataRequired.hotel_list || dataRequired.hotel_collection) && hotelList.trim()) payload.hotelList = hotelList.trim();
     mutation.mutate(payload);
   };
 
@@ -141,7 +145,8 @@ export default function NewShop() {
     details: 'Details',
     extra_notes: 'Extra Notes',
     shipping_handler: 'Shipping Handler',
-    hotel_list: 'Hotel List',
+    hotel_list: 'Hotel List (Dropdown)',
+    hotel_collection: 'Hotel Collection (Textbox)',
   };
 
   return (
@@ -287,24 +292,24 @@ export default function NewShop() {
             </div>
           </div>
 
-          {/* Hotel List (conditional) */}
-          {dataRequired.hotel_list && (
+          {/* Hotel Collection (conditional) */}
+          {(dataRequired.hotel_list || dataRequired.hotel_collection) && (
             <div>
               <label className="block text-sm font-semibold mb-1.5" htmlFor="hotelList"
                      style={{ fontFamily: 'Syne, sans-serif' }}>
-                Hotel List
+                Hotel Collection
               </label>
               <textarea
                 id="hotelList"
                 value={hotelList}
                 onChange={(e) => setHotelList(e.target.value)}
-                placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency"}
-                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-none"
-                rows={4}
+                placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency\nBest Western Plus\nCourtyard by Marriott"}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-y min-h-[140px]"
+                rows={8}
                 disabled={mutation.isPending}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                One hotel per line. Shown as a dropdown during checkout.
+                One hotel per line. {dataRequired.hotel_collection ? 'Shown as a textbox during checkout.' : 'Shown as a dropdown during checkout.'}
               </p>
             </div>
           )}

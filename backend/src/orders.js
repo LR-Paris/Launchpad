@@ -89,7 +89,20 @@ router.post('/:slug/orders/wipe', (req, res) => {
   }
 });
 
-// GET /api/shops/:slug/orders/po/:filename — Download a PO file (PDF)
+// Content-type map for common PO file extensions
+const PO_CONTENT_TYPES = {
+  '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
+  '.csv': 'text/csv',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+};
+
+// GET /api/shops/:slug/orders/po/:filename — Download/open a PO file
 router.get('/:slug/orders/po/:filename', (req, res) => {
   const { slug, filename } = req.params;
 
@@ -114,8 +127,15 @@ router.get('/:slug/orders/po/:filename', (req, res) => {
     return res.status(404).json({ error: 'PO file not found' });
   }
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  const ext = path.extname(safeName).toLowerCase();
+  const contentType = PO_CONTENT_TYPES[ext] || 'application/octet-stream';
+
+  // PDFs and images can be shown inline; everything else triggers download
+  const isInline = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg';
+  const disposition = isInline ? 'inline' : 'attachment';
+
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeName}"`);
   fs.createReadStream(filePath).pipe(res);
 });
 

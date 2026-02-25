@@ -98,10 +98,10 @@ export default function Settings() {
   const [wiping, setWiping] = useState(false);
   const [wipeMessage, setWipeMessage] = useState('');
 
-  // STS-2.00: Shop Configuration (Presets) state
+  // STS-2.01: Shop Configuration (Presets) state
   const [presetShopType, setPresetShopType] = useState('free');
   const [presetDataRequired, setPresetDataRequired] = useState({
-    address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false,
+    address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false, hotel_collection: false,
   });
   const [presetHotelList, setPresetHotelList] = useState('');
   const [presetLoading, setPresetLoading] = useState(true);
@@ -121,7 +121,7 @@ export default function Settings() {
   const [hotelsExpanded, setHotelsExpanded] = useState(false);
   const [hotelsEditing, setHotelsEditing] = useState(false);
 
-  // STS-2.00: Version management state
+  // STS-2.01: Version management state
   const [versionInfo, setVersionInfo] = useState(null);
   const [versionChecking, setVersionChecking] = useState(false);
   const [upgradeLog, setUpgradeLog] = useState('');
@@ -212,7 +212,7 @@ export default function Settings() {
       });
   }, [slug]);
 
-  // Load STS-2.00 preset files
+  // Load STS-2.01 preset files
   useEffect(() => {
     setPresetLoading(true);
     Promise.all([
@@ -289,7 +289,7 @@ export default function Settings() {
         .map(([k, v]) => `${k}: ${v}`)
         .join('\n');
       await writeShopFile(slug, 'DATABASE/Presets/DataRequired.txt', drContent);
-      if (presetDataRequired.hotel_list && presetHotelList.trim()) {
+      if ((presetDataRequired.hotel_list || presetDataRequired.hotel_collection) && presetHotelList.trim()) {
         await writeShopFile(slug, 'DATABASE/Design/Details/Hotels.txt', presetHotelList);
       }
       setPresetExists(true);
@@ -727,12 +727,12 @@ export default function Settings() {
         {/* Shop Collections — DATABASE/ShopCollections */}
         <CollectionsEditor slug={slug} />
 
-        {/* Shop Configuration — STS-2.00 Presets */}
+        {/* Shop Configuration — STS-2.01 Presets */}
         <div className="lp-card rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <Settings2 className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Configuration</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.00 Presets</span>
+            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.01 Presets</span>
           </div>
 
           {presetSuccess && (
@@ -753,7 +753,7 @@ export default function Settings() {
             <div className="p-5 space-y-4">
               {!presetExists && (
                 <div className="rounded-md border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  No presets configured yet. This shop may be pre-STS-2.00. Configure and save to create preset files.
+                  No presets configured yet. This shop may be pre-STS-2.01. Configure and save to create preset files.
                 </div>
               )}
 
@@ -784,7 +784,8 @@ export default function Settings() {
                     ['details', 'Details'],
                     ['extra_notes', 'Extra Notes'],
                     ['shipping_handler', 'Shipping Handler'],
-                    ['hotel_list', 'Hotel List'],
+                    ['hotel_list', 'Hotel List (Dropdown)'],
+                    ['hotel_collection', 'Hotel Collection (Textbox)'],
                   ].map(([key, label]) => (
                     <label key={key} className="flex items-center gap-2 text-xs cursor-pointer select-none">
                       <input
@@ -792,7 +793,10 @@ export default function Settings() {
                         checked={presetDataRequired[key]}
                         onChange={() => setPresetDataRequired(prev => {
                           const next = { ...prev, [key]: !prev[key] };
-                          if (key === 'hotel_list' && !next.hotel_list) setPresetHotelList('');
+                          if ((key === 'hotel_list' && !next.hotel_list && !next.hotel_collection) ||
+                              (key === 'hotel_collection' && !next.hotel_collection && !next.hotel_list)) {
+                            setPresetHotelList('');
+                          }
                           return next;
                         })}
                         className="rounded border-border accent-primary"
@@ -805,12 +809,12 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* Hotel List */}
-              {presetDataRequired.hotel_list && (
+              {/* Hotel Collection */}
+              {(presetDataRequired.hotel_list || presetDataRequired.hotel_collection) && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs font-semibold" style={{ fontFamily: 'Syne, sans-serif' }}>
-                      Hotel List
+                      Hotel Collection
                     </label>
                     {presetHotelList.trim() && (
                       <button
@@ -828,11 +832,13 @@ export default function Settings() {
                       <textarea
                         value={presetHotelList}
                         onChange={(e) => setPresetHotelList(e.target.value)}
-                        placeholder={"Hilton Downtown\nMarriott Convention Center"}
-                        className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-none"
-                        rows={4}
+                        placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency\nBest Western Plus"}
+                        className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-y min-h-[120px]"
+                        rows={8}
                       />
-                      <p className="text-[10px] text-muted-foreground mt-1">One hotel per line.</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        One hotel per line. {presetDataRequired.hotel_collection ? 'Shown as a textbox during checkout.' : 'Shown as a dropdown during checkout.'}
+                      </p>
                     </>
                   ) : (() => {
                     const hotels = presetHotelList.trim().split('\n').filter(h => h.trim());
@@ -998,7 +1004,7 @@ export default function Settings() {
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
             <span className="text-xs font-mono text-muted-foreground">
-              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.00)'}
+              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
             </span>
           </div>
 

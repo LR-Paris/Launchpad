@@ -477,14 +477,15 @@ router.post('/', (req, res) => {
         `details: ${dr.details !== false}`,
         `extra_notes: ${dr.extra_notes !== false}`,
         `shipping_handler: ${dr.shipping_handler !== false}`,
-        `hotel_list: ${dr.hotel_list === true}`,
+        `hotel_list: ${dr.hotel_list === true || dr.hotel_collection === true}`,
+        `hotel_collection: ${dr.hotel_collection === true}`,
       ].join('\n');
       fs.writeFileSync(
         path.join(shopDir, 'DATABASE', 'Presets', 'DataRequired.txt'),
         drContent
       );
 
-      if (dr.hotel_list && hotelList) {
+      if ((dr.hotel_list || dr.hotel_collection) && hotelList) {
         fs.mkdirSync(path.join(shopDir, 'DATABASE', 'Design', 'Details'), { recursive: true });
         fs.writeFileSync(
           path.join(shopDir, 'DATABASE', 'Design', 'Details', 'Hotels.txt'),
@@ -523,7 +524,7 @@ router.post('/', (req, res) => {
     // Register in database
     db.prepare(
       'INSERT INTO shops (slug, name, description, status, port, subdomain, shuttle_version) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.00');
+    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.01');
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
@@ -981,7 +982,7 @@ router.get('/:slug/version', (req, res) => {
       result.currentVersion = shop.shuttle_version;
     }
 
-    result.latestAvailable = 'STS-2.00';
+    result.latestAvailable = 'STS-2.01';
 
     res.json(result);
   } catch (err) {
@@ -1078,7 +1079,7 @@ router.post('/:slug/update-template', (req, res) => {
       }).trim();
     } catch { /* ignore */ }
 
-    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run('STS-2.00', slug);
+    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run('STS-2.01', slug);
 
     log.push(`Update complete. Now at commit ${newCommit}.`);
     res.json({ message: `Shop "${slug}" updated successfully`, commit: newCommit, log: log.join('\n') });
@@ -1169,7 +1170,7 @@ router.post('/:slug/upgrade', (req, res) => {
     }
 
     // Update version in DB
-    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.00', 'running', slug);
+    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.01', 'running', slug);
     log.push('Updated shop version to STS-2.00.');
 
     res.json({ message: `Shop "${slug}" upgraded to STS-2.00`, log: log.join('\n') });
