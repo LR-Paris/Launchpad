@@ -11,7 +11,7 @@ import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
-  ArrowUpCircle, Settings2, ChevronDown, Pencil,
+  ArrowUpCircle, Settings2,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 import CollectionsEditor from '../components/CollectionsEditor';
@@ -98,7 +98,7 @@ export default function Settings() {
   const [wiping, setWiping] = useState(false);
   const [wipeMessage, setWipeMessage] = useState('');
 
-  // STS-2.00: Shop Configuration (Presets) state
+  // STS-2.01: Shop Configuration (Presets) state
   const [presetShopType, setPresetShopType] = useState('free');
   const [presetDataRequired, setPresetDataRequired] = useState({
     address: true, details: true, extra_notes: true, shipping_handler: true, hotel_list: false,
@@ -117,11 +117,8 @@ export default function Settings() {
   const [presetsSaving, setPresetsSaving] = useState({});
   const [presetsLoading, setPresetsLoading] = useState(true);
 
-  // Hotel list display state
-  const [hotelsExpanded, setHotelsExpanded] = useState(false);
-  const [hotelsEditing, setHotelsEditing] = useState(false);
 
-  // STS-2.00: Version management state
+  // STS-2.01: Version management state
   const [versionInfo, setVersionInfo] = useState(null);
   const [versionChecking, setVersionChecking] = useState(false);
   const [upgradeLog, setUpgradeLog] = useState('');
@@ -212,7 +209,7 @@ export default function Settings() {
       });
   }, [slug]);
 
-  // Load STS-2.00 preset files
+  // Load STS-2.01 preset files
   useEffect(() => {
     setPresetLoading(true);
     Promise.all([
@@ -727,12 +724,12 @@ export default function Settings() {
         {/* Shop Collections — DATABASE/ShopCollections */}
         <CollectionsEditor slug={slug} />
 
-        {/* Shop Configuration — STS-2.00 Presets */}
+        {/* Shop Configuration — STS-2.01 Presets */}
         <div className="lp-card rounded-xl overflow-hidden">
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <Settings2 className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Configuration</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.00 Presets</span>
+            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.01 Presets</span>
           </div>
 
           {presetSuccess && (
@@ -753,7 +750,7 @@ export default function Settings() {
             <div className="p-5 space-y-4">
               {!presetExists && (
                 <div className="rounded-md border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  No presets configured yet. This shop may be pre-STS-2.00. Configure and save to create preset files.
+                  No presets configured yet. This shop may be pre-STS-2.01. Configure and save to create preset files.
                 </div>
               )}
 
@@ -808,60 +805,19 @@ export default function Settings() {
               {/* Hotel List */}
               {presetDataRequired.hotel_list && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-semibold" style={{ fontFamily: 'Syne, sans-serif' }}>
-                      Hotel List
-                    </label>
-                    {presetHotelList.trim() && (
-                      <button
-                        onClick={() => { setHotelsEditing(!hotelsEditing); setHotelsExpanded(false); }}
-                        className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary transition-colors"
-                      >
-                        <Pencil className="h-2.5 w-2.5" />
-                        {hotelsEditing ? 'Done' : 'Edit'}
-                      </button>
-                    )}
-                  </div>
-
-                  {hotelsEditing || !presetHotelList.trim() ? (
-                    <>
-                      <textarea
-                        value={presetHotelList}
-                        onChange={(e) => setPresetHotelList(e.target.value)}
-                        placeholder={"Hilton Downtown\nMarriott Convention Center"}
-                        className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-none"
-                        rows={4}
-                      />
-                      <p className="text-[10px] text-muted-foreground mt-1">One hotel per line.</p>
-                    </>
-                  ) : (() => {
-                    const hotels = presetHotelList.trim().split('\n').filter(h => h.trim());
-                    const SHOW_COUNT = 5;
-                    const visible = hotelsExpanded ? hotels : hotels.slice(0, SHOW_COUNT);
-                    const remaining = hotels.length - SHOW_COUNT;
-                    return (
-                      <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-                        <ul className="space-y-1">
-                          {visible.map((hotel, i) => (
-                            <li key={i} className="flex items-center gap-2 text-xs">
-                              <span className="w-4 text-right text-[10px] text-muted-foreground font-mono flex-shrink-0">{i + 1}.</span>
-                              <span className="text-foreground">{hotel.trim()}</span>
-                            </li>
-                          ))}
-                        </ul>
-                        {remaining > 0 && (
-                          <button
-                            onClick={() => setHotelsExpanded(!hotelsExpanded)}
-                            className="mt-2 inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
-                          >
-                            <ChevronDown className={`h-3 w-3 transition-transform ${hotelsExpanded ? 'rotate-180' : ''}`} />
-                            {hotelsExpanded ? 'Show less' : `Show ${remaining} more`}
-                          </button>
-                        )}
-                        <p className="text-[10px] text-muted-foreground mt-1.5">{hotels.length} hotel{hotels.length !== 1 ? 's' : ''}</p>
-                      </div>
-                    );
-                  })()}
+                  <label className="block text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                    Hotel List
+                  </label>
+                  <textarea
+                    value={presetHotelList}
+                    onChange={(e) => setPresetHotelList(e.target.value)}
+                    placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency"}
+                    className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-y min-h-[120px]"
+                    rows={8}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    One hotel per line.{presetHotelList.trim() ? ` ${presetHotelList.trim().split('\n').filter(h => h.trim()).length} hotel${presetHotelList.trim().split('\n').filter(h => h.trim()).length !== 1 ? 's' : ''}.` : ''}
+                  </p>
                 </div>
               )}
 
@@ -998,7 +954,7 @@ export default function Settings() {
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
             <span className="text-xs font-mono text-muted-foreground">
-              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.00)'}
+              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
             </span>
           </div>
 

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ArrowUpDown, FileDown } from 'lucide-react';
+import { ArrowUpDown, FileDown, ExternalLink } from 'lucide-react';
 import { getPoFileUrl } from '../lib/api';
 
 export default function OrderTable({ orders, slug }) {
@@ -9,6 +9,11 @@ export default function OrderTable({ orders, slug }) {
   const columns = useMemo(() => {
     if (!orders.length) return [];
     return Object.keys(orders[0]);
+  }, [orders]);
+
+  // Check if any order has a PO File value
+  const hasPo = useMemo(() => {
+    return orders.some(row => row['PO File']?.trim());
   }, [orders]);
 
   const sorted = useMemo(() => {
@@ -35,18 +40,10 @@ export default function OrderTable({ orders, slug }) {
   }
 
   const renderCell = (col, value) => {
-    // Render PO File column as a download link
+    // Render PO File column as the filename text only (button is separate)
     if (col === 'PO File' && value && slug) {
       return (
-        <a
-          href={getPoFileUrl(slug, value)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-primary hover:underline"
-        >
-          <FileDown className="h-3 w-3" />
-          {value}
-        </a>
+        <span className="text-xs font-mono text-muted-foreground">{value}</span>
       );
     }
     return value;
@@ -69,6 +66,14 @@ export default function OrderTable({ orders, slug }) {
                 </span>
               </th>
             ))}
+            {hasPo && (
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <FileDown className="h-3 w-3" />
+                  Open PO
+                </span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -79,6 +84,23 @@ export default function OrderTable({ orders, slug }) {
                   {renderCell(col, row[col])}
                 </td>
               ))}
+              {hasPo && (
+                <td className="px-4 py-2.5">
+                  {row['PO File']?.trim() ? (
+                    <a
+                      href={getPoFileUrl(slug, row['PO File'])}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 hover:border-primary/40 transition-all"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Open
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground/50">—</span>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
