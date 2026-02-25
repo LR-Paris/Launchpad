@@ -83,7 +83,7 @@ export default function Orders() {
               {orders.length} order{orders.length !== 1 ? 's' : ''}
             </span>
           </div>
-          <OrderTable orders={orders} />
+          <OrderTable orders={orders} slug={slug} />
         </div>
       )}
     </div>
