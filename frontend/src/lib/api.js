@@ -130,7 +130,10 @@ export const getSystemVersion = () =>
 export const checkForUpdate = () =>
   api.get('/system/check-update').then(r => r.data);
 
-export const installUpdate = () =>
-  api.post('/system/update').then(r => r.data);
+export const installUpdate = (branch) =>
+  api.post('/system/update', branch ? { branch } : {}).then(r => r.data);
+
+export const getSystemBranches = () =>
+  api.get('/system/branches').then(r => r.data);
 
 export default api;

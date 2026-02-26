@@ -858,6 +858,15 @@ router.post('/:slug/deploy', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     const log = [];
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     // Pull latest if it's a git repo
     if (fs.existsSync(path.join(shopDir, '.git'))) {
       try {
@@ -866,6 +875,13 @@ router.post('/:slug/deploy', (req, res) => {
       } catch (pullErr) {
         log.push(`git pull error: ${pullErr.message}`);
       }
+    }
+
+    // Restore DATABASE folder from backup
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder.');
     }
 
     // Rebuild container
@@ -1009,6 +1025,15 @@ router.post('/:slug/update-template', (req, res) => {
       return res.status(400).json({ error: 'Shop is not a git repository — cannot update.' });
     }
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     try {
       // Stash any local changes (patches) before pulling
       const stash = execSync('git stash 2>&1', {
@@ -1029,7 +1054,20 @@ router.post('/:slug/update-template', (req, res) => {
       log.push(`git pull error: ${msg}`);
       // Try to pop stash back
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Restore DATABASE backup on failure
+      if (fs.existsSync(dbBackup)) {
+        if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+        fs.renameSync(dbBackup, dbDir);
+        log.push('Restored DATABASE folder from backup.');
+      }
       return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
+    }
+
+    // Restore DATABASE folder from backup (overwrite anything git may have changed)
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder from backup.');
     }
 
     // Don't pop stash — we'll re-apply all patches fresh below
@@ -1112,6 +1150,15 @@ router.post('/:slug/upgrade', (req, res) => {
       return res.status(400).json({ error: 'Shop directory is not a git repo — cannot upgrade.' });
     }
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     try {
       const stash = execSync('git stash 2>&1', {
         cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
@@ -1130,7 +1177,20 @@ router.post('/:slug/upgrade', (req, res) => {
       const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
       log.push(`git pull error: ${msg}`);
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Restore DATABASE backup on failure
+      if (fs.existsSync(dbBackup)) {
+        if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+        fs.renameSync(dbBackup, dbDir);
+        log.push('Restored DATABASE folder from backup.');
+      }
       return res.status(500).json({ error: 'git pull failed', log: log.join('\n') });
+    }
+
+    // Restore DATABASE folder from backup (overwrite anything git may have changed)
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder from backup.');
     }
 
     // Re-apply path-based routing overrides

@@ -87,6 +87,44 @@ router.get('/version', (req, res) => {
   res.json({ version, git });
 });
 
+// GET /api/system/branches — list available remote branches
+router.get('/branches', async (req, res) => {
+  try {
+    // Fetch latest refs from remote
+    try {
+      execSync('git fetch --all 2>&1', {
+        cwd: PROJECT_DIR,
+        stdio: 'pipe',
+        encoding: 'utf8',
+        timeout: 30000,
+      });
+    } catch {
+      // If fetch fails, still try to list what we have locally
+    }
+
+    const raw = execSync('git branch -r --format="%(refname:short)" 2>&1', {
+      cwd: PROJECT_DIR,
+      stdio: 'pipe',
+      encoding: 'utf8',
+    }).trim();
+
+    const branches = raw
+      .split('\n')
+      .map(b => b.trim())
+      .filter(b => b && !b.includes('HEAD'))
+      .map(b => b.replace(/^origin\//, ''));
+
+    // De-duplicate
+    const unique = [...new Set(branches)];
+
+    const git = getGitInfo();
+
+    res.json({ branches: unique, currentBranch: git.branch });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/system/check-update — compare local version with GitHub
 router.get('/check-update', async (req, res) => {
   try {
@@ -141,6 +179,8 @@ router.get('/check-update', async (req, res) => {
 // POST /api/system/update — pull latest from GitHub and rebuild
 router.post('/update', async (req, res) => {
   const log = [];
+  const { branch } = req.body || {};
+  const targetBranch = branch || 'main';
 
   try {
     // Ensure we're in a git repo
@@ -162,15 +202,42 @@ router.post('/update', async (req, res) => {
       log.push(`git stash warning: ${e.message}`);
     }
 
+    // Switch to target branch if different from current
+    const currentBranch = getGitInfo().branch;
+    if (targetBranch !== currentBranch) {
+      try {
+        // Fetch to ensure we have the branch
+        execSync(`git fetch origin ${targetBranch} 2>&1`, {
+          cwd: PROJECT_DIR, stdio: 'pipe', encoding: 'utf8', timeout: 30000,
+        });
+        const checkout = execSync(`git checkout ${targetBranch} 2>&1`, {
+          cwd: PROJECT_DIR, stdio: 'pipe', encoding: 'utf8',
+        });
+        log.push(`git checkout ${targetBranch}: ${checkout.trim()}`);
+      } catch (e) {
+        // Branch might not exist locally yet — try tracking it
+        try {
+          const checkout = execSync(`git checkout -b ${targetBranch} origin/${targetBranch} 2>&1`, {
+            cwd: PROJECT_DIR, stdio: 'pipe', encoding: 'utf8',
+          });
+          log.push(`git checkout -b ${targetBranch}: ${checkout.trim()}`);
+        } catch (e2) {
+          log.push(`Failed to switch to branch ${targetBranch}: ${e2.message}`);
+          try { execSync('git stash pop 2>&1', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch {}
+          return res.status(500).json({ error: `Could not switch to branch "${targetBranch}".`, log: log.join('\n') });
+        }
+      }
+    }
+
     // Pull latest
     try {
-      const pull = execSync('git pull origin main 2>&1', {
+      const pull = execSync(`git pull origin ${targetBranch} 2>&1`, {
         cwd: PROJECT_DIR,
         stdio: 'pipe',
         encoding: 'utf8',
         timeout: 60000,
       });
-      log.push(`git pull: ${pull.trim()}`);
+      log.push(`git pull origin ${targetBranch}: ${pull.trim()}`);
     } catch (e) {
       log.push(`git pull failed: ${e.stderr || e.message}`);
       // Try to restore stash before returning error

@@ -953,7 +953,7 @@ export default function Settings() {
               <Download className="h-4 w-4 text-primary/70" />
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
-            <span className="text-xs font-mono text-muted-foreground">
+            <span className="text-sm font-mono font-semibold text-[hsl(188,100%,42%)]">
               {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
             </span>
           </div>
