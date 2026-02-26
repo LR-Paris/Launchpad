@@ -10,6 +10,14 @@ const STATUS_COLORS = {
   stopped: 'text-muted-foreground',
 };
 
+const LIFECYCLE_BADGE = {
+  none:        null,
+  development: { label: 'DEV',     cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+  testing:     { label: 'TESTING', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+  active:      { label: 'ACTIVE',  cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+  closed:      { label: 'CLOSED',  cls: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30' },
+};
+
 export default function ShopCard({ shop }) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -67,16 +75,23 @@ export default function ShopCard({ shop }) {
             {shop.description || 'No description provided.'}
           </p>
         </div>
-        {/* Status */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {shop.status === 'running' ? (
-            <span className="w-2 h-2 status-dot-running" />
-          ) : (
-            <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+        {/* Lifecycle + Container Status */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {LIFECYCLE_BADGE[shop.lifecycle_status || 'none'] && (
+            <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${LIFECYCLE_BADGE[shop.lifecycle_status].cls}`}>
+              {LIFECYCLE_BADGE[shop.lifecycle_status].label}
+            </span>
           )}
-          <span className={`text-xs font-mono font-medium ${statusColor}`}>
-            {shop.status}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {shop.status === 'running' ? (
+              <span className="w-2 h-2 status-dot-running" />
+            ) : (
+              <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+            )}
+            <span className={`text-xs font-mono font-medium ${statusColor}`}>
+              {shop.status}
+            </span>
+          </div>
         </div>
       </div>
 

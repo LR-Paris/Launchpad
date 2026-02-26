@@ -66,6 +66,9 @@ function getDb() {
   if (!cols.includes('shuttle_version')) {
     db.exec("ALTER TABLE shops ADD COLUMN shuttle_version TEXT DEFAULT NULL");
   }
+  if (!cols.includes('lifecycle_status')) {
+    db.exec("ALTER TABLE shops ADD COLUMN lifecycle_status TEXT DEFAULT 'none'");
+  }
 
   return db;
 }
@@ -593,18 +596,30 @@ router.get('/:slug', (req, res) => {
   }
 });
 
+// Valid lifecycle statuses and their protection rules
+const LIFECYCLE_STATUSES = ['none', 'development', 'testing', 'active', 'closed'];
+const LIFECYCLE_LABELS = {
+  none: 'No Status', development: 'Development', testing: 'In Testing', active: 'Active', closed: 'Closed',
+};
+
 // PATCH /api/shops/:slug — Update shop fields in the database
 router.patch('/:slug', (req, res) => {
   const { slug } = req.params;
-  const { name, description } = req.body;
+  const { name, description, lifecycle_status } = req.body;
   let { slug: newSlugRaw } = req.body;
   const db = getDb();
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
+    // Validate lifecycle_status if provided
+    if (lifecycle_status !== undefined && !LIFECYCLE_STATUSES.includes(lifecycle_status)) {
+      return res.status(400).json({ error: `Invalid lifecycle status. Must be one of: ${LIFECYCLE_STATUSES.join(', ')}` });
+    }
+
     const newName = name !== undefined ? String(name).trim() : shop.name;
     const newDescription = description !== undefined ? String(description).trim() : (shop.description || '');
+    const newLifecycle = lifecycle_status !== undefined ? lifecycle_status : (shop.lifecycle_status || 'none');
 
     if (!newName) return res.status(400).json({ error: 'Name cannot be empty' });
 
@@ -667,8 +682,8 @@ router.patch('/:slug', (req, res) => {
     }
 
     db.prepare(
-      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ? WHERE slug = ?'
-    ).run(newSlug, newName, newDescription, newSlug, slug);
+      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ?, lifecycle_status = ? WHERE slug = ?'
+    ).run(newSlug, newName, newDescription, newSlug, newLifecycle, slug);
 
     const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
     res.json({ shop: updated });
@@ -716,6 +731,15 @@ router.delete('/:slug', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) {
       return res.status(404).json({ error: 'Shop not found' });
+    }
+
+    // Protection: Active and In Testing shops cannot be deleted
+    const ls = shop.lifecycle_status || 'none';
+    if (ls === 'active') {
+      return res.status(403).json({ error: 'Cannot delete an Active shop. Change its status first.' });
+    }
+    if (ls === 'testing') {
+      return res.status(403).json({ error: 'Cannot delete a shop that is In Testing. Change its status first.' });
     }
 
     // Stop container using host-side path

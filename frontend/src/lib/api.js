@@ -74,7 +74,7 @@ export const wipeOrders = (slug) =>
   api.post(`/shops/${slug}/orders/wipe`).then(r => r.data);
 
 export const getPoFileUrl = (slug, filename) =>
-  `/api/shops/${slug}/orders/po/${encodeURIComponent(filename)}`;
+  `/api/shops/${slug}/orders/po?filename=${encodeURIComponent(filename)}`;
 
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>

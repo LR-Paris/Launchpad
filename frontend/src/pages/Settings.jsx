@@ -680,6 +680,37 @@ export default function Settings() {
         <div className="rounded-md border border-border bg-card px-4 py-3 text-sm mb-4 font-mono">{message}</div>
       )}
 
+      {/* Lifecycle Status */}
+      <div className="flex items-center gap-3 mb-5">
+        <span className="text-xs font-semibold text-muted-foreground" style={{ fontFamily: 'Syne, sans-serif' }}>Status</span>
+        <div className="flex items-center gap-1">
+          {[
+            ['none', 'No Status', 'bg-secondary text-muted-foreground border-border/60 hover:bg-accent'],
+            ['development', 'Development', 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'],
+            ['testing', 'In Testing', 'bg-amber-500/10 text-amber-400 border-amber-500/25 hover:bg-amber-500/20'],
+            ['active', 'Active', 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20'],
+            ['closed', 'Closed', 'bg-zinc-500/10 text-zinc-400 border-zinc-500/25 hover:bg-zinc-500/20'],
+          ].map(([value, label, cls]) => {
+            const isActive = (currentShop?.lifecycle_status || 'none') === value;
+            return (
+              <button
+                key={value}
+                onClick={() => {
+                  updateMutation.mutate({ targetSlug: slug, data: { lifecycle_status: value } });
+                }}
+                className={`text-[11px] font-mono font-medium px-2 py-1 rounded border transition-all ${
+                  isActive
+                    ? cls + ' ring-1 ring-primary/40'
+                    : 'bg-secondary/30 text-muted-foreground/50 border-border/30 hover:bg-secondary/60 hover:text-muted-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="space-y-5">
 
         {/* Shop Settings — DATABASE/Design/Details */}
@@ -856,7 +887,7 @@ export default function Settings() {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {presetsEntries.filter(e => e.readable).map(entry => {
+                    {presetsEntries.filter(e => e.readable && e.name !== 'README.md').map(entry => {
                       const filePath = `DATABASE/Presets/${entry.name}`;
                       const content = presetsValues[filePath] ?? '';
                       const original = presetsOriginal[filePath] ?? '';
@@ -1410,6 +1441,11 @@ export default function Settings() {
             <p className="text-xs text-muted-foreground mb-3">
               Clear all orders from the CSV file. The header row is preserved but all order data will be permanently deleted.
             </p>
+            {(currentShop?.lifecycle_status === 'active') && (
+              <div className="mb-3 px-3 py-2 rounded-md text-xs text-amber-400 bg-amber-500/5 border border-amber-500/20">
+                Wipe is disabled while the shop is Active.
+              </div>
+            )}
             {wipeMessage && (
               <div className={`mb-3 px-3 py-2 rounded-md text-xs border ${
                 wipeMessage.includes('fail') || wipeMessage.includes('Failed')
@@ -1451,7 +1487,8 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowWipeConfirm(true)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors"
+                disabled={currentShop?.lifecycle_status === 'active'}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <ShoppingCart className="h-3.5 w-3.5" />
                 Wipe Orders
@@ -1470,6 +1507,11 @@ export default function Settings() {
             <p className="text-xs text-muted-foreground mb-3">
               Permanently delete this shop, its container, and all associated files. This cannot be undone.
             </p>
+            {(currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing') && (
+              <div className="mb-3 px-3 py-2 rounded-md text-xs text-amber-400 bg-amber-500/5 border border-amber-500/20">
+                Deletion is disabled while the shop is {currentShop?.lifecycle_status === 'active' ? 'Active' : 'In Testing'}.
+              </div>
+            )}
           {showDeleteConfirm ? (
               <div className="space-y-3">
                 <p className="text-xs text-destructive font-medium">
@@ -1503,8 +1545,8 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                disabled={deleteMutation.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                disabled={deleteMutation.isPending || currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing'}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete Shop

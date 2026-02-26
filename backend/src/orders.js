@@ -1,10 +1,13 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const Database = require('better-sqlite3');
 const { parse } = require('csv-parse/sync');
 
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const DB_PATH = path.join(DATA_DIR, 'shops.db');
 
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {
@@ -64,6 +67,17 @@ router.get('/:slug/orders/download', (req, res) => {
 // POST /api/shops/:slug/orders/wipe — Replace orders CSV with header-only file
 router.post('/:slug/orders/wipe', (req, res) => {
   const { slug } = req.params;
+
+  // Protection: Active shops cannot have orders wiped
+  try {
+    const db = new Database(DB_PATH, { readonly: true });
+    const shop = db.prepare('SELECT lifecycle_status FROM shops WHERE slug = ?').get(slug);
+    db.close();
+    if (shop && shop.lifecycle_status === 'active') {
+      return res.status(403).json({ error: 'Cannot wipe orders on an Active shop. Change its status first.' });
+    }
+  } catch { /* proceed if DB check fails */ }
+
   // Find the existing CSV to preserve its header
   const candidates = [
     path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
@@ -103,8 +117,14 @@ const MIME_TYPES = {
 };
 
 // GET /api/shops/:slug/orders/po/:filename — Download/open a PO file
-router.get('/:slug/orders/po/:filename', (req, res) => {
-  const { slug, filename } = req.params;
+// Also supports query param: /api/shops/:slug/orders/po?filename=...
+router.get('/:slug/orders/po/:filename?', (req, res) => {
+  const { slug } = req.params;
+  const filename = req.params.filename || req.query.filename;
+
+  if (!filename) {
+    return res.status(400).json({ error: 'Filename is required' });
+  }
 
   // Sanitize filename to prevent path traversal
   const safeName = path.basename(filename);
