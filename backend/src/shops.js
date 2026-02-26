@@ -983,7 +983,7 @@ router.get('/:slug/check-update', (req, res) => {
   }
 });
 
-// GET /api/shops/:slug/version — Check shop's Shuttle version
+// GET /api/shops/:slug/version — Check shop's Shuttle version + git info
 router.get('/:slug/version', (req, res) => {
   const { slug } = req.params;
   const db = getDb();
@@ -998,6 +998,19 @@ router.get('/:slug/version', (req, res) => {
     }
 
     result.latestAvailable = 'STS-2.01';
+
+    // Include git commit info so the frontend can display it immediately
+    const shopDir = path.join(SHOPS_DIR, slug);
+    if (fs.existsSync(path.join(shopDir, '.git'))) {
+      try {
+        result.localCommit = execSync('git rev-parse --short HEAD', {
+          cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+        }).trim();
+        result.localDate = execSync('git log -1 --format=%ci', {
+          cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+        }).trim();
+      } catch { /* git info is best-effort */ }
+    }
 
     res.json(result);
   } catch (err) {

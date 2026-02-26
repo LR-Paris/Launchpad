@@ -122,6 +122,7 @@ export default function Settings() {
   const [versionInfo, setVersionInfo] = useState(null);
   const [versionChecking, setVersionChecking] = useState(false);
   const [upgradeLog, setUpgradeLog] = useState('');
+  const [shopVersionInfo, setShopVersionInfo] = useState(null);
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -235,6 +236,8 @@ export default function Settings() {
         setPresetHotelList(hotelsData.content);
       }
       setPresetLoading(false);
+    }).catch(() => {
+      setPresetLoading(false);
     });
   }, [slug]);
 
@@ -274,6 +277,13 @@ export default function Settings() {
 
   useEffect(() => {
     loadPresetFiles();
+  }, [slug]);
+
+  // Auto-fetch shop version info (commit hash + date + STS) on mount
+  useEffect(() => {
+    getShopVersion(slug)
+      .then((data) => setShopVersionInfo(data))
+      .catch(() => {});
   }, [slug]);
 
   const savePresets = async () => {
@@ -953,9 +963,17 @@ export default function Settings() {
               <Download className="h-4 w-4 text-primary/70" />
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
-            <span className="text-sm font-mono font-semibold text-[hsl(188,100%,42%)]">
-              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
-            </span>
+            <div className="text-right">
+              <span className="text-sm font-mono font-semibold text-[hsl(188,100%,42%)]">
+                {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
+              </span>
+              {shopVersionInfo?.localCommit && (
+                <div className="text-[11px] font-mono text-muted-foreground mt-0.5">
+                  {shopVersionInfo.localCommit}
+                  <span className="ml-1.5">{shopVersionInfo.localDate?.slice(0, 10)}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {updateError && (
