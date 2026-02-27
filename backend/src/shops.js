@@ -373,6 +373,24 @@ function patchShopImageUrls(shopDir) {
   return patched;
 }
 
+// Namespace the cart localStorage key with the shop slug so carts don't
+// bleed between shops sharing the same domain (path-based routing).
+function patchShopCartKey(shopDir, slug) {
+  const cartPath = path.join(shopDir, 'lib', 'cart.ts');
+  if (!fs.existsSync(cartPath)) return 0;
+
+  let content = fs.readFileSync(cartPath, 'utf8');
+  if (!content.includes("const CART_KEY = 'b2b_cart'")) return 0;
+
+  content = content.replace(
+    "const CART_KEY = 'b2b_cart';",
+    `const CART_KEY = 'b2b_cart_${slug}';`
+  );
+
+  fs.writeFileSync(cartPath, content);
+  return 1;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
@@ -459,6 +477,12 @@ router.post('/', (req, res) => {
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) {
       log.push(`Patched ${imagePatchCount} lib file(s) with query-param image URLs.`);
+    }
+
+    // Namespace cart localStorage key per shop
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) {
+      log.push('Patched cart localStorage key for shop isolation.');
     }
 
     // Create orders directory
@@ -1129,6 +1153,9 @@ router.post('/:slug/update-template', (req, res) => {
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
 
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
+
     // 4. Rebuild container
     log.push('Rebuilding container...');
     try {
@@ -1249,6 +1276,9 @@ router.post('/:slug/upgrade', (req, res) => {
 
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
     // Rebuild container
     try {
