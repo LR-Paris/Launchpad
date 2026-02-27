@@ -887,7 +887,7 @@ export default function Settings() {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {presetsEntries.filter(e => e.readable && e.name !== 'README.md').map(entry => {
+                    {presetsEntries.filter(e => e.readable && !['README.md', 'DataRequired.txt', 'ShopType.txt'].includes(e.name)).map(entry => {
                       const filePath = `DATABASE/Presets/${entry.name}`;
                       const content = presetsValues[filePath] ?? '';
                       const original = presetsOriginal[filePath] ?? '';
