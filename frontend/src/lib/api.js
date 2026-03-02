@@ -74,7 +74,7 @@ export const wipeOrders = (slug) =>
   api.post(`/shops/${slug}/orders/wipe`).then(r => r.data);
 
 export const getPoFileUrl = (slug, filename) =>
-  `/api/shops/${slug}/orders/po/${encodeURIComponent(filename)}`;
+  `/api/shops/${slug}/orders/po?filename=${encodeURIComponent(filename)}`;
 
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
@@ -116,7 +116,7 @@ export const uploadDatabaseZip = (slug, dirPath, file) => {
   }).then(r => r.data);
 };
 
-// Inventory / Cargo Manifest
+// Inventory
 export const getInventory = (slug) =>
   api.get(`/shops/${slug}/inventory`).then(r => r.data);
 
@@ -146,7 +146,10 @@ export const getSystemVersion = () =>
 export const checkForUpdate = () =>
   api.get('/system/check-update').then(r => r.data);
 
-export const installUpdate = () =>
-  api.post('/system/update').then(r => r.data);
+export const installUpdate = (branch) =>
+  api.post('/system/update', branch ? { branch } : {}).then(r => r.data);
+
+export const getSystemBranches = () =>
+  api.get('/system/branches').then(r => r.data);
 
 export default api;

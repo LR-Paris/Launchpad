@@ -30,7 +30,7 @@ export default function Login() {
   return (
     <div className="flex items-center justify-center min-h-[80vh]">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-semibold text-center mb-6">Shuttle Platform</h1>
+        <h1 className="text-2xl font-semibold text-center mb-6">Launchpad</h1>
         <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border bg-card p-6">
           <div>
             <label className="block text-sm font-medium mb-1.5" htmlFor="username">

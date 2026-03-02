@@ -66,6 +66,9 @@ function getDb() {
   if (!cols.includes('shuttle_version')) {
     db.exec("ALTER TABLE shops ADD COLUMN shuttle_version TEXT DEFAULT NULL");
   }
+  if (!cols.includes('lifecycle_status')) {
+    db.exec("ALTER TABLE shops ADD COLUMN lifecycle_status TEXT DEFAULT 'none'");
+  }
 
   return db;
 }
@@ -370,6 +373,24 @@ function patchShopImageUrls(shopDir) {
   return patched;
 }
 
+// Namespace the cart localStorage key with the shop slug so carts don't
+// bleed between shops sharing the same domain (path-based routing).
+function patchShopCartKey(shopDir, slug) {
+  const cartPath = path.join(shopDir, 'lib', 'cart.ts');
+  if (!fs.existsSync(cartPath)) return 0;
+
+  let content = fs.readFileSync(cartPath, 'utf8');
+  if (!content.includes("const CART_KEY = 'b2b_cart'")) return 0;
+
+  content = content.replace(
+    "const CART_KEY = 'b2b_cart';",
+    `const CART_KEY = 'b2b_cart_${slug}';`
+  );
+
+  fs.writeFileSync(cartPath, content);
+  return 1;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
@@ -456,6 +477,12 @@ router.post('/', (req, res) => {
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) {
       log.push(`Patched ${imagePatchCount} lib file(s) with query-param image URLs.`);
+    }
+
+    // Namespace cart localStorage key per shop
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) {
+      log.push('Patched cart localStorage key for shop isolation.');
     }
 
     // Create orders directory
@@ -593,18 +620,30 @@ router.get('/:slug', (req, res) => {
   }
 });
 
+// Valid lifecycle statuses and their protection rules
+const LIFECYCLE_STATUSES = ['none', 'development', 'testing', 'active', 'closed'];
+const LIFECYCLE_LABELS = {
+  none: 'No Status', development: 'Development', testing: 'In Testing', active: 'Active', closed: 'Closed',
+};
+
 // PATCH /api/shops/:slug — Update shop fields in the database
 router.patch('/:slug', (req, res) => {
   const { slug } = req.params;
-  const { name, description } = req.body;
+  const { name, description, lifecycle_status } = req.body;
   let { slug: newSlugRaw } = req.body;
   const db = getDb();
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
+    // Validate lifecycle_status if provided
+    if (lifecycle_status !== undefined && !LIFECYCLE_STATUSES.includes(lifecycle_status)) {
+      return res.status(400).json({ error: `Invalid lifecycle status. Must be one of: ${LIFECYCLE_STATUSES.join(', ')}` });
+    }
+
     const newName = name !== undefined ? String(name).trim() : shop.name;
     const newDescription = description !== undefined ? String(description).trim() : (shop.description || '');
+    const newLifecycle = lifecycle_status !== undefined ? lifecycle_status : (shop.lifecycle_status || 'none');
 
     if (!newName) return res.status(400).json({ error: 'Name cannot be empty' });
 
@@ -667,8 +706,8 @@ router.patch('/:slug', (req, res) => {
     }
 
     db.prepare(
-      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ? WHERE slug = ?'
-    ).run(newSlug, newName, newDescription, newSlug, slug);
+      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ?, lifecycle_status = ? WHERE slug = ?'
+    ).run(newSlug, newName, newDescription, newSlug, newLifecycle, slug);
 
     const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
     res.json({ shop: updated });
@@ -716,6 +755,15 @@ router.delete('/:slug', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) {
       return res.status(404).json({ error: 'Shop not found' });
+    }
+
+    // Protection: Active and In Testing shops cannot be deleted
+    const ls = shop.lifecycle_status || 'none';
+    if (ls === 'active') {
+      return res.status(403).json({ error: 'Cannot delete an Active shop. Change its status first.' });
+    }
+    if (ls === 'testing') {
+      return res.status(403).json({ error: 'Cannot delete a shop that is In Testing. Change its status first.' });
     }
 
     // Stop container using host-side path
@@ -858,6 +906,15 @@ router.post('/:slug/deploy', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     const log = [];
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     // Pull latest if it's a git repo
     if (fs.existsSync(path.join(shopDir, '.git'))) {
       try {
@@ -866,6 +923,13 @@ router.post('/:slug/deploy', (req, res) => {
       } catch (pullErr) {
         log.push(`git pull error: ${pullErr.message}`);
       }
+    }
+
+    // Restore DATABASE folder from backup
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder.');
     }
 
     // Rebuild container
@@ -967,7 +1031,7 @@ router.get('/:slug/check-update', (req, res) => {
   }
 });
 
-// GET /api/shops/:slug/version — Check shop's Shuttle version
+// GET /api/shops/:slug/version — Check shop's Shuttle version + git info
 router.get('/:slug/version', (req, res) => {
   const { slug } = req.params;
   const db = getDb();
@@ -982,6 +1046,19 @@ router.get('/:slug/version', (req, res) => {
     }
 
     result.latestAvailable = 'STS-2.01';
+
+    // Include git commit info so the frontend can display it immediately
+    const shopDir = path.join(SHOPS_DIR, slug);
+    if (fs.existsSync(path.join(shopDir, '.git'))) {
+      try {
+        result.localCommit = execSync('git rev-parse --short HEAD', {
+          cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+        }).trim();
+        result.localDate = execSync('git log -1 --format=%ci', {
+          cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
+        }).trim();
+      } catch { /* git info is best-effort */ }
+    }
 
     res.json(result);
   } catch (err) {
@@ -1009,6 +1086,15 @@ router.post('/:slug/update-template', (req, res) => {
       return res.status(400).json({ error: 'Shop is not a git repository — cannot update.' });
     }
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     try {
       // Stash any local changes (patches) before pulling
       const stash = execSync('git stash 2>&1', {
@@ -1029,7 +1115,20 @@ router.post('/:slug/update-template', (req, res) => {
       log.push(`git pull error: ${msg}`);
       // Try to pop stash back
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Restore DATABASE backup on failure
+      if (fs.existsSync(dbBackup)) {
+        if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+        fs.renameSync(dbBackup, dbDir);
+        log.push('Restored DATABASE folder from backup.');
+      }
       return res.status(500).json({ error: `Failed to pull latest: ${msg}`, log: log.join('\n') });
+    }
+
+    // Restore DATABASE folder from backup (overwrite anything git may have changed)
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder from backup.');
     }
 
     // Don't pop stash — we'll re-apply all patches fresh below
@@ -1053,6 +1152,9 @@ router.post('/:slug/update-template', (req, res) => {
 
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
     // 4. Rebuild container
     log.push('Rebuilding container...');
@@ -1112,6 +1214,15 @@ router.post('/:slug/upgrade', (req, res) => {
       return res.status(400).json({ error: 'Shop directory is not a git repo — cannot upgrade.' });
     }
 
+    // Back up DATABASE folder before git operations so user data is preserved
+    const dbDir = path.join(shopDir, 'DATABASE');
+    const dbBackup = path.join(shopDir, '_DATABASE_BACKUP');
+    if (fs.existsSync(dbDir)) {
+      if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
+      copyDirSync(dbDir, dbBackup);
+      log.push('Backed up DATABASE folder.');
+    }
+
     try {
       const stash = execSync('git stash 2>&1', {
         cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
@@ -1130,7 +1241,20 @@ router.post('/:slug/upgrade', (req, res) => {
       const msg = pullErr.stderr?.toString() || pullErr.stdout?.toString() || pullErr.message;
       log.push(`git pull error: ${msg}`);
       try { execSync('git stash pop 2>&1', { cwd: shopDir, stdio: 'pipe' }); } catch { /* ok */ }
+      // Restore DATABASE backup on failure
+      if (fs.existsSync(dbBackup)) {
+        if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+        fs.renameSync(dbBackup, dbDir);
+        log.push('Restored DATABASE folder from backup.');
+      }
       return res.status(500).json({ error: 'git pull failed', log: log.join('\n') });
+    }
+
+    // Restore DATABASE folder from backup (overwrite anything git may have changed)
+    if (fs.existsSync(dbBackup)) {
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+      fs.renameSync(dbBackup, dbDir);
+      log.push('Restored DATABASE folder from backup.');
     }
 
     // Re-apply path-based routing overrides
@@ -1152,6 +1276,9 @@ router.post('/:slug/upgrade', (req, res) => {
 
     const imagePatchCount = patchShopImageUrls(shopDir);
     if (imagePatchCount > 0) log.push(`Patched ${imagePatchCount} lib file(s) with BASE_PATH image URLs.`);
+
+    const cartPatchCount = patchShopCartKey(shopDir, slug);
+    if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
     // Rebuild container
     try {

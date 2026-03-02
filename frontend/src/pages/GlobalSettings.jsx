@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { changePassword, getSystemVersion, checkForUpdate, installUpdate, getShops } from '../lib/api';
-import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server, RefreshCw, Download, CheckCircle, Database, ExternalLink, Settings } from 'lucide-react';
+import { changePassword, getSystemVersion, checkForUpdate, installUpdate, getShops, getSystemBranches } from '../lib/api';
+import { ArrowLeft, Lock, Sun, Moon, Shield, Palette, Server, RefreshCw, Download, CheckCircle, Database, ExternalLink, Settings, GitBranch, AlertTriangle } from 'lucide-react';
 
 export default function GlobalSettings({ theme, toggleTheme }) {
   const [oldPassword, setOldPassword] = useState('');
@@ -11,6 +11,10 @@ export default function GlobalSettings({ theme, toggleTheme }) {
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [updateLog, setUpdateLog] = useState('');
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [currentBranch, setCurrentBranch] = useState('');
 
   const changePwMutation = useMutation({
     mutationFn: () => changePassword(oldPassword, newPassword),
@@ -55,12 +59,14 @@ export default function GlobalSettings({ theme, toggleTheme }) {
 
   // Install update
   const installMutation = useMutation({
-    mutationFn: installUpdate,
+    mutationFn: (branch) => installUpdate(branch || undefined),
     onSuccess: (data) => {
       setUpdateLog(data.log || 'Update completed successfully.');
       // Refresh version info
       versionQuery.refetch();
       updateCheckMutation.reset();
+      // Refresh branches since we may be on a new branch now
+      loadBranches();
     },
     onError: (err) => {
       setUpdateLog(err.response?.data?.log || err.response?.data?.error || 'Update failed.');
@@ -78,6 +84,45 @@ export default function GlobalSettings({ theme, toggleTheme }) {
   const version = versionQuery.data?.version || '...';
   const git = versionQuery.data?.git || {};
   const updateData = updateCheckMutation.data;
+
+  // Load branches
+  const loadBranches = async () => {
+    setBranchesLoading(true);
+    try {
+      const data = await getSystemBranches();
+      setBranches(data.branches || []);
+      setCurrentBranch(data.currentBranch || '');
+      if (!selectedBranch && data.currentBranch) {
+        setSelectedBranch(data.currentBranch);
+      }
+    } catch {
+      setBranches([]);
+    } finally {
+      setBranchesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBranches();
+  }, []);
+
+  // Keep selectedBranch synced with git info if not yet set
+  useEffect(() => {
+    if (!selectedBranch && git.branch) {
+      setSelectedBranch(git.branch);
+    }
+  }, [git.branch]);
+
+  const handleUpdate = () => {
+    const branch = selectedBranch || undefined;
+    const switchingBranch = branch && branch !== currentBranch;
+    const msg = switchingBranch
+      ? `Switch to branch "${branch}" and update? The platform will rebuild and restart.`
+      : 'Pull latest and update? The platform will rebuild and restart.';
+    if (!window.confirm(msg)) return;
+    setUpdateLog('');
+    installMutation.mutate(branch);
+  };
 
   return (
     <div className="max-w-2xl lp-fadein">
@@ -223,12 +268,15 @@ export default function GlobalSettings({ theme, toggleTheme }) {
 
           <div className="space-y-2.5 font-mono text-xs">
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
-              <span className="text-muted-foreground">Shuttle Version</span>
-              <span className="text-[hsl(188,100%,42%)]">{version}</span>
+              <span className="text-muted-foreground">Version</span>
+              <span className="text-[hsl(188,100%,42%)] font-semibold text-sm">{version}</span>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
               <span className="text-muted-foreground">Git Branch</span>
-              <span className="text-foreground">{git.branch || '...'}</span>
+              <span className="text-foreground inline-flex items-center gap-1.5">
+                <GitBranch className="h-3 w-3 text-primary/60" />
+                {git.branch || '...'}
+              </span>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-border/30">
               <span className="text-muted-foreground">Git Commit</span>
@@ -291,6 +339,45 @@ export default function GlobalSettings({ theme, toggleTheme }) {
               </pre>
             )}
 
+            {/* Branch Selection */}
+            <div className="mb-4">
+              <label className="flex items-center gap-1.5 text-xs font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
+                <GitBranch className="h-3.5 w-3.5 text-primary/70" />
+                Target Branch
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  disabled={installMutation.isPending}
+                  className="flex-1 max-w-xs rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all"
+                >
+                  {branches.length === 0 && selectedBranch && (
+                    <option value={selectedBranch}>{selectedBranch}</option>
+                  )}
+                  {branches.map(b => (
+                    <option key={b} value={b}>
+                      {b}{b === currentBranch ? ' (current)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={loadBranches}
+                  disabled={branchesLoading}
+                  className="inline-flex items-center gap-1 rounded-md px-2.5 py-2 text-xs text-muted-foreground hover:text-primary bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
+                  title="Refresh branches"
+                >
+                  <RefreshCw className={`h-3 w-3 ${branchesLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              {selectedBranch && selectedBranch !== currentBranch && (
+                <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-400">
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>This will switch from <span className="font-mono">{currentBranch}</span> to <span className="font-mono">{selectedBranch}</span></span>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-3">
               <button
                 onClick={() => { setUpdateLog(''); updateCheckMutation.mutate(); }}
@@ -301,16 +388,18 @@ export default function GlobalSettings({ theme, toggleTheme }) {
                 {updateCheckMutation.isPending ? 'Checking...' : 'Check for Update'}
               </button>
 
-              {updateData?.updateAvailable && (
-                <button
-                  onClick={() => installMutation.mutate()}
-                  disabled={installMutation.isPending}
-                  className="btn-launch inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm disabled:opacity-50"
-                >
-                  <Download className={`h-4 w-4 ${installMutation.isPending ? 'animate-bounce' : ''}`} />
-                  {installMutation.isPending ? 'Installing...' : 'Install Update'}
-                </button>
-              )}
+              <button
+                onClick={handleUpdate}
+                disabled={installMutation.isPending || !selectedBranch}
+                className="btn-launch inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm disabled:opacity-50"
+              >
+                <Download className={`h-4 w-4 ${installMutation.isPending ? 'animate-bounce' : ''}`} />
+                {installMutation.isPending ? 'Updating...' : (
+                  selectedBranch && selectedBranch !== currentBranch
+                    ? 'Switch & Update'
+                    : 'Pull & Update'
+                )}
+              </button>
             </div>
           </div>
         </div>
