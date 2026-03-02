@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getInventory, seedInventory, updateInventoryBulk } from '../lib/api';
 import CollectionsEditor from '../components/CollectionsEditor';
 import {
-  ArrowLeft, Package, Fuel, Search, Filter, Save, RefreshCw,
+  ArrowLeft, Package, BarChart3, Search, Filter, Save, RefreshCw,
   AlertTriangle, CheckCircle2, XCircle, Rocket,
 } from 'lucide-react';
 
@@ -46,7 +46,7 @@ export default function Catalog() {
     mutationFn: () => seedInventory(slug),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['inventory', slug] });
-      setSaveMessage(data.message || 'Cargo manifest seeded from catalog');
+      setSaveMessage(data.message || 'Inventory seeded from catalog');
       setTimeout(() => setSaveMessage(''), 4000);
     },
     onError: (err) => {
@@ -60,7 +60,7 @@ export default function Catalog() {
     onSuccess: (data) => {
       setEditedRows({});
       queryClient.invalidateQueries({ queryKey: ['inventory', slug] });
-      setSaveMessage(data.message || 'Payload updated successfully');
+      setSaveMessage(data.message || 'Inventory updated successfully');
       setTimeout(() => setSaveMessage(''), 4000);
     },
     onError: (err) => {
@@ -160,7 +160,7 @@ export default function Catalog() {
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Mission Control
+          Dashboard
         </Link>
         <div>
           <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Catalog</p>
@@ -191,7 +191,7 @@ export default function Catalog() {
               : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border/60'
           }`}
         >
-          <Fuel className="h-3.5 w-3.5" />
+          <BarChart3 className="h-3.5 w-3.5" />
           Inventory
         </button>
         <button
@@ -212,7 +212,7 @@ export default function Catalog() {
         <div className="lp-card rounded-xl overflow-hidden">
           {/* Inventory header */}
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
-            <Fuel className="h-4 w-4 text-primary/70" />
+            <BarChart3 className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Inventory</h2>
             <span className="text-xs text-muted-foreground font-mono ml-1">Track & manage stock levels</span>
             <div className="flex-1" />
@@ -309,7 +309,7 @@ export default function Catalog() {
             <div className="px-5 py-12 text-center">
               <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4"
                    style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
-                <Fuel className="h-6 w-6 lp-glow" />
+                <BarChart3 className="h-6 w-6 lp-glow" />
               </div>
               <p className="text-sm font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>No inventory data</p>
               <p className="text-xs text-muted-foreground font-mono mb-4">

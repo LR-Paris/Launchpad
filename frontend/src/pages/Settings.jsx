@@ -64,7 +64,7 @@ export default function Settings() {
   const [shopTitle, setShopTitle] = useState('');
   const [shopDescription, setShopDescription] = useState('');
 
-  // Shuttle template update state
+  // Template update state
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -117,10 +117,11 @@ export default function Settings() {
   const [presetsLoading, setPresetsLoading] = useState(true);
 
 
-  // STS-2.01: Version management state
+  // Version management state
   const [versionInfo, setVersionInfo] = useState(null);
   const [versionChecking, setVersionChecking] = useState(false);
   const [upgradeLog, setUpgradeLog] = useState('');
+  const [shopVersionInfo, setShopVersionInfo] = useState(null);
 
   const { data: shopsData, isLoading: shopsLoading } = useQuery({
     queryKey: ['shops'],
@@ -234,6 +235,8 @@ export default function Settings() {
         setPresetHotelList(hotelsData.content);
       }
       setPresetLoading(false);
+    }).catch(() => {
+      setPresetLoading(false);
     });
   }, [slug]);
 
@@ -273,6 +276,13 @@ export default function Settings() {
 
   useEffect(() => {
     loadPresetFiles();
+  }, [slug]);
+
+  // Auto-fetch shop version info (commit hash + date + STS) on mount
+  useEffect(() => {
+    getShopVersion(slug)
+      .then((data) => setShopVersionInfo(data))
+      .catch(() => {});
   }, [slug]);
 
   const savePresets = async () => {
@@ -357,7 +367,7 @@ export default function Settings() {
   });
 
   const handleUpgrade = () => {
-    if (window.confirm('Upgrade this shop to the latest Shuttle version? The container will be rebuilt.')) {
+    if (window.confirm('Upgrade this shop to the latest version? The container will be rebuilt.')) {
       upgradeMutation.mutate();
     }
   };
@@ -625,7 +635,7 @@ export default function Settings() {
   };
 
   const handleInstallUpdate = async () => {
-    if (!window.confirm('Update the Shuttle template? The shop will be rebuilt and restarted.')) return;
+    if (!window.confirm('Update the shop template? The shop will be rebuilt and restarted.')) return;
     setUpdateInstalling(true);
     setUpdateError('');
     setUpdateMessage('');
@@ -668,6 +678,37 @@ export default function Settings() {
       {message && (
         <div className="rounded-md border border-border bg-card px-4 py-3 text-sm mb-4 font-mono">{message}</div>
       )}
+
+      {/* Lifecycle Status */}
+      <div className="flex items-center gap-3 mb-5">
+        <span className="text-xs font-semibold text-muted-foreground" style={{ fontFamily: 'Syne, sans-serif' }}>Status</span>
+        <div className="flex items-center gap-1">
+          {[
+            ['none', 'No Status', 'bg-secondary text-muted-foreground border-border/60 hover:bg-accent'],
+            ['development', 'Development', 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'],
+            ['testing', 'In Testing', 'bg-amber-500/10 text-amber-400 border-amber-500/25 hover:bg-amber-500/20'],
+            ['active', 'Active', 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20'],
+            ['closed', 'Closed', 'bg-zinc-500/10 text-zinc-400 border-zinc-500/25 hover:bg-zinc-500/20'],
+          ].map(([value, label, cls]) => {
+            const isActive = (currentShop?.lifecycle_status || 'none') === value;
+            return (
+              <button
+                key={value}
+                onClick={() => {
+                  updateMutation.mutate({ targetSlug: slug, data: { lifecycle_status: value } });
+                }}
+                className={`text-[11px] font-mono font-medium px-2 py-1 rounded border transition-all ${
+                  isActive
+                    ? cls + ' ring-1 ring-primary/40'
+                    : 'bg-secondary/30 text-muted-foreground/50 border-border/30 hover:bg-secondary/60 hover:text-muted-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="space-y-5">
 
@@ -720,7 +761,7 @@ export default function Settings() {
           )}
         </div>
 
-        {/* Product catalog & inventory moved to Cargo Bay — /shops/:slug/catalog */}
+        {/* Product catalog & inventory — /shops/:slug/catalog */}
         <Link
           to={`/shops/${slug}/catalog`}
           className="lp-card rounded-xl p-5 flex items-center gap-3 hover:border-primary/30 border border-border/40 transition-all"
@@ -729,8 +770,8 @@ export default function Settings() {
             <Package className="h-5 w-5 lp-glow" />
           </div>
           <div>
-            <p className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Cargo Bay</p>
-            <p className="text-xs text-muted-foreground font-mono">Manage product catalog & fuel levels</p>
+            <p className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Catalog</p>
+            <p className="text-xs text-muted-foreground font-mono">Manage product catalog & inventory</p>
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
         </Link>
@@ -740,7 +781,7 @@ export default function Settings() {
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <Settings2 className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Configuration</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">STS-2.01 Presets</span>
+            <span className="text-xs text-muted-foreground font-mono ml-1">Shop Presets</span>
           </div>
 
           {presetSuccess && (
@@ -857,7 +898,7 @@ export default function Settings() {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {presetsEntries.filter(e => e.readable).map(entry => {
+                    {presetsEntries.filter(e => e.readable && !['README.md', 'DataRequired.txt', 'ShopType.txt'].includes(e.name)).map(entry => {
                       const filePath = `DATABASE/Presets/${entry.name}`;
                       const content = presetsValues[filePath] ?? '';
                       const original = presetsOriginal[filePath] ?? '';
@@ -957,16 +998,24 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* Shuttle Template Update */}
+        {/* Shop Template Update */}
         <div className="lp-card rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Download className="h-4 w-4 text-primary/70" />
               <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shuttle Version</h2>
             </div>
-            <span className="text-xs font-mono text-muted-foreground">
-              {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
-            </span>
+            <div className="text-right">
+              <span className="text-sm font-mono font-semibold text-[hsl(188,100%,42%)]">
+                {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
+              </span>
+              {shopVersionInfo?.localCommit && (
+                <div className="text-[11px] font-mono text-muted-foreground mt-0.5">
+                  {shopVersionInfo.localCommit}
+                  <span className="ml-1.5">{shopVersionInfo.localDate?.slice(0, 10)}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {updateError && (
@@ -1403,6 +1452,11 @@ export default function Settings() {
             <p className="text-xs text-muted-foreground mb-3">
               Clear all orders from the CSV file. The header row is preserved but all order data will be permanently deleted.
             </p>
+            {(currentShop?.lifecycle_status === 'active') && (
+              <div className="mb-3 px-3 py-2 rounded-md text-xs text-amber-400 bg-amber-500/5 border border-amber-500/20">
+                Wipe is disabled while the shop is Active.
+              </div>
+            )}
             {wipeMessage && (
               <div className={`mb-3 px-3 py-2 rounded-md text-xs border ${
                 wipeMessage.includes('fail') || wipeMessage.includes('Failed')
@@ -1444,7 +1498,8 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowWipeConfirm(true)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors"
+                disabled={currentShop?.lifecycle_status === 'active'}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <ShoppingCart className="h-3.5 w-3.5" />
                 Wipe Orders
@@ -1463,6 +1518,11 @@ export default function Settings() {
             <p className="text-xs text-muted-foreground mb-3">
               Permanently delete this shop, its container, and all associated files. This cannot be undone.
             </p>
+            {(currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing') && (
+              <div className="mb-3 px-3 py-2 rounded-md text-xs text-amber-400 bg-amber-500/5 border border-amber-500/20">
+                Deletion is disabled while the shop is {currentShop?.lifecycle_status === 'active' ? 'Active' : 'In Testing'}.
+              </div>
+            )}
           {showDeleteConfirm ? (
               <div className="space-y-3">
                 <p className="text-xs text-destructive font-medium">
@@ -1496,8 +1556,8 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                disabled={deleteMutation.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                disabled={deleteMutation.isPending || currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing'}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete Shop

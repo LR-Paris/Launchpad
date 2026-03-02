@@ -20,10 +20,10 @@ export default function Dashboard() {
       <div className="flex items-end justify-between mb-8">
         <div>
           <p className="text-xs font-mono text-muted-foreground mb-1 tracking-widest uppercase">
-            Mission Control
+            Dashboard
           </p>
           <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-            Launched Shops
+            Shops
           </h1>
         </div>
         <div className="flex items-center gap-3">
@@ -71,7 +71,7 @@ export default function Dashboard() {
             <Rocket className="h-7 w-7 lp-glow" />
           </div>
           <h2 className="font-bold text-lg mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
-            No shops launched yet
+            No shops yet
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
             Launch your first shop to get started.

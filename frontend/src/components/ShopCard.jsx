@@ -2,12 +2,27 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, Fuel } from 'lucide-react';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package } from 'lucide-react';
 
 const STATUS_COLORS = {
   running: 'text-[hsl(142,70%,50%)]',
   error:   'text-destructive',
   stopped: 'text-muted-foreground',
+};
+
+const LIFECYCLE_BADGE = {
+  none:        null,
+  development: { label: 'DEV',     cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+  testing:     { label: 'TESTING', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+  active:      { label: 'ACTIVE',  cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+  closed:      { label: 'CLOSED',  cls: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30' },
+};
+
+const INVENTORY_DISPLAY = {
+  'nominal':     { label: 'Nominal',       color: 'text-[hsl(142,70%,50%)]', bg: 'bg-[hsl(142,70%,50%)]/10' },
+  'low-fuel':    { label: 'Low Stock',     color: 'text-amber-500',          bg: 'bg-amber-500/10' },
+  'depleted':    { label: 'Sold Out',      color: 'text-red-500',            bg: 'bg-red-500/10' },
+  'no-manifest': { label: 'No Inventory',  color: 'text-muted-foreground',   bg: 'bg-muted/30' },
 };
 
 export default function ShopCard({ shop }) {
@@ -33,7 +48,7 @@ export default function ShopCard({ shop }) {
     }
   };
 
-  const { data: fuelData } = useQuery({
+  const { data: inventoryData } = useQuery({
     queryKey: ['inventory-summary', shop.slug],
     queryFn: () => getInventorySummary(shop.slug),
     refetchInterval: 30000,
@@ -42,14 +57,8 @@ export default function ShopCard({ shop }) {
   const busy = actionMutation.isPending || deleteMutation.isPending;
   const statusColor = STATUS_COLORS[shop.status] || STATUS_COLORS.stopped;
 
-  const fuelStatus = fuelData?.status || 'no-manifest';
-  const FUEL_DISPLAY = {
-    'nominal':     { label: 'Nominal',       color: 'text-[hsl(142,70%,50%)]', bg: 'bg-[hsl(142,70%,50%)]/10' },
-    'low-fuel':    { label: 'Low Stock',     color: 'text-amber-500',          bg: 'bg-amber-500/10' },
-    'depleted':    { label: 'Sold Out',      color: 'text-red-500',            bg: 'bg-red-500/10' },
-    'no-manifest': { label: 'No Inventory',  color: 'text-muted-foreground',   bg: 'bg-muted/30' },
-  };
-  const fuel = FUEL_DISPLAY[fuelStatus] || FUEL_DISPLAY['no-manifest'];
+  const inventoryStatus = inventoryData?.status || 'no-manifest';
+  const inv = INVENTORY_DISPLAY[inventoryStatus] || INVENTORY_DISPLAY['no-manifest'];
 
   return (
     <div className="rounded-xl p-5 flex flex-col border border-border/60 hover:border-primary/25 transition-all duration-300 h-full"
@@ -82,30 +91,37 @@ export default function ShopCard({ shop }) {
             {shop.description || 'No description provided.'}
           </p>
         </div>
-        {/* Status */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {shop.status === 'running' ? (
-            <span className="w-2 h-2 status-dot-running" />
-          ) : (
-            <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+        {/* Lifecycle + Container Status */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {LIFECYCLE_BADGE[shop.lifecycle_status || 'none'] && (
+            <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border ${LIFECYCLE_BADGE[shop.lifecycle_status].cls}`}>
+              {LIFECYCLE_BADGE[shop.lifecycle_status].label}
+            </span>
           )}
-          <span className={`text-xs font-mono font-medium ${statusColor}`}>
-            {shop.status}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {shop.status === 'running' ? (
+              <span className="w-2 h-2 status-dot-running" />
+            ) : (
+              <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+            )}
+            <span className={`text-xs font-mono font-medium ${statusColor}`}>
+              {shop.status}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Fuel status indicator */}
-      {fuelData && (
+      {/* Inventory status indicator */}
+      {inventoryData && (
         <Link
           to={`/shops/${shop.slug}/catalog`}
-          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-mono font-medium mb-3 transition-all hover:opacity-80 ${fuel.bg} ${fuel.color}`}
+          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-mono font-medium mb-3 transition-all hover:opacity-80 ${inv.bg} ${inv.color}`}
         >
-          <Fuel className="h-3 w-3" />
-          {fuel.label}
-          {fuelData.total > 0 && (
+          <Package className="h-3 w-3" />
+          {inv.label}
+          {inventoryData.total > 0 && (
             <span className="opacity-70">
-              ({fuelData.depleted > 0 ? `${fuelData.depleted} sold out` : fuelData.lowFuel > 0 ? `${fuelData.lowFuel} low` : `${fuelData.total} items`})
+              ({inventoryData.depleted > 0 ? `${inventoryData.depleted} sold out` : inventoryData.lowFuel > 0 ? `${inventoryData.lowFuel} low` : `${inventoryData.total} items`})
             </span>
           )}
         </Link>
@@ -187,7 +203,7 @@ export default function ShopCard({ shop }) {
           to={`/shops/${shop.slug}/catalog`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
-          <Package className="h-3 w-3" /> Cargo Bay
+          <Package className="h-3 w-3" /> Catalog
         </Link>
         <Link
           to={`/shops/${shop.slug}/settings`}

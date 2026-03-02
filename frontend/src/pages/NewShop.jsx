@@ -326,7 +326,7 @@ export default function NewShop() {
               disabled={mutation.isPending}
             />
             <p className="text-xs text-muted-foreground mt-1.5">
-              Leave empty to clone from the Shuttle template repository.
+              Leave empty to clone from the default template repository.
             </p>
           </div>
 
