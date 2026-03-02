@@ -37,6 +37,46 @@ function getHostShopDir(slug) {
   return path.join(SHOPS_DIR, slug);
 }
 
+// Read and return the shop's package.json version.  After a git pull or
+// template sync this reflects the template's latest version, which drives
+// the version-aware build guard in the shop's docker-compose command.
+function readShopVersion(shopDir) {
+  try {
+    const pkgPath = path.join(shopDir, 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    return pkg.version || null;
+  } catch {
+    return null;
+  }
+}
+
+// Ensure the shop's package.json version matches a given template version.
+// This makes the version-aware build guard detect a source change and rebuild.
+function syncShopVersion(shopDir, slug, templateVersion) {
+  if (!templateVersion) return;
+  const pkgPath = path.join(shopDir, 'package.json');
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg.version !== templateVersion) {
+      pkg.version = templateVersion;
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+      console.log(`[${slug}] Bumped package.json version to ${templateVersion}`);
+    }
+  } catch (err) {
+    console.error(`[${slug}] Could not sync package.json version: ${err.message}`);
+  }
+}
+
+// Clear stale .next/ build cache so the container always rebuilds on next boot.
+// This prevents serving an outdated bundle after source files have been updated.
+function clearBuildCache(shopDir, slug) {
+  const nextDir = path.join(shopDir, '.next');
+  if (fs.existsSync(nextDir)) {
+    fs.rmSync(nextDir, { recursive: true, force: true });
+    console.log(`[${slug}] Cleared stale .next/ build cache`);
+  }
+}
+
 function getDb() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -700,7 +740,9 @@ router.patch('/:slug', (req, res) => {
       generateShopConfig(newSlug, shop.port);
       reloadNginx();
 
-      // Restart container
+      // Clear stale build cache and restart container
+      const newDir2 = path.join(SHOPS_DIR, newSlug);
+      clearBuildCache(newDir2, newSlug);
       const newCompose = getComposeFilePath(newSlug);
       try { execSync(`docker compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
     }
@@ -805,6 +847,9 @@ router.post('/:slug/start', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
+    // Clear stale build cache so container rebuilds with current source
+    clearBuildCache(path.join(SHOPS_DIR, slug), slug);
+
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
@@ -863,6 +908,9 @@ router.post('/:slug/restart', (req, res) => {
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
+
+    // Clear stale build cache so container rebuilds with current source
+    clearBuildCache(path.join(SHOPS_DIR, slug), slug);
 
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
@@ -931,6 +979,9 @@ router.post('/:slug/deploy', (req, res) => {
       fs.renameSync(dbBackup, dbDir);
       log.push('Restored DATABASE folder.');
     }
+
+    // Clear stale build cache so container rebuilds with current source
+    clearBuildCache(shopDir, slug);
 
     // Rebuild container
     try {
@@ -1156,7 +1207,15 @@ router.post('/:slug/update-template', (req, res) => {
     const cartPatchCount = patchShopCartKey(shopDir, slug);
     if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
-    // 4. Rebuild container
+    // Ensure shop package.json version reflects the updated template
+    const templateVer = readShopVersion(shopDir);
+    if (templateVer) {
+      syncShopVersion(shopDir, slug, templateVer);
+      log.push(`Shop version synced to ${templateVer}.`);
+    }
+
+    // 4. Clear stale build cache and rebuild container
+    clearBuildCache(shopDir, slug);
     log.push('Rebuilding container...');
     try {
       execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
@@ -1280,7 +1339,15 @@ router.post('/:slug/upgrade', (req, res) => {
     const cartPatchCount = patchShopCartKey(shopDir, slug);
     if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
-    // Rebuild container
+    // Ensure shop package.json version reflects the updated template
+    const templateVer = readShopVersion(shopDir);
+    if (templateVer) {
+      syncShopVersion(shopDir, slug, templateVer);
+      log.push(`Shop version synced to ${templateVer}.`);
+    }
+
+    // Clear stale build cache and rebuild container
+    clearBuildCache(shopDir, slug);
     try {
       execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
       const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
