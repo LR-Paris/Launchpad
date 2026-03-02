@@ -116,6 +116,22 @@ export const uploadDatabaseZip = (slug, dirPath, file) => {
   }).then(r => r.data);
 };
 
+// Inventory / Cargo Manifest
+export const getInventory = (slug) =>
+  api.get(`/shops/${slug}/inventory`).then(r => r.data);
+
+export const seedInventory = (slug) =>
+  api.post(`/shops/${slug}/inventory/seed`).then(r => r.data);
+
+export const updateInventoryBulk = (slug, updates) =>
+  api.patch(`/shops/${slug}/inventory/bulk`, { updates }).then(r => r.data);
+
+export const updateInventoryItem = (slug, productId, data) =>
+  api.patch(`/shops/${slug}/inventory/${productId}`, data).then(r => r.data);
+
+export const getInventorySummary = (slug) =>
+  api.get(`/shops/${slug}/inventory/summary`).then(r => r.data);
+
 // Shop Template Updates
 export const checkShopUpdate = (slug) =>
   api.get(`/shops/${slug}/check-update`).then(r => r.data);

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { shopAction, deleteShop } from '../lib/api';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, Fuel } from 'lucide-react';
 
 const STATUS_COLORS = {
   running: 'text-[hsl(142,70%,50%)]',
@@ -33,8 +33,23 @@ export default function ShopCard({ shop }) {
     }
   };
 
+  const { data: fuelData } = useQuery({
+    queryKey: ['inventory-summary', shop.slug],
+    queryFn: () => getInventorySummary(shop.slug),
+    refetchInterval: 30000,
+  });
+
   const busy = actionMutation.isPending || deleteMutation.isPending;
   const statusColor = STATUS_COLORS[shop.status] || STATUS_COLORS.stopped;
+
+  const fuelStatus = fuelData?.status || 'no-manifest';
+  const FUEL_DISPLAY = {
+    'nominal':     { label: 'Fuel Nominal',  color: 'text-[hsl(142,70%,50%)]', bg: 'bg-[hsl(142,70%,50%)]/10' },
+    'low-fuel':    { label: 'Low Fuel',      color: 'text-amber-500',          bg: 'bg-amber-500/10' },
+    'depleted':    { label: 'Fuel Depleted',  color: 'text-red-500',            bg: 'bg-red-500/10' },
+    'no-manifest': { label: 'No Manifest',   color: 'text-muted-foreground',   bg: 'bg-muted/30' },
+  };
+  const fuel = FUEL_DISPLAY[fuelStatus] || FUEL_DISPLAY['no-manifest'];
 
   return (
     <div className="rounded-xl p-5 flex flex-col border border-border/60 hover:border-primary/25 transition-all duration-300 h-full"
@@ -79,6 +94,22 @@ export default function ShopCard({ shop }) {
           </span>
         </div>
       </div>
+
+      {/* Fuel status indicator */}
+      {fuelData && (
+        <Link
+          to={`/shops/${shop.slug}/catalog`}
+          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-mono font-medium mb-3 transition-all hover:opacity-80 ${fuel.bg} ${fuel.color}`}
+        >
+          <Fuel className="h-3 w-3" />
+          {fuel.label}
+          {fuelData.total > 0 && (
+            <span className="opacity-70">
+              ({fuelData.depleted > 0 ? `${fuelData.depleted} empty` : fuelData.lowFuel > 0 ? `${fuelData.lowFuel} low` : `${fuelData.nominal} ok`})
+            </span>
+          )}
+        </Link>
+      )}
 
       {/* Spacer to push actions to bottom */}
       <div className="flex-1" />
@@ -151,6 +182,12 @@ export default function ShopCard({ shop }) {
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <ShoppingCart className="h-3 w-3" /> Orders
+        </Link>
+        <Link
+          to={`/shops/${shop.slug}/catalog`}
+          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
+        >
+          <Package className="h-3 w-3" /> Cargo Bay
         </Link>
         <Link
           to={`/shops/${shop.slug}/settings`}

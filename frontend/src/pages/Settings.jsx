@@ -11,10 +11,9 @@ import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
-  ArrowUpCircle, Settings2,
+  ArrowUpCircle, Settings2, Package,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
-import CollectionsEditor from '../components/CollectionsEditor';
 
 // Sort order for DATABASE/Design/Details files
 const SETTINGS_ORDER = [
@@ -721,8 +720,20 @@ export default function Settings() {
           )}
         </div>
 
-        {/* Shop Collections — DATABASE/ShopCollections */}
-        <CollectionsEditor slug={slug} />
+        {/* Product catalog & inventory moved to Cargo Bay — /shops/:slug/catalog */}
+        <Link
+          to={`/shops/${slug}/catalog`}
+          className="lp-card rounded-xl p-5 flex items-center gap-3 hover:border-primary/30 border border-border/40 transition-all"
+        >
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/10">
+            <Package className="h-5 w-5 lp-glow" />
+          </div>
+          <div>
+            <p className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Cargo Bay</p>
+            <p className="text-xs text-muted-foreground font-mono">Manage product catalog & fuel levels</p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+        </Link>
 
         {/* Shop Configuration — STS-2.01 Presets */}
         <div className="lp-card rounded-xl overflow-hidden">
