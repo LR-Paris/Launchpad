@@ -11,5 +11,12 @@ services:
       - BASE_PATH=/{SLUG}
     env_file:
       - .env
-    command: sh -c "([ -d node_modules ] || npm install) && ([ -f .next/BUILD_ID ] || npm run build) && npm start"
+    command: >
+      sh -c "
+        ([ -d node_modules ] || npm install) &&
+        SRC_VER=$$(node -e \"console.log(require('./package.json').version)\") &&
+        BUILT_VER=$$(cat .next/DEPLOYED_VERSION 2>/dev/null || echo '') &&
+        ([ \"$$SRC_VER\" = \"$$BUILT_VER\" ] || (npm run build && echo $$SRC_VER > .next/DEPLOYED_VERSION)) &&
+        npm start
+      "
     restart: unless-stopped
