@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import NewShop from './pages/NewShop';
 import Orders from './pages/Orders';
+import Catalog from './pages/Catalog';
 import Settings from './pages/Settings';
 import GlobalSettings from './pages/GlobalSettings';
 import Header from './components/Header';
@@ -72,6 +73,14 @@ export default function App() {
             element={
               <ProtectedRoute user={user}>
                 <Orders />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/catalog"
+            element={
+              <ProtectedRoute user={user}>
+                <Catalog />
               </ProtectedRoute>
             }
           />

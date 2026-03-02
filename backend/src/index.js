@@ -56,6 +56,7 @@ class BetterSqlite3Store extends Store {
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
+const inventoryRouter = require('./inventory');
 const updateRouter = require('./update');
 
 const app = express();
@@ -146,6 +147,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/shops', requireAuth, shopsRouter);
 app.use('/api/shops', requireAuth, ordersRouter);
 app.use('/api/shops', requireAuth, filesRouter);
+app.use('/api/shops', requireAuth, inventoryRouter);
 
 // System / update routes (protected)
 app.use('/api/system', requireAuth, updateRouter);
