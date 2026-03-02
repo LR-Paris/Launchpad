@@ -960,6 +960,8 @@ router.post('/:slug/deploy', (req, res) => {
     if (fs.existsSync(dbDir)) {
       if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
       copyDirSync(dbDir, dbBackup);
+      // Remove from working tree so git pull doesn't conflict on tracked DATABASE files
+      fs.rmSync(dbDir, { recursive: true, force: true });
       log.push('Backed up DATABASE folder.');
     }
 
@@ -1143,6 +1145,8 @@ router.post('/:slug/update-template', (req, res) => {
     if (fs.existsSync(dbDir)) {
       if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
       copyDirSync(dbDir, dbBackup);
+      // Remove from working tree so git pull doesn't conflict on tracked DATABASE files
+      fs.rmSync(dbDir, { recursive: true, force: true });
       log.push('Backed up DATABASE folder.');
     }
 
@@ -1279,6 +1283,8 @@ router.post('/:slug/upgrade', (req, res) => {
     if (fs.existsSync(dbDir)) {
       if (fs.existsSync(dbBackup)) fs.rmSync(dbBackup, { recursive: true, force: true });
       copyDirSync(dbDir, dbBackup);
+      // Remove from working tree so git pull doesn't conflict on tracked DATABASE files
+      fs.rmSync(dbDir, { recursive: true, force: true });
       log.push('Backed up DATABASE folder.');
     }
 
