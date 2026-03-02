@@ -16,9 +16,9 @@ function stockStatus(stock) {
 }
 
 const STATUS_CONFIG = {
-  'nominal':  { label: 'Nominal',  className: 'bg-[hsl(142,70%,50%)] text-white' },
-  'low-fuel': { label: 'Low Fuel', className: 'bg-amber-500 text-white' },
-  'depleted': { label: 'Depleted', className: 'bg-red-600 text-white' },
+  'nominal':  { label: 'In Stock',  className: 'bg-[hsl(142,70%,50%)] text-white' },
+  'low-fuel': { label: 'Low Stock', className: 'bg-amber-500 text-white' },
+  'depleted': { label: 'Sold Out',  className: 'bg-red-600 text-white' },
 };
 
 export default function Catalog() {
@@ -163,7 +163,7 @@ export default function Catalog() {
           Mission Control
         </Link>
         <div>
-          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Cargo Bay</p>
+          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Catalog</p>
           <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{slug}</h1>
         </div>
         <div className="flex-1" />
@@ -171,13 +171,13 @@ export default function Catalog() {
           to={`/shops/${slug}/orders`}
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
-          Flight Manifest
+          Orders
         </Link>
         <Link
           to={`/shops/${slug}/settings`}
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
-          Systems Config
+          Settings
         </Link>
       </div>
 
@@ -192,7 +192,7 @@ export default function Catalog() {
           }`}
         >
           <Fuel className="h-3.5 w-3.5" />
-          Fuel Levels
+          Inventory
         </button>
         <button
           onClick={() => setActiveTab('catalog')}
@@ -203,7 +203,7 @@ export default function Catalog() {
           }`}
         >
           <Package className="h-3.5 w-3.5" />
-          Cargo Manifest
+          Product Catalog
         </button>
       </div>
 
@@ -213,8 +213,8 @@ export default function Catalog() {
           {/* Inventory header */}
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <Fuel className="h-4 w-4 text-primary/70" />
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Fuel Levels</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">Track & manage cargo inventory</span>
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Inventory</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">Track & manage stock levels</span>
             <div className="flex-1" />
             <button
               onClick={() => refetchInventory()}
@@ -247,19 +247,19 @@ export default function Catalog() {
           {/* Summary bar */}
           <div className="px-5 py-3 border-b border-border/40 flex items-center gap-4 flex-wrap text-xs font-mono">
             <span className="text-muted-foreground">
-              <span className="font-semibold text-foreground">{summary.total}</span> payloads
+              <span className="font-semibold text-foreground">{summary.total}</span> products
             </span>
             <span className="text-[hsl(142,70%,50%)]">
               <CheckCircle2 className="h-3 w-3 inline mr-1" />
-              {summary.nominal} nominal
+              {summary.nominal} in stock
             </span>
             <span className="text-amber-500">
               <AlertTriangle className="h-3 w-3 inline mr-1" />
-              {summary.lowFuel} low fuel
+              {summary.lowFuel} low stock
             </span>
             <span className="text-red-500">
               <XCircle className="h-3 w-3 inline mr-1" />
-              {summary.depleted} depleted
+              {summary.depleted} sold out
             </span>
           </div>
 
@@ -283,9 +283,9 @@ export default function Catalog() {
                 className="rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
               >
                 <option value="all">All Status</option>
-                <option value="nominal">Nominal</option>
-                <option value="low-fuel">Low Fuel</option>
-                <option value="depleted">Depleted</option>
+                <option value="nominal">In Stock</option>
+                <option value="low-fuel">Low Stock</option>
+                <option value="depleted">Sold Out</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
@@ -294,7 +294,7 @@ export default function Catalog() {
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search payload name or SKU..."
+                placeholder="Search product name or SKU..."
                 className="flex-1 rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
               />
             </div>
@@ -303,7 +303,7 @@ export default function Catalog() {
           {/* Table */}
           {inventoryLoading ? (
             <div className="px-5 py-12 text-center">
-              <p className="text-xs text-muted-foreground font-mono">Loading cargo manifest<span className="term-cursor" /></p>
+              <p className="text-xs text-muted-foreground font-mono">Loading inventory<span className="term-cursor" /></p>
             </div>
           ) : inventory.length === 0 ? (
             <div className="px-5 py-12 text-center">
@@ -311,9 +311,9 @@ export default function Catalog() {
                    style={{ background: 'hsl(188 100% 42% / 0.1)' }}>
                 <Fuel className="h-6 w-6 lp-glow" />
               </div>
-              <p className="text-sm font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>No cargo on manifest</p>
+              <p className="text-sm font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>No inventory data</p>
               <p className="text-xs text-muted-foreground font-mono mb-4">
-                Seed inventory from your product catalog to start tracking fuel levels.
+                Seed inventory from your product catalog to start tracking stock levels.
               </p>
               <button
                 onClick={() => seedMutation.mutate()}
@@ -321,7 +321,7 @@ export default function Catalog() {
                 className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm disabled:opacity-50"
               >
                 <Rocket className="h-4 w-4" />
-                {seedMutation.isPending ? 'Loading payload...' : 'Load Cargo Manifest'}
+                {seedMutation.isPending ? 'Loading...' : 'Seed Inventory'}
               </button>
             </div>
           ) : (
@@ -331,12 +331,12 @@ export default function Catalog() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border/40 bg-card">
-                      <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Payload</th>
+                      <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Product</th>
                       <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Collection</th>
                       <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">SKU</th>
-                      <th className="px-4 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Fuel Level</th>
+                      <th className="px-4 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Stock</th>
                       <th className="px-4 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
-                      <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Mission Notes</th>
+                      <th className="px-4 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Notes</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -382,7 +382,7 @@ export default function Catalog() {
                               type="text"
                               value={currentNotes}
                               onChange={e => handleNotesChange(productId, e.target.value)}
-                              placeholder="Mission notes..."
+                              placeholder="Notes..."
                               className="w-full rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
                             />
                           </td>
@@ -453,11 +453,11 @@ export default function Catalog() {
                   className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Save className="h-3.5 w-3.5" />
-                  {saveMutation.isPending ? 'Transmitting...' : 'Transmit Changes'}
+                  {saveMutation.isPending ? 'Saving...' : 'Save Changes'}
                 </button>
                 {dirtyCount > 0 && (
                   <span className="text-xs text-amber-400 font-mono">
-                    {dirtyCount} payload{dirtyCount !== 1 ? 's' : ''} modified
+                    {dirtyCount} item{dirtyCount !== 1 ? 's' : ''} modified
                   </span>
                 )}
                 {filtered.length < inventory.length && (

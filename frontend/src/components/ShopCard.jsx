@@ -44,10 +44,10 @@ export default function ShopCard({ shop }) {
 
   const fuelStatus = fuelData?.status || 'no-manifest';
   const FUEL_DISPLAY = {
-    'nominal':     { label: 'Fuel Nominal',  color: 'text-[hsl(142,70%,50%)]', bg: 'bg-[hsl(142,70%,50%)]/10' },
-    'low-fuel':    { label: 'Low Fuel',      color: 'text-amber-500',          bg: 'bg-amber-500/10' },
-    'depleted':    { label: 'Fuel Depleted',  color: 'text-red-500',            bg: 'bg-red-500/10' },
-    'no-manifest': { label: 'No Manifest',   color: 'text-muted-foreground',   bg: 'bg-muted/30' },
+    'nominal':     { label: 'Nominal',       color: 'text-[hsl(142,70%,50%)]', bg: 'bg-[hsl(142,70%,50%)]/10' },
+    'low-fuel':    { label: 'Low Stock',     color: 'text-amber-500',          bg: 'bg-amber-500/10' },
+    'depleted':    { label: 'Sold Out',      color: 'text-red-500',            bg: 'bg-red-500/10' },
+    'no-manifest': { label: 'No Inventory',  color: 'text-muted-foreground',   bg: 'bg-muted/30' },
   };
   const fuel = FUEL_DISPLAY[fuelStatus] || FUEL_DISPLAY['no-manifest'];
 
@@ -105,7 +105,7 @@ export default function ShopCard({ shop }) {
           {fuel.label}
           {fuelData.total > 0 && (
             <span className="opacity-70">
-              ({fuelData.depleted > 0 ? `${fuelData.depleted} empty` : fuelData.lowFuel > 0 ? `${fuelData.lowFuel} low` : `${fuelData.nominal} ok`})
+              ({fuelData.depleted > 0 ? `${fuelData.depleted} sold out` : fuelData.lowFuel > 0 ? `${fuelData.lowFuel} low` : `${fuelData.total} items`})
             </span>
           )}
         </Link>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getMe } from './lib/api';
 import Login from './pages/Login';
@@ -16,37 +16,14 @@ function ProtectedRoute({ children, user }) {
   return children;
 }
 
-export default function App() {
-  const [theme, setTheme] = useState(() => localStorage.getItem('lp-theme') || 'dark');
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('light', theme === 'light');
-    localStorage.setItem('lp-theme', theme);
-  }, [theme]);
-
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['auth'],
-    queryFn: getMe,
-    retry: false,
-  });
-
-  const user = data?.user || null;
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen gap-2">
-        <span className="term-cursor" />
-        <p className="text-muted-foreground text-sm font-mono">Initializing...</p>
-      </div>
-    );
-  }
+function AppContent({ user, theme, toggleTheme }) {
+  const location = useLocation();
+  const isCatalog = /^\/shops\/[^/]+\/catalog/.test(location.pathname);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {user && <Header user={user} theme={theme} toggleTheme={toggleTheme} />}
-      <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
+      <main className={`px-4 py-8 flex-1 w-full ${isCatalog ? 'max-w-full' : 'max-w-6xl mx-auto'}`}>
         <Routes>
           <Route
             path="/login"
@@ -111,4 +88,34 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('lp-theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('lp-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['auth'],
+    queryFn: getMe,
+    retry: false,
+  });
+
+  const user = data?.user || null;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen gap-2">
+        <span className="term-cursor" />
+        <p className="text-muted-foreground text-sm font-mono">Initializing...</p>
+      </div>
+    );
+  }
+
+  return <AppContent user={user} theme={theme} toggleTheme={toggleTheme} />;
 }
