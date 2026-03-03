@@ -6,6 +6,14 @@ const { parse } = require('csv-parse/sync');
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
+// Must match the slugify logic in Shuttle's catalog.ts so product IDs align
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 const CSV_HEADERS = 'SKU,Product ID,Product Name,Collection,Stock,Last Updated,Notes';
 
 function escapeCSVField(value) {
@@ -77,13 +85,45 @@ function buildCatalogFromFiles(slug) {
         sku = fs.readFileSync(path.join(detailsDir, 'SKU.txt'), 'utf8').trim();
       } catch {}
 
-      // productId = Collection/DirName (unique)
-      const productId = `${col.name}/${item.name}`;
+      // productId = slugified collection-item (matches catalog.ts format)
+      const productId = `${slugify(col.name)}-${slugify(item.name)}`;
       products.push({ productId, name, sku, collection: col.name });
     }
   }
 
   return products;
+}
+
+// Migrate inventory.csv productIds from old "Collection/ItemName" format
+// to new "collection-item-name" slugified format.
+// Safe to run multiple times — only rewrites if old format is detected.
+function migrateInventoryIds(slug) {
+  const csvPath = inventoryCsvPath(slug);
+  if (!fs.existsSync(csvPath)) return;
+
+  const content = fs.readFileSync(csvPath, 'utf-8');
+  const lines = content.split('\n');
+
+  // Check if migration needed (any productId contains '/')
+  const needsMigration = lines.slice(1).some(line => {
+    const fields = line.split(',');
+    return fields[1] && fields[1].includes('/');
+  });
+  if (!needsMigration) return;
+
+  const migrated = lines.map((line, i) => {
+    if (i === 0) return line; // header
+    if (!line.trim()) return line;
+    const fields = line.split(',');
+    if (fields[1] && fields[1].includes('/')) {
+      const parts = fields[1].split('/');
+      fields[1] = `${slugify(parts[0])}-${slugify(parts[1] || '')}`;
+    }
+    return fields.join(',');
+  });
+
+  fs.writeFileSync(csvPath, migrated.join('\n'), 'utf-8');
+  console.log(`[inventory] Migrated productIds for shop "${slug}"`);
 }
 
 // GET /api/shops/:slug/inventory
@@ -94,6 +134,7 @@ router.get('/:slug/inventory', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
+  migrateInventoryIds(slug);
   const records = readInventory(slug);
   res.json({ inventory: records });
 });
@@ -106,6 +147,7 @@ router.get('/:slug/inventory/summary', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
+  migrateInventoryIds(slug);
   const records = readInventory(slug);
   let nominal = 0, lowFuel = 0, depleted = 0;
   for (const r of records) {
@@ -132,6 +174,7 @@ router.post('/:slug/inventory/seed', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
+  migrateInventoryIds(slug);
   const catalog = buildCatalogFromFiles(slug);
   const existing = readInventory(slug);
   const existingIds = new Set(existing.map(r => r['Product ID']));
@@ -170,6 +213,7 @@ router.patch('/:slug/inventory/bulk', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
+  migrateInventoryIds(slug);
   const records = readInventory(slug);
   const now = new Date().toISOString();
   let updated = 0;
@@ -198,6 +242,7 @@ router.patch('/:slug/inventory/:productId(*)', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
+  migrateInventoryIds(slug);
   const records = readInventory(slug);
   const record = records.find(r => r['Product ID'] === productId);
   if (!record) {
