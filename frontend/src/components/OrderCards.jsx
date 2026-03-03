@@ -1,9 +1,17 @@
 import { useState, useMemo, useEffect } from 'react';
-import { FileText, Package, User, MapPin, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink } from 'lucide-react';
-import { getCatalogPhotos, getShopImageUrl, getPoFileUrl } from '../lib/api';
+import { FileText, Package, User, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink } from 'lucide-react';
+import { getCatalogPhotos, getShopImageUrl, getPoFileUrl, getProductImageUrl } from '../lib/api';
+
+// Try to parse a JSON string; returns null on failure
+function tryParseJson(str) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return null;
+  try { return JSON.parse(trimmed); } catch { return null; }
+}
 
 // Column classification helpers
-const ITEM_COLS = /^(item|product|item[\s_-]?name|product[\s_-]?name)$/i;
+const ITEM_COLS = /^(items?|products?|item[\s_-]?name|product[\s_-]?name)$/i;
 const QTY_COLS = /^(qty|quantity|amount|count|units|#)$/i;
 const SIZE_COLS = /^(size|dimensions?)$/i;
 const COLOR_COLS = /^(colou?r|shade)$/i;
@@ -45,6 +53,49 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+// Renders a product image for an item with productId, falling back to catalog lookup
+function ProductImage({ item, slug, catalog, className = 'w-10 h-10' }) {
+  const [imgError, setImgError] = useState(false);
+
+  // Prefer productId-based image (direct from ShopCollections)
+  const productIdSrc = slug && item.productId ? getProductImageUrl(slug, item.productId) : null;
+
+  // Fallback: catalog lookup by name/sku
+  const catalogMatch = catalog[item.productName?.toLowerCase()] || catalog[item.name?.toLowerCase()] || catalog[item.sku?.toLowerCase()];
+  const catalogSrc = catalogMatch?.photoPath ? getShopImageUrl(slug, catalogMatch.photoPath) : null;
+
+  const src = (!imgError && productIdSrc) || catalogSrc;
+
+  if (src && !imgError) {
+    return (
+      <img
+        src={src}
+        alt={item.productName || item.name || ''}
+        onError={() => setImgError(true)}
+        className={`${className} rounded-md object-cover border border-border/40`}
+      />
+    );
+  }
+
+  return (
+    <div className={`${className} rounded-md bg-muted/40 flex items-center justify-center border border-border/30`}>
+      <Package className="h-4 w-4 text-muted-foreground/40" />
+    </div>
+  );
+}
+
+// Parse the Items column from a row — returns array of item objects or null
+function parseOrderItems(row, itemCols) {
+  for (const col of itemCols) {
+    const val = row[col];
+    const parsed = tryParseJson(val);
+    if (parsed) {
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+  }
+  return null;
+}
+
 export default function OrderCards({ orders, slug }) {
   const [catalog, setCatalog] = useState({});
   const [expandedOrder, setExpandedOrder] = useState(null);
@@ -83,13 +134,11 @@ export default function OrderCards({ orders, slug }) {
   }, [columns, classified]);
 
   const findPhoto = (row) => {
-    // Try matching by item name column
     const itemCols = colGroups.item || [];
     for (const col of itemCols) {
       const val = row[col]?.trim().toLowerCase();
       if (val && catalog[val]) return catalog[val];
     }
-    // Try matching other columns that might contain product names
     for (const col of columns) {
       const val = row[col]?.trim().toLowerCase();
       if (val && catalog[val]) return catalog[val];
@@ -100,7 +149,9 @@ export default function OrderCards({ orders, slug }) {
   const getItemName = (row) => {
     const itemCols = colGroups.item || [];
     for (const col of itemCols) {
-      if (row[col]?.trim()) return row[col].trim();
+      const val = row[col]?.trim();
+      // Don't return raw JSON as a name
+      if (val && !val.startsWith('[') && !val.startsWith('{')) return val;
     }
     return null;
   };
@@ -167,6 +218,7 @@ export default function OrderCards({ orders, slug }) {
     <div>
       <div className="grid gap-3 p-4">
         {orders.map((row, i) => {
+          const parsedItems = parseOrderItems(row, colGroups.item || []);
           const product = findPhoto(row);
           const itemName = getItemName(row);
           const qty = getQty(row);
@@ -179,7 +231,18 @@ export default function OrderCards({ orders, slug }) {
           // Separate primary details from secondary
           const primaryTypes = new Set(['qty', 'size', 'color', 'price', 'date', 'id', 'name']);
           const primaryDetails = details.filter(d => primaryTypes.has(d.type));
-          const secondaryDetails = details.filter(d => !primaryTypes.has(d.type));
+
+          // Summary text for JSON items
+          const itemsSummary = parsedItems
+            ? parsedItems.length === 1
+              ? parsedItems[0].productName || parsedItems[0].name || 'Item'
+              : `${parsedItems.length} items`
+            : itemName;
+
+          // Total quantity from parsed items
+          const totalQty = parsedItems
+            ? parsedItems.reduce((sum, it) => sum + (it.quantity || 0), 0)
+            : null;
 
           return (
             <div
@@ -190,33 +253,69 @@ export default function OrderCards({ orders, slug }) {
                 className="flex items-start gap-4 p-4 cursor-pointer"
                 onClick={() => setExpandedOrder(isExpanded ? null : i)}
               >
-                {/* Product photo */}
-                <div className="w-16 h-16 rounded-lg border border-border/30 bg-muted/30 flex-shrink-0 overflow-hidden flex items-center justify-center">
-                  {product?.photoPath ? (
-                    <img
-                      src={getShopImageUrl(slug, product.photoPath)}
-                      alt={itemName || ''}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <Package className="h-6 w-6 text-muted-foreground/40" />
-                  )}
-                </div>
+                {/* Product photo — show first parsed item or catalog match */}
+                {parsedItems && parsedItems.length > 0 ? (
+                  <div className="flex-shrink-0">
+                    {parsedItems.length === 1 ? (
+                      <ProductImage item={parsedItems[0]} slug={slug} catalog={catalog} className="w-16 h-16" />
+                    ) : (
+                      <div className="grid grid-cols-2 gap-0.5 w-16 h-16">
+                        {parsedItems.slice(0, 4).map((item, j) => (
+                          <ProductImage
+                            key={item.productId || j}
+                            item={item}
+                            slug={slug}
+                            catalog={catalog}
+                            className="w-full h-full"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="w-16 h-16 rounded-lg border border-border/30 bg-muted/30 flex-shrink-0 overflow-hidden flex items-center justify-center">
+                    {product?.photoPath ? (
+                      <img
+                        src={getShopImageUrl(slug, product.photoPath)}
+                        alt={itemName || ''}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Package className="h-6 w-6 text-muted-foreground/40" />
+                    )}
+                  </div>
+                )}
 
                 {/* Order summary */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    {itemName && (
+                    {itemsSummary && (
                       <span className="text-sm font-semibold truncate" style={{ fontFamily: 'Syne, sans-serif' }}>
-                        {itemName}
+                        {itemsSummary}
                       </span>
                     )}
-                    {qty && (
+                    {(totalQty || qty) && (
                       <span className="text-xs font-mono font-bold bg-primary/15 text-primary px-2 py-0.5 rounded-full flex-shrink-0">
-                        x{qty}
+                        {totalQty ? `${totalQty} units` : `x${qty}`}
                       </span>
                     )}
                   </div>
+
+                  {/* Inline item names for multi-item orders */}
+                  {parsedItems && parsedItems.length > 1 && (
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {parsedItems.slice(0, 3).map((item, j) => (
+                        <span key={item.productId || j} className="text-[10px] font-mono bg-muted/60 text-muted-foreground px-1.5 py-0.5 rounded">
+                          {item.productName || item.name || 'Item'}{item.quantity ? ` ×${item.quantity}` : ''}
+                        </span>
+                      ))}
+                      {parsedItems.length > 3 && (
+                        <span className="text-[10px] font-mono text-muted-foreground/60 px-1.5 py-0.5">
+                          +{parsedItems.length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap gap-x-4 gap-y-0.5">
                     {customerName && (
@@ -231,7 +330,6 @@ export default function OrderCards({ orders, slug }) {
                         {orderId}
                       </span>
                     )}
-                    {/* Show primary details inline */}
                     {primaryDetails.filter(d => d.type !== 'qty' && d.type !== 'name' && d.type !== 'id').slice(0, 4).map(d => (
                       <span key={d.label} className="text-xs text-muted-foreground">
                         <span className="opacity-60">{d.label}:</span> {d.value}
@@ -263,6 +361,38 @@ export default function OrderCards({ orders, slug }) {
               {/* Expanded details */}
               {isExpanded && (
                 <div className="border-t border-border/30 bg-muted/10 px-4 py-3 lp-fadein">
+                  {/* Parsed items grid */}
+                  {parsedItems && parsedItems.length > 0 && (
+                    <div className="mb-3">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-mono">
+                        Items
+                      </span>
+                      <div className="mt-1.5 space-y-1.5">
+                        {parsedItems.map((item, j) => (
+                          <div key={item.productId || j} className="flex items-center gap-3 bg-background/50 rounded-lg p-2 border border-border/20">
+                            <ProductImage item={item} slug={slug} catalog={catalog} className="w-10 h-10" />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs font-medium block truncate">
+                                {item.productName || item.name || item.productId || 'Item'}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {item.sku && `${item.sku} · `}
+                                {item.quantity && `${item.quantity} box${item.quantity !== 1 ? 'es' : ''}`}
+                                {item.unitsPerBox && ` (${item.quantity * item.unitsPerBox} units)`}
+                              </span>
+                            </div>
+                            {item.boxCost != null && (
+                              <span className="text-xs font-mono font-semibold flex-shrink-0">
+                                ${(Number(item.boxCost) * (item.quantity || 1)).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Other detail fields */}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2">
                     {details.map(d => (
                       <div key={d.label}>
