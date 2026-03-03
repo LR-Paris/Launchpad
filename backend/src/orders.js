@@ -9,6 +9,57 @@ const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
 
+// Must match the slugify logic in Shuttle's catalog.ts so product IDs align
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// Locate the Orders directory for a shop (returns first existing path or null)
+function findOrdersDir(slug) {
+  const candidates = [
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'orders'),
+    path.join(SHOPS_DIR, slug, 'orders'),
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+// Find a PO file by scanning the Orders directory for files matching the order ID.
+// The CSV "PO File" column may contain:
+//   - the exact filename: "ORD-123.pdf"
+//   - a placeholder like "ORD-123 (see Orders folder)"
+// In both cases we extract the ORD-xxx ID and search for a file with that prefix.
+function findPoFile(slug, rawFilename) {
+  const ordersDir = findOrdersDir(slug);
+  if (!ordersDir) return null;
+
+  // 1) Try exact match first (if it looks like an actual filename with extension)
+  if (/\.\w{1,5}$/.test(rawFilename)) {
+    const exact = path.join(ordersDir, path.basename(rawFilename));
+    if (fs.existsSync(exact)) return exact;
+  }
+
+  // 2) Extract the order ID (ORD-<timestamp>-<random>) from the value
+  const orderIdMatch = rawFilename.match(/(ORD-[\w-]+)/);
+  if (!orderIdMatch) return null;
+  const orderId = orderIdMatch[1];
+
+  // 3) Scan the Orders directory for files starting with that order ID
+  try {
+    const files = fs.readdirSync(ordersDir);
+    const match = files.find(f => {
+      const name = path.parse(f).name;
+      return name === orderId;
+    });
+    if (match) return path.join(ordersDir, match);
+  } catch { /* directory unreadable */ }
+
+  return null;
+}
+
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {
   const { slug } = req.params;
@@ -114,10 +165,31 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.txt': 'text/plain',
+  '.html': 'text/html',
 };
+
+// Recursively search a directory for a file by name
+function findFileRecursive(dir, targetName, maxDepth = 3) {
+  if (maxDepth <= 0 || !fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (!entry.isDirectory() && entry.name === targetName) return fullPath;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const found = findFileRecursive(path.join(dir, entry.name), targetName, maxDepth - 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 // GET /api/shops/:slug/orders/po/:filename — Download/open a PO file
 // Also supports query param: /api/shops/:slug/orders/po?filename=...
+// Handles both exact filenames ("ORD-123.pdf") and Shuttle placeholder text
+// ("ORD-123 (see Orders folder)") by extracting the order ID and scanning the dir.
 router.get('/:slug/orders/po/:filename?', (req, res) => {
   const { slug } = req.params;
   const filename = req.params.filename || req.query.filename;
@@ -126,9 +198,8 @@ router.get('/:slug/orders/po/:filename?', (req, res) => {
     return res.status(400).json({ error: 'Filename is required' });
   }
 
-  // Sanitize filename to prevent path traversal
-  const safeName = path.basename(filename);
-  if (safeName !== filename || filename.includes('..')) {
+  // Block path traversal
+  if (filename.includes('..')) {
     return res.status(400).json({ error: 'Invalid filename' });
   }
 
@@ -137,23 +208,132 @@ router.get('/:slug/orders/po/:filename?', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
-  // Try DATABASE/Orders/ first, then orders/
-  let filePath = path.join(shopDir, 'DATABASE', 'Orders', safeName);
-  if (!fs.existsSync(filePath)) {
-    filePath = path.join(shopDir, 'orders', safeName);
+  // findPoFile handles both exact filenames and Shuttle placeholder text
+  // like "ORD-xxx (see Orders folder)" by extracting the order ID
+  let filePath = findPoFile(slug, filename);
+
+  // Fallback: try recursive search with the basename
+  if (!filePath) {
+    const safeName = path.basename(filename);
+    const ordersDir = path.join(shopDir, 'DATABASE', 'Orders');
+    filePath = findFileRecursive(ordersDir, safeName);
   }
 
-  if (!fs.existsSync(filePath)) {
+  if (!filePath) {
     return res.status(404).json({ error: 'PO file not found' });
   }
 
-  const ext = path.extname(safeName).toLowerCase();
+  // Ensure the resolved path is still inside the shop directory
+  const realPath = fs.realpathSync(filePath);
+  const realShopDir = fs.realpathSync(shopDir);
+  if (!realPath.startsWith(realShopDir + path.sep)) {
+    return res.status(400).json({ error: 'Invalid file path' });
+  }
+
+  const resolvedName = path.basename(filePath);
+  const ext = path.extname(resolvedName).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-  const isInlineable = ext === '.pdf' || ext === '.png' || ext === '.jpg' || ext === '.jpeg';
+  const isInlineable = ['.pdf', '.png', '.jpg', '.jpeg', '.txt', '.html'].includes(ext);
 
   res.setHeader('Content-Type', contentType);
-  res.setHeader('Content-Disposition', `${isInlineable ? 'inline' : 'attachment'}; filename="${safeName}"`);
+  res.setHeader('Content-Disposition', `${isInlineable ? 'inline' : 'attachment'}; filename="${resolvedName}"`);
   fs.createReadStream(filePath).pipe(res);
+});
+
+// GET /api/shops/:slug/orders/catalog-photos — Return product names → photo paths for order enrichment
+router.get('/:slug/orders/catalog-photos', (req, res) => {
+  const { slug } = req.params;
+  const collectionsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'ShopCollections');
+  if (!fs.existsSync(collectionsDir)) {
+    return res.json({ products: {} });
+  }
+
+  const products = {};
+  try {
+    const collections = fs.readdirSync(collectionsDir, { withFileTypes: true }).filter(e => e.isDirectory());
+    for (const col of collections) {
+      const colPath = path.join(collectionsDir, col.name);
+      const items = fs.readdirSync(colPath, { withFileTypes: true }).filter(e => e.isDirectory());
+      for (const item of items) {
+        const detailsDir = path.join(colPath, item.name, 'Details');
+        const photosDir = path.join(colPath, item.name, 'Photos');
+        let name = item.name;
+        let sku = '';
+        let price = '';
+        let photoFile = null;
+
+        try { name = fs.readFileSync(path.join(detailsDir, 'Name.txt'), 'utf8').trim() || item.name; } catch {}
+        try { sku = fs.readFileSync(path.join(detailsDir, 'SKU.txt'), 'utf8').trim(); } catch {}
+        try { price = fs.readFileSync(path.join(detailsDir, 'ItemCost.txt'), 'utf8').trim(); } catch {}
+
+        if (fs.existsSync(photosDir)) {
+          try {
+            const photos = fs.readdirSync(photosDir).filter(f => /\.(jpe?g|png|gif|webp|avif)$/i.test(f));
+            const main = photos.find(f => f.toLowerCase().startsWith('main'));
+            photoFile = main || photos[0] || null;
+          } catch {}
+        }
+
+        const photoPath = photoFile
+          ? `DATABASE/ShopCollections/${col.name}/${item.name}/Photos/${photoFile}`
+          : null;
+
+        products[name.toLowerCase()] = { name, sku, price, collection: col.name, photoPath };
+        // Also index by SKU if available
+        if (sku) products[sku.toLowerCase()] = { name, sku, price, collection: col.name, photoPath };
+      }
+    }
+  } catch { /* ignore */ }
+
+  res.json({ products });
+});
+
+// GET /api/shops/:slug/orders/product-image/:productId — Serve product thumbnail
+// Resolves a slugified productId (e.g. "jet-set-cafe-tumbler") back to its
+// ShopCollections folder and returns the main photo.
+router.get('/:slug/orders/product-image/:productId', (req, res) => {
+  const { slug, productId } = req.params;
+  const collectionsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'ShopCollections');
+
+  if (!fs.existsSync(collectionsDir)) {
+    return res.status(404).json({ error: 'Collections not found' });
+  }
+
+  try {
+    const collections = fs.readdirSync(collectionsDir, { withFileTypes: true });
+
+    for (const col of collections) {
+      if (!col.isDirectory()) continue;
+
+      const colPath = path.join(collectionsDir, col.name);
+      const items = fs.readdirSync(colPath, { withFileTypes: true });
+
+      for (const item of items) {
+        if (!item.isDirectory()) continue;
+        if (`${slugify(col.name)}-${slugify(item.name)}` !== productId) continue;
+
+        const photosDir = path.join(colPath, item.name, 'Photos');
+        if (!fs.existsSync(photosDir)) continue;
+
+        // Prefer main.* then fall back to any image
+        const files = fs.readdirSync(photosDir);
+        const mainPhoto = files.find(f => /^main\.(jpg|jpeg|png|webp)$/i.test(f));
+        const anyPhoto = files.find(f => /\.(jpg|jpeg|png|webp|gif)$/i.test(f));
+        const photo = mainPhoto || anyPhoto;
+
+        if (photo) {
+          const photoPath = path.join(photosDir, photo);
+          const ext = path.extname(photo).toLowerCase();
+          const ct = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+          res.setHeader('Content-Type', ct);
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          return fs.createReadStream(photoPath).pipe(res);
+        }
+      }
+    }
+  } catch { /* directory unreadable */ }
+
+  return res.status(404).json({ error: 'Product image not found' });
 });
 
 module.exports = router;

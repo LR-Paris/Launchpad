@@ -76,6 +76,12 @@ export const wipeOrders = (slug) =>
 export const getPoFileUrl = (slug, filename) =>
   `/api/shops/${slug}/orders/po?filename=${encodeURIComponent(filename)}`;
 
+export const getProductImageUrl = (slug, productId) =>
+  `/api/shops/${slug}/orders/product-image/${encodeURIComponent(productId)}`;
+
+export const getCatalogPhotos = (slug) =>
+  api.get(`/shops/${slug}/orders/catalog-photos`).then(r => r.data);
+
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
   api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);

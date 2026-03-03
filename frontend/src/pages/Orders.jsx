@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getOrders, getOrdersDownloadUrl } from '../lib/api';
 import OrderTable from '../components/OrderTable';
-import { ArrowLeft, Download, ShoppingBag, RefreshCw } from 'lucide-react';
+import OrderCards from '../components/OrderCards';
+import { ArrowLeft, Download, ShoppingBag, RefreshCw, LayoutGrid, Table } from 'lucide-react';
 
 export default function Orders() {
   const { slug } = useParams();
+  const [view, setView] = useState('cards');
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['orders', slug],
@@ -82,8 +85,37 @@ export default function Orders() {
             <span className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
               {orders.length} order{orders.length !== 1 ? 's' : ''}
             </span>
+            <div className="flex-1" />
+            <div className="flex items-center rounded-lg border border-border/40 overflow-hidden">
+              <button
+                onClick={() => setView('cards')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all ${
+                  view === 'cards'
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                }`}
+              >
+                <LayoutGrid className="h-3 w-3" />
+                Orders
+              </button>
+              <button
+                onClick={() => setView('table')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all border-l border-border/40 ${
+                  view === 'table'
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                }`}
+              >
+                <Table className="h-3 w-3" />
+                Spreadsheet
+              </button>
+            </div>
           </div>
-          <OrderTable orders={orders} slug={slug} />
+          {view === 'cards' ? (
+            <OrderCards orders={orders} slug={slug} />
+          ) : (
+            <OrderTable orders={orders} slug={slug} />
+          )}
         </div>
       )}
     </div>

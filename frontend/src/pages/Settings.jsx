@@ -713,7 +713,7 @@ export default function Settings() {
       <div className="space-y-5">
 
         {/* Shop Settings — DATABASE/Design/Details */}
-        <div className="lp-card rounded-xl overflow-hidden">
+        <div className={`lp-card rounded-xl overflow-hidden${!detailsLoading ? ' lp-fadein' : ''}`}>
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <SlidersHorizontal className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Settings</h2>
@@ -756,7 +756,7 @@ export default function Settings() {
               onImageReplace={handleImageReplace}
               replacingImage={replacingImage}
               imageTimestamps={imageTimestamps}
-              hiddenFiles={['README.md']}
+              hiddenFiles={['README.md', 'Hotels.txt']}
             />
           )}
         </div>
@@ -855,23 +855,38 @@ export default function Settings() {
               </div>
 
               {/* Hotel List */}
-              {presetDataRequired.hotel_list && (
-                <div>
-                  <label className="block text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
-                    Hotel List
-                  </label>
-                  <textarea
-                    value={presetHotelList}
-                    onChange={(e) => setPresetHotelList(e.target.value)}
-                    placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency"}
-                    className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-y min-h-[120px]"
-                    rows={8}
-                  />
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    One hotel per line.{presetHotelList.trim() ? ` ${presetHotelList.trim().split('\n').filter(h => h.trim()).length} hotel${presetHotelList.trim().split('\n').filter(h => h.trim()).length !== 1 ? 's' : ''}.` : ''}
-                  </p>
-                </div>
-              )}
+              {presetDataRequired.hotel_list && (() => {
+                const allLines = presetHotelList.split('\n');
+                const commentLines = allLines.filter(l => l.trimStart().startsWith('#'));
+                const hotelLines = allLines.filter(l => !l.trimStart().startsWith('#'));
+                const hotelText = hotelLines.join('\n');
+                const hotelCount = hotelLines.filter(h => h.trim()).length;
+                return (
+                  <div>
+                    <label className="block text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+                      Hotel List
+                    </label>
+                    {commentLines.length > 0 && (
+                      <div className="text-[10px] text-muted-foreground font-mono mb-1.5 bg-muted/30 rounded px-2 py-1 border border-border/30">
+                        {commentLines.map((c, i) => <div key={i}>{c}</div>)}
+                      </div>
+                    )}
+                    <textarea
+                      value={hotelText}
+                      onChange={(e) => {
+                        const newHotels = e.target.value;
+                        setPresetHotelList(commentLines.length > 0 ? commentLines.join('\n') + '\n' + newHotels : newHotels);
+                      }}
+                      placeholder={"Hilton Downtown\nMarriott Convention Center\nHyatt Regency"}
+                      className="w-full rounded-md border border-border bg-input px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-y min-h-[120px]"
+                      rows={8}
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      One hotel per line.{hotelCount > 0 ? ` ${hotelCount} hotel${hotelCount !== 1 ? 's' : ''}.` : ''}
+                    </p>
+                  </div>
+                );
+              })()}
 
               <button
                 onClick={savePresets}
@@ -1007,7 +1022,7 @@ export default function Settings() {
             </div>
             <div className="text-right">
               <span className="text-sm font-mono font-semibold text-[hsl(188,100%,42%)]">
-                {currentShop?.shuttle_version || 'Unknown (pre-STS-2.01)'}
+                {shopVersionInfo?.currentVersion || currentShop?.shuttle_version || 'Unknown'}
               </span>
               {shopVersionInfo?.localCommit && (
                 <div className="text-[11px] font-mono text-muted-foreground mt-0.5">
@@ -1017,6 +1032,10 @@ export default function Settings() {
               )}
             </div>
           </div>
+
+          <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+            Caution: Only update when necessary. Skipping multiple versions may cause compatibility issues.
+          </p>
 
           {updateError && (
             <div className="mb-3 px-3 py-2 rounded-md text-xs text-destructive bg-destructive/5 border border-destructive/20">{updateError}</div>
