@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
-import { ArrowUpDown, EyeOff, Eye, ExternalLink } from 'lucide-react';
+import { ArrowUpDown, EyeOff, Eye, FileText, X, Download, ExternalLink } from 'lucide-react';
 import { getPoFileUrl } from '../lib/api';
 
 export default function OrderTable({ orders, slug }) {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [hideEmpty, setHideEmpty] = useState(true);
+  const [poModal, setPoModal] = useState(null);
 
   const columns = useMemo(() => {
     if (!orders.length) return [];
@@ -53,7 +54,12 @@ export default function OrderTable({ orders, slug }) {
 
   const handleRowClick = (row) => {
     const poFile = row['PO File']?.trim();
-    if (poFile && slug) {
+    if (!poFile || !slug) return;
+    const ext = poFile.split('.').pop()?.toLowerCase();
+    const viewable = ['pdf', 'png', 'jpg', 'jpeg', 'txt', 'html', 'htm'].includes(ext);
+    if (viewable) {
+      setPoModal(poFile);
+    } else {
       window.open(getPoFileUrl(slug, poFile), '_blank', 'noopener,noreferrer');
     }
   };
@@ -62,7 +68,7 @@ export default function OrderTable({ orders, slug }) {
     if (col === 'PO File' && value?.trim() && slug) {
       return (
         <span className="inline-flex items-center gap-1 text-xs font-mono text-primary">
-          <ExternalLink className="h-3 w-3" />
+          <FileText className="h-3 w-3" />
           {value}
         </span>
       );
@@ -132,6 +138,69 @@ export default function OrderTable({ orders, slug }) {
           </tbody>
         </table>
       </div>
+
+      {/* PO File inline viewer modal */}
+      {poModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setPoModal(null)}
+        >
+          <div
+            className="bg-card border border-border/60 rounded-xl shadow-2xl w-[90vw] max-w-4xl h-[80vh] flex flex-col overflow-hidden lp-fadein"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 bg-muted/30">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold font-mono">{poModal}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={getPoFileUrl(slug, poModal)}
+                  download
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-primary/10"
+                >
+                  <Download className="h-3 w-3" />
+                  Download
+                </a>
+                <a
+                  href={getPoFileUrl(slug, poModal)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-primary/10"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Open
+                </a>
+                <button
+                  onClick={() => setPoModal(null)}
+                  className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/50"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {/\.(png|jpe?g|gif|webp)$/i.test(poModal) ? (
+                <div className="w-full h-full flex items-center justify-center p-4 overflow-auto bg-muted/20">
+                  <img
+                    src={getPoFileUrl(slug, poModal)}
+                    alt={poModal}
+                    className="max-w-full max-h-full object-contain rounded-md"
+                  />
+                </div>
+              ) : (
+                <iframe
+                  src={getPoFileUrl(slug, poModal)}
+                  title={poModal}
+                  className="w-full h-full border-0"
+                  sandbox="allow-same-origin"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
