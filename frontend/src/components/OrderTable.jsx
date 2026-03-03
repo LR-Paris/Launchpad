@@ -1,6 +1,59 @@
 import { useState, useMemo } from 'react';
-import { ArrowUpDown, EyeOff, Eye, FileText, X, Download, ExternalLink } from 'lucide-react';
-import { getPoFileUrl } from '../lib/api';
+import { ArrowUpDown, EyeOff, Eye, FileText, X, Download, ExternalLink, Package } from 'lucide-react';
+import { getPoFileUrl, getProductImageUrl } from '../lib/api';
+
+// Try to parse a JSON string; returns null on failure
+function tryParseJson(str) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return null;
+  try { return JSON.parse(trimmed); } catch { return null; }
+}
+
+// Renders a single parsed item row with an optional product photo
+function ItemRow({ item, slug }) {
+  const [imgError, setImgError] = useState(false);
+  const imgSrc = slug && item.productId ? getProductImageUrl(slug, item.productId) : null;
+
+  return (
+    <div className="flex items-center gap-2.5 py-1.5">
+      {imgSrc && !imgError ? (
+        <img
+          src={imgSrc}
+          alt={item.productName || item.name || ''}
+          onError={() => setImgError(true)}
+          className="w-8 h-8 rounded object-cover border border-border/40 flex-shrink-0"
+        />
+      ) : (
+        <div className="w-8 h-8 rounded bg-muted/50 flex items-center justify-center flex-shrink-0 border border-border/30">
+          <Package className="h-3.5 w-3.5 text-muted-foreground/50" />
+        </div>
+      )}
+      <div className="min-w-0">
+        <span className="text-xs font-medium block truncate">
+          {item.productName || item.name || item.productId || 'Item'}
+        </span>
+        <span className="text-[10px] text-muted-foreground font-mono block">
+          {item.quantity && `${item.quantity}× `}
+          {item.boxCost != null && `$${Number(item.boxCost).toFixed(2)}/box`}
+          {item.sku && ` · ${item.sku}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Renders the parsed items list for an order
+function ItemsList({ items, slug }) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      {items.map((item, i) => (
+        <ItemRow key={item.productId || i} item={item} slug={slug} />
+      ))}
+    </div>
+  );
+}
 
 export default function OrderTable({ orders, slug }) {
   const [sortKey, setSortKey] = useState(null);
@@ -64,7 +117,24 @@ export default function OrderTable({ orders, slug }) {
     }
   };
 
+  const isItemsCol = (col) => col === 'Items';
+
   const renderCell = (col, value) => {
+    // Items column: parse JSON and render rich item cards with photos
+    if (isItemsCol(col)) {
+      const parsed = tryParseJson(value);
+      if (parsed) {
+        return <ItemsList items={Array.isArray(parsed) ? parsed : [parsed]} slug={slug} />;
+      }
+      // Fallback: show raw value truncated
+      return (
+        <span className="text-xs text-muted-foreground font-mono break-all line-clamp-2">
+          {value}
+        </span>
+      );
+    }
+
+    // PO File column: render as a link
     if (col === 'PO File' && value?.trim() && slug) {
       return (
         <span className="inline-flex items-center gap-1 text-xs font-mono text-primary">
@@ -73,6 +143,7 @@ export default function OrderTable({ orders, slug }) {
         </span>
       );
     }
+
     return value;
   };
 
@@ -103,7 +174,9 @@ export default function OrderTable({ orders, slug }) {
                 <th
                   key={col}
                   onClick={() => toggleSort(col)}
-                  className="px-4 py-3 text-left font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground"
+                  className={`px-4 py-3 text-left font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground ${
+                    isItemsCol(col) ? 'min-w-[240px]' : ''
+                  }`}
                 >
                   <span className="inline-flex items-center gap-1">
                     {col}
@@ -128,7 +201,7 @@ export default function OrderTable({ orders, slug }) {
                   title={hasPo ? 'Click to open PO' : undefined}
                 >
                   {visibleColumns.map((col) => (
-                    <td key={col} className="px-4 py-2.5">
+                    <td key={col} className={`px-4 ${isItemsCol(col) ? 'py-1.5' : 'py-2.5'}`}>
                       {renderCell(col, row[col])}
                     </td>
                   ))}
