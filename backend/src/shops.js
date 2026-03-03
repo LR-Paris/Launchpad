@@ -588,9 +588,10 @@ router.post('/', (req, res) => {
     log.push('Generated nginx config.');
 
     // Register in database
+    const shopVersion = readShopVersion(shopDir) || 'unknown';
     db.prepare(
       'INSERT INTO shops (slug, name, description, status, port, subdomain, shuttle_version) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(slug, name, description || '', 'stopped', port, subdomain, 'STS-2.01');
+    ).run(slug, name, description || '', 'stopped', port, subdomain, shopVersion);
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
@@ -1092,16 +1093,16 @@ router.get('/:slug/version', (req, res) => {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    const result = { dbVersion: shop.shuttle_version || null };
+    const shopDir = path.join(SHOPS_DIR, slug);
+    const actualVersion = readShopVersion(shopDir);
 
-    if (shop.shuttle_version) {
-      result.currentVersion = shop.shuttle_version;
-    }
-
-    result.latestAvailable = 'STS-2.01';
+    const result = {
+      dbVersion: shop.shuttle_version || null,
+      currentVersion: actualVersion || shop.shuttle_version || null,
+      latestAvailable: actualVersion || shop.shuttle_version || null,
+    };
 
     // Include git commit info so the frontend can display it immediately
-    const shopDir = path.join(SHOPS_DIR, slug);
     if (fs.existsSync(path.join(shopDir, '.git'))) {
       try {
         result.localCommit = execSync('git rev-parse --short HEAD', {
@@ -1243,10 +1244,11 @@ router.post('/:slug/update-template', (req, res) => {
       }).trim();
     } catch { /* ignore */ }
 
-    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run('STS-2.01', slug);
+    const updatedVersion = readShopVersion(shopDir) || 'unknown';
+    db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run(updatedVersion, slug);
 
-    log.push(`Update complete. Now at commit ${newCommit}.`);
-    res.json({ message: `Shop "${slug}" updated successfully`, commit: newCommit, log: log.join('\n') });
+    log.push(`Update complete. Now at ${updatedVersion} (commit ${newCommit}).`);
+    res.json({ message: `Shop "${slug}" updated to ${updatedVersion}`, commit: newCommit, log: log.join('\n') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -1369,10 +1371,11 @@ router.post('/:slug/upgrade', (req, res) => {
     }
 
     // Update version in DB
-    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run('STS-2.01', 'running', slug);
-    log.push('Updated shop version to STS-2.01.');
+    const upgradedVersion = readShopVersion(shopDir) || 'unknown';
+    db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run(upgradedVersion, 'running', slug);
+    log.push(`Updated shop version to ${upgradedVersion}.`);
 
-    res.json({ message: `Shop "${slug}" upgraded to STS-2.01`, log: log.join('\n') });
+    res.json({ message: `Shop "${slug}" upgraded to ${upgradedVersion}`, log: log.join('\n') });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
