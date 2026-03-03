@@ -27,6 +27,77 @@ function findOrdersDir(slug) {
   return candidates.find(p => fs.existsSync(p)) || null;
 }
 
+// Find orders.csv for a shop (consolidates the fallback logic used by multiple handlers)
+function findCsvPath(slug) {
+  const candidates = [
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'orders', 'orders.csv'),
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+// Escape a value for CSV output (matches the pattern in inventory.js)
+function escapeCSVField(value) {
+  const str = String(value ?? '');
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// Lazily add Status and Tracking Number columns to an existing orders CSV.
+// Idempotent: checks if columns already exist before modifying.
+function backfillStatusColumns(csvPath) {
+  if (!csvPath || !fs.existsSync(csvPath)) return;
+  const content = fs.readFileSync(csvPath, 'utf8');
+  const lines = content.split('\n');
+  if (lines.length === 0) return;
+
+  const header = lines[0];
+  if (/,Status(,|$)/.test(header)) return; // already has Status column
+
+  const newLines = lines.map((line, i) => {
+    if (!line.trim()) return line;
+    if (i === 0) return line + ',Status,Tracking Number';
+    return line + ',Pending,'; // backfill existing orders as Pending
+  });
+
+  fs.writeFileSync(csvPath, newLines.join('\n'));
+  console.log(`[orders] Backfilled Status/Tracking columns: ${csvPath}`);
+}
+
+// Update a specific order's Status and Tracking Number by Order ID.
+// Returns the updated row object, or null if not found.
+function updateOrderStatus(csvPath, orderId, status, trackingNumber) {
+  if (!csvPath || !fs.existsSync(csvPath)) return null;
+
+  const content = fs.readFileSync(csvPath, 'utf8');
+  const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
+  if (records.length === 0) return null;
+
+  // Find matching order (check common ID column names)
+  const row = records.find(r =>
+    (r['Order ID'] || r['order_id'] || r['Order #'] || r['Order Number'] || r['ID'] || r['id']) === orderId
+  );
+  if (!row) return null;
+
+  row['Status'] = status;
+  if (trackingNumber !== undefined) {
+    row['Tracking Number'] = trackingNumber;
+  }
+
+  // Rebuild CSV
+  const columns = Object.keys(records[0]);
+  const headerLine = columns.map(escapeCSVField).join(',');
+  const dataLines = records.map(r =>
+    columns.map(c => escapeCSVField(r[c])).join(',')
+  );
+  fs.writeFileSync(csvPath, [headerLine, ...dataLines].join('\n') + '\n');
+  return row;
+}
+
 // Find a PO file by scanning the Orders directory for files matching the order ID.
 // The CSV "PO File" column may contain:
 //   - the exact filename: "ORD-123.pdf"
@@ -63,21 +134,14 @@ function findPoFile(slug, rawFilename) {
 // GET /api/shops/:slug/orders
 router.get('/:slug/orders', (req, res) => {
   const { slug } = req.params;
-  // Try DATABASE/Orders/orders.csv first, then fallbacks
-  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv');
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
-  }
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
-  }
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
-  }
+  const csvPath = findCsvPath(slug);
 
-  if (!fs.existsSync(csvPath)) {
+  if (!csvPath) {
     return res.json({ orders: [] });
   }
+
+  // Lazy migration: ensure Status/Tracking columns exist
+  backfillStatusColumns(csvPath);
 
   try {
     const content = fs.readFileSync(csvPath, 'utf8');
@@ -95,18 +159,9 @@ router.get('/:slug/orders', (req, res) => {
 // GET /api/shops/:slug/orders/download
 router.get('/:slug/orders/download', (req, res) => {
   const { slug } = req.params;
-  let csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv');
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv');
-  }
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv');
-  }
-  if (!fs.existsSync(csvPath)) {
-    csvPath = path.join(SHOPS_DIR, slug, 'orders', 'orders.csv');
-  }
+  const csvPath = findCsvPath(slug);
 
-  if (!fs.existsSync(csvPath)) {
+  if (!csvPath) {
     return res.status(404).json({ error: 'No orders file found' });
   }
 
@@ -129,15 +184,7 @@ router.post('/:slug/orders/wipe', (req, res) => {
     }
   } catch { /* proceed if DB check fails */ }
 
-  // Find the existing CSV to preserve its header
-  const candidates = [
-    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
-    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv'),
-    path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv'),
-    path.join(SHOPS_DIR, slug, 'orders', 'orders.csv'),
-  ];
-
-  let csvPath = candidates.find(p => fs.existsSync(p));
+  const csvPath = findCsvPath(slug);
 
   if (!csvPath) {
     return res.status(404).json({ error: 'No orders file found' });
@@ -334,6 +381,33 @@ router.get('/:slug/orders/product-image/:productId', (req, res) => {
   } catch { /* directory unreadable */ }
 
   return res.status(404).json({ error: 'Product image not found' });
+});
+
+// POST /api/shops/:slug/orders/:orderId/ship — Mark an order as shipped
+router.post('/:slug/orders/:orderId/ship', (req, res) => {
+  const { slug, orderId } = req.params;
+  const { trackingNumber } = req.body;
+
+  const csvPath = findCsvPath(slug);
+  if (!csvPath) {
+    return res.status(404).json({ error: 'No orders file found' });
+  }
+
+  // Ensure Status/Tracking columns exist before updating
+  backfillStatusColumns(csvPath);
+
+  const updatedRow = updateOrderStatus(csvPath, orderId, 'Shipped', trackingNumber || '');
+  if (!updatedRow) {
+    return res.status(404).json({ error: `Order ${orderId} not found` });
+  }
+
+  // Fire-and-forget shipped notification email
+  const { sendShippedNotification } = require('./email');
+  sendShippedNotification(updatedRow, trackingNumber || '', slug).catch(err => {
+    console.error(`[ship] Email failed for ${slug}/${orderId}: ${err.message}`);
+  });
+
+  res.json({ message: 'Order marked as shipped', order: updatedRow });
 });
 
 module.exports = router;

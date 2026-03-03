@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
-import { FileText, Package, User, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink } from 'lucide-react';
-import { getCatalogPhotos, getShopImageUrl, getPoFileUrl, getProductImageUrl } from '../lib/api';
+import { useQueryClient } from '@tanstack/react-query';
+import { FileText, Package, User, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink, Truck, Send } from 'lucide-react';
+import { getCatalogPhotos, getShopImageUrl, getPoFileUrl, getProductImageUrl, shipOrder } from '../lib/api';
 
 // Try to parse a JSON string; returns null on failure
 function tryParseJson(str) {
@@ -25,6 +26,8 @@ const DATE_COLS = /^(date|order[\s_-]?date|created|timestamp|time)$/i;
 const NOTE_COLS = /^(note|notes|comment|comments|extra[\s_-]?notes|message|special[\s_-]?instructions)$/i;
 const HOTEL_COLS = /^(hotel|hotel[\s_-]?name|hotel[\s_-]?selection|accommodation)$/i;
 const ID_COLS = /^(order[\s_-]?id|id|order[\s_-]?#|order[\s_-]?number|confirmation|ref)$/i;
+const STATUS_COLS = /^(status|order[\s_-]?status)$/i;
+const TRACKING_COLS = /^(tracking|tracking[\s_-]?number|tracking[\s_-]?#|shipment)$/i;
 
 function classifyColumn(col) {
   if (ITEM_COLS.test(col)) return 'item';
@@ -41,6 +44,8 @@ function classifyColumn(col) {
   if (NOTE_COLS.test(col)) return 'note';
   if (HOTEL_COLS.test(col)) return 'hotel';
   if (ID_COLS.test(col)) return 'id';
+  if (STATUS_COLS.test(col)) return 'status';
+  if (TRACKING_COLS.test(col)) return 'tracking';
   return 'other';
 }
 
@@ -97,9 +102,14 @@ function parseOrderItems(row, itemCols) {
 }
 
 export default function OrderCards({ orders, slug }) {
+  const queryClient = useQueryClient();
   const [catalog, setCatalog] = useState({});
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [poModal, setPoModal] = useState(null);
+  const [shippingOrder, setShippingOrder] = useState(null);
+  const [trackingInput, setTrackingInput] = useState('');
+  const [shipLoading, setShipLoading] = useState(false);
+  const [shipError, setShipError] = useState('');
 
   useEffect(() => {
     if (slug) {
@@ -188,8 +198,24 @@ export default function OrderCards({ orders, slug }) {
     return null;
   };
 
+  const getStatus = (row) => {
+    const statusCols = colGroups.status || [];
+    for (const c of statusCols) {
+      if (row[c]?.trim()) return row[c].trim();
+    }
+    return 'Pending';
+  };
+
+  const getTracking = (row) => {
+    const trackingCols = colGroups.tracking || [];
+    for (const c of trackingCols) {
+      if (row[c]?.trim()) return row[c].trim();
+    }
+    return '';
+  };
+
   const getDetailFields = (row) => {
-    const skipTypes = new Set(['item', 'po']);
+    const skipTypes = new Set(['item', 'po', 'status', 'tracking']);
     const details = [];
     for (const col of columns) {
       if (skipTypes.has(classified[col])) continue;
@@ -330,6 +356,20 @@ export default function OrderCards({ orders, slug }) {
                         {orderId}
                       </span>
                     )}
+                    {(() => {
+                      const status = getStatus(row);
+                      const isShipped = status.toLowerCase() === 'shipped';
+                      return (
+                        <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full flex-shrink-0 inline-flex items-center gap-0.5 ${
+                          isShipped
+                            ? 'bg-emerald-500/15 text-emerald-400'
+                            : 'bg-amber-500/15 text-amber-400'
+                        }`}>
+                          {isShipped && <Truck className="h-2.5 w-2.5" />}
+                          {status}
+                        </span>
+                      );
+                    })()}
                     {primaryDetails.filter(d => d.type !== 'qty' && d.type !== 'name' && d.type !== 'id').slice(0, 4).map(d => (
                       <span key={d.label} className="text-xs text-muted-foreground">
                         <span className="opacity-60">{d.label}:</span> {d.value}
@@ -415,6 +455,69 @@ export default function OrderCards({ orders, slug }) {
                       </div>
                     ))}
                   </div>
+
+                  {/* Ship action — only for pending orders with an Order ID */}
+                  {getStatus(row).toLowerCase() !== 'shipped' && orderId && (
+                    <div className="mt-3 pt-3 border-t border-border/20">
+                      {shippingOrder === i ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="Tracking number (optional)"
+                            value={trackingInput}
+                            onChange={(e) => setTrackingInput(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex-1 text-xs font-mono bg-background border border-border/60 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                          <button
+                            disabled={shipLoading}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              setShipError('');
+                              setShipLoading(true);
+                              try {
+                                await shipOrder(slug, orderId, trackingInput);
+                                queryClient.invalidateQueries({ queryKey: ['orders', slug] });
+                                setShippingOrder(null);
+                                setTrackingInput('');
+                              } catch (err) {
+                                setShipError(err.response?.data?.error || 'Failed to ship');
+                              } finally {
+                                setShipLoading(false);
+                              }
+                            }}
+                            className="btn-launch text-xs px-3 py-1.5 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <Send className="h-3 w-3" /> Ship
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShippingOrder(null); setTrackingInput(''); setShipError(''); }}
+                            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShippingOrder(i); }}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-md transition-all"
+                        >
+                          <Truck className="h-3 w-3" /> Mark as Shipped
+                        </button>
+                      )}
+                      {shipError && shippingOrder === i && (
+                        <p className="text-xs text-destructive mt-1">{shipError}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show tracking number if shipped */}
+                  {getStatus(row).toLowerCase() === 'shipped' && getTracking(row) && (
+                    <div className="mt-3 pt-3 border-t border-border/20">
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-mono">Tracking Number</span>
+                      <p className="text-xs font-mono mt-0.5">{getTracking(row)}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

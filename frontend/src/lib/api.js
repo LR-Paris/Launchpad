@@ -82,6 +82,9 @@ export const getProductImageUrl = (slug, productId) =>
 export const getCatalogPhotos = (slug) =>
   api.get(`/shops/${slug}/orders/catalog-photos`).then(r => r.data);
 
+export const shipOrder = (slug, orderId, trackingNumber) =>
+  api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/ship`, { trackingNumber }).then(r => r.data);
+
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
   api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
