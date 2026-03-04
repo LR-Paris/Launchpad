@@ -1,12 +1,273 @@
-import { useState, useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft, Activity, AlertTriangle, Server, ScrollText, RefreshCw,
-  ChevronDown, ChevronUp, Circle, Terminal, Eye, ShieldAlert, Store
+  ChevronDown, ChevronUp, Terminal, Eye, ShieldAlert, Store, ShoppingCart, X
 } from 'lucide-react';
-import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors } from '../lib/api';
+import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors, getOrders } from '../lib/api';
 
+// ---------------------------------------------------------------------------
+// Wireframe Globe with orbiting rocket — pure Canvas 3D
+// ---------------------------------------------------------------------------
+function GlobeBanner({ shopCount, runningCount, orderNotifications }) {
+  const canvasRef = useRef(null);
+  const frameRef = useRef(0);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animId;
+
+    const resize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const draw = (time) => {
+      const w = canvas.getBoundingClientRect().width;
+      const h = canvas.getBoundingClientRect().height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const R = Math.min(w, h) * 0.32;
+      const t = time * 0.001;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Glow behind globe
+      const glow = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.4);
+      glow.addColorStop(0, 'rgba(57,197,187,0.08)');
+      glow.addColorStop(1, 'rgba(57,197,187,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = 'rgba(57,197,187,0.18)';
+      ctx.lineWidth = 0.8;
+
+      // Longitude lines (rotating)
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI + t * 0.3;
+        ctx.beginPath();
+        for (let j = 0; j <= 60; j++) {
+          const lat = (j / 60) * Math.PI * 2;
+          const x3d = Math.cos(lat) * Math.sin(angle);
+          const y3d = Math.sin(lat);
+          const z3d = Math.cos(lat) * Math.cos(angle);
+          // Simple perspective
+          const scale = 1 / (1 + z3d * 0.3);
+          const sx = cx + x3d * R * scale;
+          const sy = cy + y3d * R * scale;
+          if (j === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.stroke();
+      }
+
+      // Latitude lines
+      for (let i = 1; i < 6; i++) {
+        const lat = (i / 6) * Math.PI - Math.PI / 2;
+        const r = Math.cos(lat) * R;
+        const yOff = Math.sin(lat) * R;
+        ctx.beginPath();
+        for (let j = 0; j <= 60; j++) {
+          const ang = (j / 60) * Math.PI * 2 + t * 0.3;
+          const x3d = Math.cos(ang);
+          const z3d = Math.sin(ang);
+          const scale = 1 / (1 + z3d * 0.3);
+          const sx = cx + x3d * r * scale;
+          const sy = cy + yOff * scale;
+          if (j === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.stroke();
+      }
+
+      // Outer ring
+      ctx.strokeStyle = 'rgba(57,197,187,0.25)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Orbit path (tilted ellipse)
+      const orbitRx = R * 1.35;
+      const orbitRy = R * 0.45;
+      const orbitTilt = -0.25;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(orbitTilt);
+      ctx.strokeStyle = 'rgba(57,197,187,0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, orbitRx, orbitRy, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // Rocket position on orbit
+      const rocketAngle = t * 0.8;
+      const rocketLocalX = Math.cos(rocketAngle) * orbitRx;
+      const rocketLocalY = Math.sin(rocketAngle) * orbitRy;
+      // Apply tilt rotation
+      const cosT = Math.cos(orbitTilt);
+      const sinT = Math.sin(orbitTilt);
+      const rocketX = cx + rocketLocalX * cosT - rocketLocalY * sinT;
+      const rocketY = cy + rocketLocalX * sinT + rocketLocalY * cosT;
+
+      // Rocket exhaust trail
+      for (let i = 1; i <= 8; i++) {
+        const trailAngle = rocketAngle - i * 0.06;
+        const tlx = Math.cos(trailAngle) * orbitRx;
+        const tly = Math.sin(trailAngle) * orbitRy;
+        const tx = cx + tlx * cosT - tly * sinT;
+        const ty = cy + tlx * sinT + tly * cosT;
+        const alpha = 0.4 - i * 0.045;
+        if (alpha > 0) {
+          ctx.fillStyle = `rgba(57,197,187,${alpha})`;
+          ctx.beginPath();
+          ctx.arc(tx, ty, 2.5 - i * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Rocket body (triangle pointing along orbit tangent)
+      const tangentAngle = rocketAngle + Math.PI / 2;
+      const tangentLocalX = -Math.sin(rocketAngle) * orbitRx;
+      const tangentLocalY = Math.cos(rocketAngle) * orbitRy;
+      const headingAngle = Math.atan2(
+        tangentLocalX * sinT + tangentLocalY * cosT,
+        tangentLocalX * cosT - tangentLocalY * sinT
+      );
+
+      ctx.save();
+      ctx.translate(rocketX, rocketY);
+      ctx.rotate(headingAngle);
+
+      // Rocket shape
+      const rs = 8;
+      ctx.fillStyle = 'rgba(57,197,187,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(rs * 1.5, 0);
+      ctx.lineTo(-rs, -rs * 0.6);
+      ctx.lineTo(-rs * 0.5, 0);
+      ctx.lineTo(-rs, rs * 0.6);
+      ctx.closePath();
+      ctx.fill();
+
+      // Rocket glow
+      const rGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, rs * 3);
+      rGlow.addColorStop(0, 'rgba(57,197,187,0.25)');
+      rGlow.addColorStop(1, 'rgba(57,197,187,0)');
+      ctx.fillStyle = rGlow;
+      ctx.beginPath();
+      ctx.arc(0, 0, rs * 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      // Small dots scattered on globe (stars/nodes)
+      for (let i = 0; i < 12; i++) {
+        const seed = i * 137.508;
+        const lat2 = Math.asin(2 * ((i + 0.5) / 12) - 1);
+        const lon2 = seed + t * 0.3;
+        const x3d = Math.cos(lat2) * Math.sin(lon2);
+        const y3d = Math.sin(lat2);
+        const z3d = Math.cos(lat2) * Math.cos(lon2);
+        if (z3d < -0.1) continue; // behind globe
+        const scale = 1 / (1 + z3d * 0.3);
+        const sx = cx + x3d * R * scale;
+        const sy = cy + y3d * R * scale;
+        ctx.fillStyle = `rgba(57,197,187,${0.3 + z3d * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 1.8 * scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      animId = requestAnimationFrame(draw);
+    };
+
+    animId = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
+
+  return (
+    <div className="relative rounded-2xl overflow-hidden mb-6 border border-border/30" style={{ background: 'linear-gradient(135deg, #0a0f1a 0%, #0d1520 50%, #091018 100%)' }}>
+      <canvas ref={canvasRef} className="w-full" style={{ height: '220px' }} />
+      {/* Overlay text */}
+      <div className="absolute inset-0 flex items-center justify-between px-8 pointer-events-none">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
+            Mission Control
+          </h1>
+          <p className="text-xs text-[#39C5BB]/70 font-mono">
+            {runningCount} active {runningCount === 1 ? 'shop' : 'shops'} in orbit
+            {shopCount > runningCount && ` / ${shopCount} total`}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="flex items-center gap-2 mb-1">
+            <Activity className="h-4 w-4 text-[#39C5BB]" />
+            <span className="text-sm font-semibold text-white" style={{ fontFamily: 'Syne, sans-serif' }}>LAUNCHPAD</span>
+          </div>
+          <p className="text-[10px] text-[#39C5BB]/50 font-mono uppercase tracking-widest">Global Operations</p>
+        </div>
+      </div>
+      {/* Order notification badges */}
+      {orderNotifications.length > 0 && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto">
+          {orderNotifications.slice(0, 3).map((n, i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-emerald-500/20 border border-emerald-500/30 backdrop-blur-sm text-emerald-300 text-[10px] font-mono px-2.5 py-1 rounded-full lp-fadein">
+              <ShoppingCart className="h-2.5 w-2.5" />
+              New order — {n.shop}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Order notification toast
+// ---------------------------------------------------------------------------
+function OrderToast({ notifications, onDismiss }) {
+  if (!notifications.length) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 space-y-2">
+      {notifications.map((n) => (
+        <div
+          key={n.id}
+          className="flex items-center gap-3 bg-card border border-emerald-500/30 rounded-xl px-4 py-3 shadow-lg lp-fadein min-w-[280px]"
+        >
+          <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+            <ShoppingCart className="h-4 w-4 text-emerald-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold">New Order Received</p>
+            <p className="text-[10px] text-muted-foreground font-mono truncate">{n.shop} — {n.orderId || 'Order'}</p>
+          </div>
+          <button onClick={() => onDismiss(n.id)} className="text-muted-foreground hover:text-foreground p-1">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reusable components
+// ---------------------------------------------------------------------------
 function StatusDot({ status }) {
   const color = status === 'running' ? 'bg-emerald-500' : 'bg-red-500';
   const pulse = status === 'running' ? 'animate-pulse' : '';
@@ -58,11 +319,18 @@ function LogViewer({ logs, title, icon: Icon, autoScroll = true, loading }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 export default function MissionControl() {
+  const queryClient = useQueryClient();
   const [expandedShop, setExpandedShop] = useState(null);
   const [shopLogs, setShopLogs] = useState({});
   const [shopLogLoading, setShopLogLoading] = useState(null);
-  const [tab, setTab] = useState('overview'); // overview | system-logs | errors
+  const [tab, setTab] = useState('overview');
+  const [orderNotifications, setOrderNotifications] = useState([]);
+  const prevOrderCountsRef = useRef({});
+  const notifIdRef = useRef(0);
 
   // Fetch overview — poll every 30s
   const { data: overviewData, isLoading: overviewLoading, refetch: refetchOverview } = useQuery({
@@ -92,6 +360,46 @@ export default function MissionControl() {
   const systemLogs = sysLogData?.logs || '';
   const errors = errorsData?.errors || [];
 
+  // Poll orders for all shops to detect new orders
+  useEffect(() => {
+    if (!shops.length) return;
+    let mounted = true;
+
+    const checkOrders = async () => {
+      for (const shop of shops) {
+        try {
+          const data = await getOrders(shop.slug);
+          const count = data.orders?.length || 0;
+          const prev = prevOrderCountsRef.current[shop.slug];
+
+          if (prev !== undefined && count > prev) {
+            const diff = count - prev;
+            for (let i = 0; i < diff; i++) {
+              if (!mounted) return;
+              const id = ++notifIdRef.current;
+              const latestOrder = data.orders[data.orders.length - 1 - i];
+              const orderId = latestOrder?.['Order ID'] || latestOrder?.['order_id'] || '';
+              setOrderNotifications(prev => [...prev.slice(-4), { id, shop: shop.name, orderId }]);
+              // Auto-dismiss after 8 seconds
+              setTimeout(() => {
+                if (mounted) setOrderNotifications(prev => prev.filter(n => n.id !== id));
+              }, 8000);
+            }
+          }
+          prevOrderCountsRef.current[shop.slug] = count;
+        } catch { /* skip */ }
+      }
+    };
+
+    checkOrders();
+    const interval = setInterval(checkOrders, 15000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [shops.length]);
+
+  const dismissNotification = useCallback((id) => {
+    setOrderNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
   const loadShopLogs = async (slug) => {
     setShopLogLoading(slug);
     try {
@@ -114,20 +422,26 @@ export default function MissionControl() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      {/* Back button */}
+      <div className="flex items-center gap-2 mb-4">
         <Link
           to="/"
           className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/50"
         >
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <Activity className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold tracking-tight" style={{ fontFamily: 'Syne, sans-serif' }}>
-          Mission Control
-        </h1>
       </div>
+
+      {/* 3D Globe Banner */}
+      <GlobeBanner
+        shopCount={shops.length}
+        runningCount={runningShops.length}
+        orderNotifications={orderNotifications}
+      />
+
+      {/* Order toast notifications */}
+      <OrderToast notifications={orderNotifications} onDismiss={dismissNotification} />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -239,10 +553,8 @@ export default function MissionControl() {
                 </div>
               </div>
 
-              {/* Expanded: show errors + Docker logs */}
               {expandedShop === shop.slug && (
                 <div className="border-t border-border/30 lp-fadein">
-                  {/* Recent errors from this shop */}
                   {shop.recentErrors.length > 0 && (
                     <div className="px-4 py-3 bg-red-500/5 border-b border-border/20">
                       <div className="flex items-center gap-1.5 mb-2">
@@ -257,7 +569,6 @@ export default function MissionControl() {
                     </div>
                   )}
 
-                  {/* Docker logs */}
                   <div className="bg-[#0d1117] text-[#c9d1d9] font-mono text-xs p-4 max-h-[300px] overflow-auto whitespace-pre-wrap leading-relaxed">
                     {shopLogLoading === shop.slug && !shopLogs[shop.slug] && (
                       <span className="text-muted-foreground/50">Loading logs...</span>
@@ -302,7 +613,6 @@ export default function MissionControl() {
             </div>
           )}
 
-          {/* Container issues */}
           {errors.filter(e => e.type === 'container_down').length > 0 && (
             <div className="lp-card rounded-xl border border-red-500/30 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 bg-red-500/10 border-b border-red-500/20">
@@ -329,7 +639,6 @@ export default function MissionControl() {
             </div>
           )}
 
-          {/* System errors */}
           {errors.filter(e => e.type === 'system').length > 0 && (
             <div className="lp-card rounded-xl border border-amber-500/30 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border-b border-amber-500/20">
@@ -344,7 +653,6 @@ export default function MissionControl() {
             </div>
           )}
 
-          {/* Per-shop errors */}
           {shops.filter(s => s.errorCount > 0).map(shop => (
             <div key={shop.slug} className="lp-card rounded-xl border border-amber-500/20 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/5 border-b border-border/20">
