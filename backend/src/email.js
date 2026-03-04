@@ -75,6 +75,18 @@ function getProductImageUrl(slug, productId) {
   return `${getBaseUrl()}/api/shops/${slug}/orders/email-image/${encodeURIComponent(productId)}`;
 }
 
+function getLogoUrl(slug) {
+  return `${getBaseUrl()}/api/shops/${slug}/orders/logo`;
+}
+
+function shopHasLogo(slug) {
+  const detailsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details');
+  try {
+    const files = fs.readdirSync(detailsDir);
+    return files.some(f => /^logo\.(png|jpe?g|webp|svg)$/i.test(f));
+  } catch { return false; }
+}
+
 function getCancelUrl(slug, orderId, token) {
   return `${getBaseUrl()}/api/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel?token=${token}`;
 }
@@ -283,12 +295,18 @@ function buildInfoBlock(row) {
 // Email shell — company-branded wrapper
 // ---------------------------------------------------------------------------
 
-function emailShell({ companyName, primaryColor, body }) {
+function emailShell({ companyName, primaryColor, body, slug }) {
+  const hasLogo = slug && shopHasLogo(slug);
+  const logoHtml = hasLogo
+    ? `<img src="${getLogoUrl(slug)}" alt="${esc(companyName)}" style="max-height:60px;max-width:200px;margin-bottom:12px;display:inline-block;" /><br>`
+    : '';
+
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
   <div style="max-width:600px;margin:0 auto;padding:24px 16px;">
     <div style="background:${primaryColor};padding:28px 24px;text-align:center;border-radius:12px 12px 0 0;">
+      ${logoHtml}
       <h1 style="color:#fff;margin:0;font-size:22px;font-weight:700;letter-spacing:0.5px;">${esc(companyName)}</h1>
     </div>
     <div style="background:#fff;padding:28px 32px;border-radius:0 0 12px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
@@ -296,6 +314,7 @@ function emailShell({ companyName, primaryColor, body }) {
     </div>
     <div style="text-align:center;padding:20px 0;">
       <p style="color:#bbb;font-size:11px;margin:0;">&copy; ${new Date().getFullYear()} ${esc(companyName)}. All rights reserved.</p>
+      <p style="color:#ccc;font-size:10px;margin:8px 0 0;">Powered by <span style="font-weight:600;color:#aaa;">LR Paris</span></p>
     </div>
   </div>
 </body></html>`;
@@ -373,7 +392,7 @@ async function sendOrderConfirmation(orderData, shopSlug) {
     <p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">You'll receive a shipping notification with tracking details when your order is on its way.</p>
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Order Confirmation${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
@@ -504,7 +523,7 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
     ${allFieldsCard}
   `;
 
-  const adminHtml = emailShell({ companyName, primaryColor, body: adminBody });
+  const adminHtml = emailShell({ companyName, primaryColor, body: adminBody, slug: shopSlug });
   const adminSubject = `[New Order] ${orderId || 'Order'} from ${customerName}${total ? ' — ' + formatMoney(total) : ''} | ${companyName}`;
   sendMail({ to: adminEmail, from: fromAddress, subject: adminSubject, html: adminHtml }).catch(() => {});
 }
@@ -551,7 +570,7 @@ async function sendShippedNotification(orderData, trackingNumber, shopSlug) {
     ${buildInfoBlock(orderData)}
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Your order has shipped${orderId ? ' — ' + orderId : ''} | ${companyName}`;
   sendMail({ to: customerEmail, from: fromAddress, subject, html }).catch(() => {});
 }
@@ -588,7 +607,7 @@ async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
     ${buildReceipt(orderData, primaryColor, shopSlug)}
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Order Cancelled${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
@@ -614,7 +633,7 @@ async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
       </div>
       ${buildReceipt(orderData, primaryColor, shopSlug)}
     `;
-    const adminHtml = emailShell({ companyName, primaryColor, body: adminBody });
+    const adminHtml = emailShell({ companyName, primaryColor, body: adminBody, slug: shopSlug });
     const adminSubject = `[Cancelled] ${orderId || 'Order'} from ${customerName} | ${companyName}`;
     sendMail({ to: adminEmail, from: fromAddress, subject: adminSubject, html: adminHtml }).catch(() => {});
   }

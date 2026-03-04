@@ -423,6 +423,19 @@ router.post('/:slug/orders/:orderId/cancel', (req, res) => {
   // Ensure Status column exists
   backfillStatusColumns(csvPath);
 
+  // Prevent cancellation of shipped orders
+  const checkContent = fs.readFileSync(csvPath, 'utf8');
+  const checkRecords = parse(checkContent, { columns: true, skip_empty_lines: true, trim: true });
+  const existingRow = checkRecords.find(r =>
+    (r['Order ID'] || r['order_id'] || r['Order #'] || r['Order Number'] || r['ID'] || r['id']) === orderId
+  );
+  if (existingRow) {
+    const st = (existingRow['Status'] || '').toLowerCase();
+    if (st === 'shipped') {
+      return res.status(400).json({ error: 'Cannot cancel an order that has already been shipped.' });
+    }
+  }
+
   const statusText = reason
     ? `Cancelled by Admin, Reason: ${reason}`
     : 'Cancelled by Admin';

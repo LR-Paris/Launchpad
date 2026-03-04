@@ -164,4 +164,8 @@ export const installUpdate = (branch) =>
 export const getSystemBranches = () =>
   api.get('/system/branches').then(r => r.data);
 
+// Health check — resolves true if backend reachable, false otherwise
+export const checkHealth = () =>
+  api.get('/health', { timeout: 5000 }).then(() => true).catch(() => false);
+
 export default api;

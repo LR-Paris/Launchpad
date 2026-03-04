@@ -148,6 +148,10 @@ router.get('/:slug/orders/:orderId/cancel', (req, res) => {
     return res.send(cancelPage({ error: 'This order has already been cancelled.' }));
   }
 
+  if (status === 'shipped') {
+    return res.send(cancelPage({ error: 'This order has already been shipped and cannot be cancelled.' }));
+  }
+
   if (!isWithinCancelWindow(row)) {
     return res.send(cancelPage({ error: 'The 2-hour cancellation window has passed. Please contact us directly for assistance.' }));
   }
@@ -197,6 +201,10 @@ router.post('/:slug/orders/:orderId/cancel', (req, res, next) => {
   const status = (row['Status'] || row['status'] || '').toLowerCase();
   if (status.includes('cancelled') || status.includes('canceled')) {
     return res.send(cancelPage({ error: 'This order has already been cancelled.' }));
+  }
+
+  if (status === 'shipped') {
+    return res.send(cancelPage({ error: 'This order has already been shipped and cannot be cancelled.' }));
   }
 
   if (!isWithinCancelWindow(row)) {
@@ -267,6 +275,34 @@ router.get('/:slug/orders/email-image/:productId', (req, res) => {
           return fs.createReadStream(photoPath).pipe(res);
         }
       }
+    }
+  } catch { /* directory unreadable */ }
+
+  return res.status(404).end();
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/shops/:slug/orders/logo
+// Public — serves the shop's company logo for use in emails (no auth required).
+// ---------------------------------------------------------------------------
+router.get('/:slug/orders/logo', (req, res) => {
+  const { slug } = req.params;
+  const detailsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details');
+
+  if (!fs.existsSync(detailsDir)) {
+    return res.status(404).end();
+  }
+
+  try {
+    const files = fs.readdirSync(detailsDir);
+    const logoFile = files.find(f => /^logo\.(png|jpe?g|webp|svg)$/i.test(f));
+    if (logoFile) {
+      const logoPath = path.join(detailsDir, logoFile);
+      const ext = path.extname(logoFile).toLowerCase();
+      const ctMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+      res.setHeader('Content-Type', ctMap[ext] || 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return fs.createReadStream(logoPath).pipe(res);
     }
   } catch { /* directory unreadable */ }
 

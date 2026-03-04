@@ -465,11 +465,12 @@ export default function OrderCards({ orders, slug }) {
                     ))}
                   </div>
 
-                  {/* Actions — ship (pending only) + cancel (always, admin can always cancel) */}
+                  {/* Actions — ship (pending only) + cancel (pending only, not after shipped) */}
                   {orderId && (() => {
                     const sl = getStatus(row).toLowerCase();
                     const isPending = !sl.includes('shipped') && !sl.includes('cancel');
                     const isCancelled = sl.includes('cancel');
+                    const isShipped = sl === 'shipped';
                     return (
                       <div className="mt-3 pt-3 border-t border-border/20">
                         {/* Ship action — pending orders only */}
@@ -565,12 +566,14 @@ export default function OrderCards({ orders, slug }) {
                                 <Truck className="h-3 w-3" /> Mark as Shipped
                               </button>
                             )}
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setCancellingOrder(i); }}
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-md transition-all"
-                            >
-                              <Ban className="h-3 w-3" /> Cancel Order
-                            </button>
+                            {!isShipped && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setCancellingOrder(i); }}
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-md transition-all"
+                              >
+                                <Ban className="h-3 w-3" /> Cancel Order
+                              </button>
+                            )}
                           </div>
                         )}
 

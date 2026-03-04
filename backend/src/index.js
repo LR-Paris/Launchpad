@@ -1,4 +1,5 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+require('./logger'); // File logging — must be first after dotenv
 
 const express = require('express');
 const session = require('express-session');
