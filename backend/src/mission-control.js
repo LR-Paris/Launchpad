@@ -4,11 +4,38 @@ const path = require('path');
 const { execSync } = require('child_process');
 const Database = require('better-sqlite3');
 
+const { parse } = require('csv-parse/sync');
+
 const router = express.Router();
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const { LOG_DIR } = require('./logger');
+
+function findCsvPath(slug) {
+  const candidates = [
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'Orders.csv'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'orders', 'orders.csv'),
+    path.join(SHOPS_DIR, slug, 'orders', 'orders.csv'),
+  ];
+  return candidates.find(p => fs.existsSync(p)) || null;
+}
+
+function getRecentOrders(slug, count = 5) {
+  const csvPath = findCsvPath(slug);
+  if (!csvPath) return [];
+  try {
+    const content = fs.readFileSync(csvPath, 'utf8');
+    const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
+    return records.slice(-count).reverse().map(r => ({
+      orderId: r['Order ID'] || r['order_id'] || r['Order #'] || r['ID'] || '',
+      customer: r['Customer Name'] || r['Name'] || r['name'] || '',
+      status: r['Status'] || r['status'] || 'Pending',
+      date: r['Date'] || r['date'] || r['Order Date'] || '',
+    }));
+  } catch { return []; }
+}
 
 function getDb() {
   const db = new Database(DB_PATH);
@@ -69,6 +96,8 @@ router.get('/overview', (req, res) => {
         recentErrors = errorLines.slice(-10).map(line => line.trim());
       } catch { /* no logs available */ }
 
+      const recentOrders = getRecentOrders(shop.slug, 5);
+
       return {
         slug: shop.slug,
         name: shop.name,
@@ -79,6 +108,8 @@ router.get('/overview', (req, res) => {
         createdAt: shop.created_at,
         errorCount: recentErrors.length,
         recentErrors,
+        recentOrders,
+        orderCount: recentOrders.length,
       };
     });
 
