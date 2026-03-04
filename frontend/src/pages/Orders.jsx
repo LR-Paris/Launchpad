@@ -23,12 +23,21 @@ export default function Orders() {
     if (statusFilter === 'all') return orders;
     return orders.filter(o => {
       const status = (o['Status'] || 'Pending').toLowerCase();
+      if (statusFilter === 'cancelled') return status === 'cancelled' || status === 'canceled';
+      if (statusFilter === 'pending') return status === 'pending' || status === '';
       return status === statusFilter;
     });
   }, [orders, statusFilter]);
 
-  const pendingCount = useMemo(() => orders.filter(o => (o['Status'] || 'Pending').toLowerCase() === 'pending').length, [orders]);
+  const pendingCount = useMemo(() => orders.filter(o => {
+    const s = (o['Status'] || 'Pending').toLowerCase();
+    return s === 'pending' || s === '';
+  }).length, [orders]);
   const shippedCount = useMemo(() => orders.filter(o => (o['Status'] || '').toLowerCase() === 'shipped').length, [orders]);
+  const cancelledCount = useMemo(() => orders.filter(o => {
+    const s = (o['Status'] || '').toLowerCase();
+    return s === 'cancelled' || s === 'canceled';
+  }).length, [orders]);
 
   return (
     <div className="max-w-6xl lp-fadein">
@@ -57,6 +66,7 @@ export default function Orders() {
               ['all', 'All', orders.length],
               ['pending', 'Pending', pendingCount],
               ['shipped', 'Shipped', shippedCount],
+              ...(cancelledCount > 0 ? [['cancelled', 'Cancelled', cancelledCount]] : []),
             ].map(([value, label, count]) => (
               <button
                 key={value}
