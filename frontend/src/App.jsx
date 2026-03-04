@@ -29,6 +29,7 @@ function ConnectionBanner({ visible }) {
 function AppContent({ user, theme, toggleTheme }) {
   const location = useLocation();
   const isCatalog = /^\/shops\/[^/]+\/catalog/.test(location.pathname);
+  const isMissionControl = location.pathname === '/mission-control';
   const [backendDown, setBackendDown] = useState(false);
   const failCount = useRef(0);
 
@@ -49,6 +50,26 @@ function AppContent({ user, theme, toggleTheme }) {
     const id = setInterval(poll, 30000);
     return () => { mounted = false; clearInterval(id); };
   }, []);
+
+  // Mission Control is a full-screen immersive layout — no header/footer/padding
+  if (isMissionControl) {
+    return (
+      <div className="h-screen bg-background overflow-hidden">
+        <ConnectionBanner visible={backendDown} />
+        <Routes>
+          <Route
+            path="/mission-control"
+            element={
+              <ProtectedRoute user={user}>
+                <MissionControl />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -110,11 +131,7 @@ function AppContent({ user, theme, toggleTheme }) {
           />
           <Route
             path="/mission-control"
-            element={
-              <ProtectedRoute user={user}>
-                <MissionControl />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/mission-control" replace />}
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
