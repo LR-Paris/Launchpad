@@ -17,7 +17,7 @@ import KeyValueEditor from '../components/KeyValueEditor';
 
 // Sort order for DATABASE/Design/Details files
 const SETTINGS_ORDER = [
-  'companyname', 'password', 'descriptions', 'colors', 'fonts', 'style',
+  'companyname', 'password', 'adminemail', 'descriptions', 'colors', 'fonts', 'style',
 ];
 
 function sortEntries(entries) {

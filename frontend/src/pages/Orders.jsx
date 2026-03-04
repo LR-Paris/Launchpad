@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getOrders, getOrdersDownloadUrl } from '../lib/api';
@@ -9,6 +9,7 @@ import { ArrowLeft, Download, ShoppingBag, RefreshCw, LayoutGrid, Table } from '
 export default function Orders() {
   const { slug } = useParams();
   const [view, setView] = useState('cards');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['orders', slug],
@@ -17,6 +18,17 @@ export default function Orders() {
   });
 
   const orders = data?.orders || [];
+
+  const filteredOrders = useMemo(() => {
+    if (statusFilter === 'all') return orders;
+    return orders.filter(o => {
+      const status = (o['Status'] || 'Pending').toLowerCase();
+      return status === statusFilter;
+    });
+  }, [orders, statusFilter]);
+
+  const pendingCount = useMemo(() => orders.filter(o => (o['Status'] || 'Pending').toLowerCase() === 'pending').length, [orders]);
+  const shippedCount = useMemo(() => orders.filter(o => (o['Status'] || '').toLowerCase() === 'shipped').length, [orders]);
 
   return (
     <div className="max-w-6xl lp-fadein">
@@ -39,6 +51,28 @@ export default function Orders() {
         >
           <RefreshCw className="h-3 w-3" /> Refresh
         </button>
+        {orders.length > 0 && (
+          <div className="flex items-center rounded-lg border border-border/40 overflow-hidden">
+            {[
+              ['all', 'All', orders.length],
+              ['pending', 'Pending', pendingCount],
+              ['shipped', 'Shipped', shippedCount],
+            ].map(([value, label, count]) => (
+              <button
+                key={value}
+                onClick={() => setStatusFilter(value)}
+                className={`px-2.5 py-1.5 text-xs font-medium transition-all ${
+                  statusFilter === value
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                } ${value !== 'all' ? 'border-l border-border/40' : ''}`}
+              >
+                {label}
+                <span className="ml-1 opacity-60">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <a
           href={getOrdersDownloadUrl(slug)}
           className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
@@ -83,7 +117,8 @@ export default function Orders() {
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
             <ShoppingBag className="h-4 w-4 text-primary/70" />
             <span className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
-              {orders.length} order{orders.length !== 1 ? 's' : ''}
+              {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
+              {statusFilter !== 'all' && <span className="text-muted-foreground font-normal ml-1">({statusFilter})</span>}
             </span>
             <div className="flex-1" />
             <div className="flex items-center rounded-lg border border-border/40 overflow-hidden">
@@ -112,9 +147,9 @@ export default function Orders() {
             </div>
           </div>
           {view === 'cards' ? (
-            <OrderCards orders={orders} slug={slug} />
+            <OrderCards orders={filteredOrders} slug={slug} />
           ) : (
-            <OrderTable orders={orders} slug={slug} />
+            <OrderTable orders={filteredOrders} slug={slug} />
           )}
         </div>
       )}

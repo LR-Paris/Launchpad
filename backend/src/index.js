@@ -58,6 +58,7 @@ const ordersRouter = require('./orders');
 const filesRouter = require('./files');
 const inventoryRouter = require('./inventory');
 const updateRouter = require('./update');
+const ordersWebhookRouter = require('./orders-webhook');
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -142,6 +143,16 @@ const loginLimiter = rateLimit({
 // Routes
 app.post('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
+
+// Unauthenticated webhook for Shuttle containers (must come BEFORE requireAuth)
+const notifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many notification requests' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/shops', notifyLimiter, ordersWebhookRouter);
 
 // Protected routes
 app.use('/api/shops', requireAuth, shopsRouter);
