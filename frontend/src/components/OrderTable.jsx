@@ -136,12 +136,16 @@ export default function OrderTable({ orders, slug }) {
 
     // Status column: render as colored badge
     if (/^(status|order[\s_-]?status)$/i.test(col)) {
-      const isShipped = value?.trim().toLowerCase() === 'shipped';
+      const v = value?.trim().toLowerCase() || 'pending';
+      const isShipped = v === 'shipped';
+      const isCancelled = v === 'cancelled' || v === 'canceled';
       return (
         <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full ${
-          isShipped
-            ? 'bg-emerald-500/15 text-emerald-400'
-            : 'bg-amber-500/15 text-amber-400'
+          isCancelled
+            ? 'bg-red-500/15 text-red-400'
+            : isShipped
+              ? 'bg-emerald-500/15 text-emerald-400'
+              : 'bg-amber-500/15 text-amber-400'
         }`}>
           {value || 'Pending'}
         </span>

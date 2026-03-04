@@ -410,4 +410,43 @@ router.post('/:slug/orders/:orderId/ship', (req, res) => {
   res.json({ message: 'Order marked as shipped', order: updatedRow });
 });
 
+// POST /api/shops/:slug/orders/:orderId/cancel — Admin cancel (no time limit)
+router.post('/:slug/orders/:orderId/cancel', (req, res) => {
+  const { slug, orderId } = req.params;
+
+  const csvPath = findCsvPath(slug);
+  if (!csvPath) {
+    return res.status(404).json({ error: 'No orders file found' });
+  }
+
+  const content = fs.readFileSync(csvPath, 'utf8');
+  const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
+  const row = records.find(r =>
+    (r['Order ID'] || r['order_id'] || r['Order #'] || r['Order Number'] || r['ID'] || r['id']) === orderId
+  );
+
+  if (!row) {
+    return res.status(404).json({ error: `Order ${orderId} not found` });
+  }
+
+  // Remove order from CSV
+  const filtered = records.filter(r => {
+    const id = r['Order ID'] || r['order_id'] || r['Order #'] || r['Order Number'] || r['ID'] || r['id'];
+    return id !== orderId;
+  });
+
+  const columns = Object.keys(records[0]);
+  const headerLine = columns.map(escapeCSVField).join(',');
+  const dataLines = filtered.map(r => columns.map(c => escapeCSVField(r[c])).join(','));
+  fs.writeFileSync(csvPath, [headerLine, ...dataLines].join('\n') + '\n');
+
+  // Fire-and-forget cancellation email
+  const { sendCancellationEmail } = require('./email');
+  sendCancellationEmail(row, slug).catch(err => {
+    console.error(`[cancel] Email failed for ${slug}/${orderId}: ${err.message}`);
+  });
+
+  res.json({ message: 'Order cancelled', order: row });
+});
+
 module.exports = router;

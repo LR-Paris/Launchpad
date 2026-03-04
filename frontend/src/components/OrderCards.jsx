@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { FileText, Package, User, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink, Truck, Send } from 'lucide-react';
-import { getCatalogPhotos, getShopImageUrl, getPoFileUrl, getProductImageUrl, shipOrder } from '../lib/api';
+import { FileText, Package, User, Hash, ChevronDown, ChevronUp, X, Download, ExternalLink, Truck, Send, Ban } from 'lucide-react';
+import { getCatalogPhotos, getShopImageUrl, getPoFileUrl, getProductImageUrl, shipOrder, cancelOrder } from '../lib/api';
 
 // Try to parse a JSON string; returns null on failure
 function tryParseJson(str) {
@@ -110,6 +110,8 @@ export default function OrderCards({ orders, slug }) {
   const [trackingInput, setTrackingInput] = useState('');
   const [shipLoading, setShipLoading] = useState(false);
   const [shipError, setShipError] = useState('');
+  const [cancelLoading, setCancelLoading] = useState(null);
+  const [cancelError, setCancelError] = useState('');
 
   useEffect(() => {
     if (slug) {
@@ -358,14 +360,19 @@ export default function OrderCards({ orders, slug }) {
                     )}
                     {(() => {
                       const status = getStatus(row);
-                      const isShipped = status.toLowerCase() === 'shipped';
+                      const sl = status.toLowerCase();
+                      const isShipped = sl === 'shipped';
+                      const isCancelled = sl === 'cancelled' || sl === 'canceled';
                       return (
                         <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full flex-shrink-0 inline-flex items-center gap-0.5 ${
-                          isShipped
-                            ? 'bg-emerald-500/15 text-emerald-400'
-                            : 'bg-amber-500/15 text-amber-400'
+                          isCancelled
+                            ? 'bg-red-500/15 text-red-400'
+                            : isShipped
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : 'bg-amber-500/15 text-amber-400'
                         }`}>
                           {isShipped && <Truck className="h-2.5 w-2.5" />}
+                          {isCancelled && <Ban className="h-2.5 w-2.5" />}
                           {status}
                         </span>
                       );
@@ -456,60 +463,90 @@ export default function OrderCards({ orders, slug }) {
                     ))}
                   </div>
 
-                  {/* Ship action — only for pending orders with an Order ID */}
-                  {getStatus(row).toLowerCase() !== 'shipped' && orderId && (
-                    <div className="mt-3 pt-3 border-t border-border/20">
-                      {shippingOrder === i ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            placeholder="Tracking number (optional)"
-                            value={trackingInput}
-                            onChange={(e) => setTrackingInput(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex-1 text-xs font-mono bg-background border border-border/60 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/50"
-                          />
-                          <button
-                            disabled={shipLoading}
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              setShipError('');
-                              setShipLoading(true);
-                              try {
-                                await shipOrder(slug, orderId, trackingInput);
-                                queryClient.invalidateQueries({ queryKey: ['orders', slug] });
-                                setShippingOrder(null);
-                                setTrackingInput('');
-                              } catch (err) {
-                                setShipError(err.response?.data?.error || 'Failed to ship');
-                              } finally {
-                                setShipLoading(false);
-                              }
-                            }}
-                            className="btn-launch text-xs px-3 py-1.5 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <Send className="h-3 w-3" /> Ship
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setShippingOrder(null); setTrackingInput(''); setShipError(''); }}
-                            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setShippingOrder(i); }}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-md transition-all"
-                        >
-                          <Truck className="h-3 w-3" /> Mark as Shipped
-                        </button>
-                      )}
-                      {shipError && shippingOrder === i && (
-                        <p className="text-xs text-destructive mt-1">{shipError}</p>
-                      )}
-                    </div>
-                  )}
+                  {/* Actions — ship / cancel for pending orders */}
+                  {(() => {
+                    const sl = getStatus(row).toLowerCase();
+                    const isPending = sl !== 'shipped' && sl !== 'cancelled' && sl !== 'canceled';
+                    if (!isPending || !orderId) return null;
+                    return (
+                      <div className="mt-3 pt-3 border-t border-border/20">
+                        {shippingOrder === i ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Tracking number (optional)"
+                              value={trackingInput}
+                              onChange={(e) => setTrackingInput(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex-1 text-xs font-mono bg-background border border-border/60 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            />
+                            <button
+                              disabled={shipLoading}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setShipError('');
+                                setShipLoading(true);
+                                try {
+                                  await shipOrder(slug, orderId, trackingInput);
+                                  queryClient.invalidateQueries({ queryKey: ['orders', slug] });
+                                  setShippingOrder(null);
+                                  setTrackingInput('');
+                                } catch (err) {
+                                  setShipError(err.response?.data?.error || 'Failed to ship');
+                                } finally {
+                                  setShipLoading(false);
+                                }
+                              }}
+                              className="btn-launch text-xs px-3 py-1.5 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <Send className="h-3 w-3" /> Ship
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setShippingOrder(null); setTrackingInput(''); setShipError(''); }}
+                              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5"
+                            >
+                              Back
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setShippingOrder(i); }}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-md transition-all"
+                            >
+                              <Truck className="h-3 w-3" /> Mark as Shipped
+                            </button>
+                            <button
+                              disabled={cancelLoading === i}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!window.confirm(`Cancel order ${orderId}? This will remove the order and notify the customer.`)) return;
+                                setCancelError('');
+                                setCancelLoading(i);
+                                try {
+                                  await cancelOrder(slug, orderId);
+                                  queryClient.invalidateQueries({ queryKey: ['orders', slug] });
+                                } catch (err) {
+                                  setCancelError(err.response?.data?.error || 'Failed to cancel');
+                                } finally {
+                                  setCancelLoading(null);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-md transition-all disabled:opacity-50"
+                            >
+                              <Ban className="h-3 w-3" /> {cancelLoading === i ? 'Cancelling...' : 'Cancel Order'}
+                            </button>
+                          </div>
+                        )}
+                        {shipError && shippingOrder === i && (
+                          <p className="text-xs text-destructive mt-1">{shipError}</p>
+                        )}
+                        {cancelError && cancelLoading === null && (
+                          <p className="text-xs text-destructive mt-1">{cancelError}</p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Show tracking number if shipped */}
                   {getStatus(row).toLowerCase() === 'shipped' && getTracking(row) && (
