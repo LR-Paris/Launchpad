@@ -146,11 +146,22 @@ function formatDate(val) {
 // ---------------------------------------------------------------------------
 
 function buildReceipt(row, primaryColor, slug) {
-  const itemsRaw = col(row, 'Items', 'items', 'Products', 'products');
+  // Robust Items extraction — handles both string JSON and already-parsed arrays
   let items = [];
-  if (itemsRaw) {
-    try { items = JSON.parse(itemsRaw); } catch { /* not JSON */ }
-    if (!Array.isArray(items)) items = [];
+  const itemKeys = ['Items', 'items', 'Products', 'products'];
+  for (const key of itemKeys) {
+    const val = row[key];
+    if (val == null) continue;
+    if (Array.isArray(val)) { items = val; break; }
+    if (typeof val === 'object' && !Array.isArray(val)) { items = [val]; break; }
+    const str = String(val).trim();
+    if (str) {
+      try {
+        const parsed = JSON.parse(str);
+        items = Array.isArray(parsed) ? parsed : [parsed];
+        break;
+      } catch { /* not JSON, continue */ }
+    }
   }
 
   const total = getTotal(row);
