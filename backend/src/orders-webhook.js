@@ -144,7 +144,7 @@ router.get('/:slug/orders/:orderId/cancel', (req, res) => {
   }
 
   const status = (row['Status'] || row['status'] || '').toLowerCase();
-  if (status === 'cancelled' || status === 'canceled') {
+  if (status.includes('cancelled') || status.includes('canceled')) {
     return res.send(cancelPage({ error: 'This order has already been cancelled.' }));
   }
 
@@ -192,7 +192,7 @@ router.post('/:slug/orders/:orderId/cancel', (req, res) => {
   }
 
   const status = (row['Status'] || row['status'] || '').toLowerCase();
-  if (status === 'cancelled' || status === 'canceled') {
+  if (status.includes('cancelled') || status.includes('canceled')) {
     return res.send(cancelPage({ error: 'This order has already been cancelled.' }));
   }
 
@@ -206,11 +206,11 @@ router.post('/:slug/orders/:orderId/cancel', (req, res) => {
     return res.send(cancelPage({ error: 'Failed to cancel order. Please try again.' }));
   }
 
-  console.log(`[cancel] Order ${orderId} cancelled for shop ${slug}`);
+  console.log(`[cancel] Order ${orderId} cancelled by customer for shop ${slug}`);
 
   // Send cancellation email
   const { sendCancellationEmail } = require('./email');
-  sendCancellationEmail(row, slug).catch(err => {
+  sendCancellationEmail(row, slug, { cancelledBy: 'customer', reason: '' }).catch(err => {
     console.error(`[cancel] Email failed for ${slug}/${orderId}: ${err.message}`);
   });
 

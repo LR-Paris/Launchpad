@@ -85,8 +85,8 @@ export const getCatalogPhotos = (slug) =>
 export const shipOrder = (slug, orderId, trackingNumber) =>
   api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/ship`, { trackingNumber }).then(r => r.data);
 
-export const cancelOrder = (slug, orderId) =>
-  api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel`).then(r => r.data);
+export const cancelOrder = (slug, orderId, reason) =>
+  api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel`, { reason }).then(r => r.data);
 
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
