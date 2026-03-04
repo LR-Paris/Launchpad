@@ -60,6 +60,7 @@ const filesRouter = require('./files');
 const inventoryRouter = require('./inventory');
 const updateRouter = require('./update');
 const ordersWebhookRouter = require('./orders-webhook');
+const missionControlRouter = require('./mission-control');
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -163,6 +164,9 @@ app.use('/api/shops', requireAuth, inventoryRouter);
 
 // System / update routes (protected)
 app.use('/api/system', requireAuth, updateRouter);
+
+// Mission Control (protected)
+app.use('/api/mission-control', requireAuth, missionControlRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

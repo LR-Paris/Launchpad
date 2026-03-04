@@ -9,6 +9,7 @@ import Orders from './pages/Orders';
 import Catalog from './pages/Catalog';
 import Settings from './pages/Settings';
 import GlobalSettings from './pages/GlobalSettings';
+import MissionControl from './pages/MissionControl';
 import Header from './components/Header';
 
 function ProtectedRoute({ children, user }) {
@@ -104,6 +105,14 @@ function AppContent({ user, theme, toggleTheme }) {
             element={
               <ProtectedRoute user={user}>
                 <GlobalSettings theme={theme} toggleTheme={toggleTheme} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/mission-control"
+            element={
+              <ProtectedRoute user={user}>
+                <MissionControl />
               </ProtectedRoute>
             }
           />
