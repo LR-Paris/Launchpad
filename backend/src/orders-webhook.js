@@ -172,9 +172,12 @@ router.get('/:slug/orders/:orderId/cancel', (req, res) => {
 // POST /api/shops/:slug/orders/:orderId/cancel
 // Public action — actually cancels the order (removes from CSV).
 // ---------------------------------------------------------------------------
-router.post('/:slug/orders/:orderId/cancel', (req, res) => {
+router.post('/:slug/orders/:orderId/cancel', (req, res, next) => {
   const { slug, orderId } = req.params;
   const token = req.body?.token || req.query?.token;
+
+  // No token = admin cancel request, let it fall through to authenticated admin route
+  if (!token) return next();
 
   if (!verifyCancelToken(orderId, slug, token)) {
     return res.status(403).send(cancelPage({ error: 'Invalid or expired cancellation link.' }));
