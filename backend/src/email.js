@@ -111,7 +111,7 @@ function getCustomerName(row) {
 }
 
 function getOrderId(row) {
-  return col(row, 'Order ID', 'order_id', 'Order #', 'Order Number', 'ID', 'id');
+  return col(row, 'Order ID', 'order_id', 'orderId', 'Order #', 'Order Number', 'ID', 'id');
 }
 
 function getOrderDate(row) {
@@ -351,7 +351,7 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   `;
 
   const body = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">Order Confirmation</h2>
+    <h2 style="margin-top:0;font-size:20px;color:#111;">Order Confirmation${orderId ? ' — ' + esc(orderId) : ''}</h2>
     <p style="color:#666;font-size:14px;line-height:1.5;">Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.</p>
     ${orderHeader}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
