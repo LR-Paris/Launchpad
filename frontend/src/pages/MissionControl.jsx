@@ -150,6 +150,22 @@ function Globe({ className, rocketCount = 1 }) {
         }
       }
 
+      // Helper: compute pseudo-z depth for a point on a tilted elliptical orbit
+      // Returns a value where negative = behind the globe, positive = in front
+      const orbitZ = (angle, orbitRx, orbitRy, tilt) => {
+        // The local z in orbit plane is approximated by the sin component
+        // after applying tilt rotation. We use the y-component of the 3D position
+        // projected along the view axis (z).
+        const lx = Math.cos(angle) * orbitRx;
+        const ly = Math.sin(angle) * orbitRy;
+        // After tilt rotation around x-axis, z' ≈ -ly * sin(tilt) + lx * 0
+        // Simplified: use sin(angle) * orbitRy as depth indicator — when sin(angle)
+        // is negative and orbit is tilted, rocket is behind globe
+        const sinTilt = Math.sin(tilt);
+        const cosTilt = Math.cos(tilt);
+        return ly * cosTilt - lx * sinTilt * 0.3;
+      };
+
       // Draw orbits — one per shop (capped at 10)
       const count = Math.min(Math.max(rocketCountRef.current, 1), 10);
       for (let idx = 0; idx < count; idx++) {
@@ -184,18 +200,32 @@ function Globe({ className, rocketCount = 1 }) {
         const rX = cx + rlx * cosT - rly * sinT;
         const rY = cy + rlx * sinT + rly * cosT;
 
-        // Exhaust trail
-        for (let i = 1; i <= 10; i++) {
-          const ta = rocketAngle - i * 0.05;
+        // Depth-based occlusion: compute how far behind the globe this rocket is
+        const rZ = orbitZ(rocketAngle, orbitRx, orbitRy, tilt);
+        // Distance from globe center on screen
+        const distFromCenter = Math.sqrt((rX - cx) ** 2 + (rY - cy) ** 2);
+        // If behind (rZ < 0) AND overlapping the globe disc, fade out
+        const behindGlobe = rZ < 0 && distFromCenter < R * 1.05;
+        // Fade factor: 1.0 = fully visible, ~0.08 = nearly invisible behind globe
+        const depthFade = behindGlobe ? Math.max(0.08, 0.3 + (rZ / (R * 0.8)) * 0.5) : 1.0;
+
+        // Exhaust trail — longer (25 particles)
+        for (let i = 1; i <= 25; i++) {
+          const ta = rocketAngle - i * 0.04;
           const tlx = Math.cos(ta) * orbitRx;
           const tly = Math.sin(ta) * orbitRy;
           const tx = cx + tlx * cosT - tly * sinT;
           const ty = cy + tlx * sinT + tly * cosT;
-          const a = 0.45 - i * 0.04;
-          if (a > 0) {
+          // Trail particle depth occlusion
+          const tZ = orbitZ(ta, orbitRx, orbitRy, tilt);
+          const tDist = Math.sqrt((tx - cx) ** 2 + (ty - cy) ** 2);
+          const tBehind = tZ < 0 && tDist < R * 1.05;
+          const tFade = tBehind ? Math.max(0.05, 0.25 + (tZ / (R * 0.8)) * 0.4) : 1.0;
+          const a = (0.5 - i * 0.019) * tFade;
+          if (a > 0.01) {
             ctx.fillStyle = `rgba(${color},${a})`;
             ctx.beginPath();
-            ctx.arc(tx, ty, Math.max(0.5, rs * 0.3 - i * 0.12), 0, Math.PI * 2);
+            ctx.arc(tx, ty, Math.max(0.4, rs * 0.35 - i * 0.08), 0, Math.PI * 2);
             ctx.fill();
           }
         }
@@ -211,6 +241,7 @@ function Globe({ className, rocketCount = 1 }) {
         ctx.save();
         ctx.translate(rX, rY);
         ctx.rotate(heading);
+        ctx.globalAlpha = depthFade;
         ctx.fillStyle = `rgba(${color},0.85)`;
         ctx.beginPath();
         ctx.moveTo(rs * 1.5, 0);
@@ -222,12 +253,13 @@ function Globe({ className, rocketCount = 1 }) {
 
         // Glow
         const rGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, rs * 3.5);
-        rGlow.addColorStop(0, `rgba(${color},0.18)`);
+        rGlow.addColorStop(0, `rgba(${color},${0.18 * depthFade})`);
         rGlow.addColorStop(1, `rgba(${color},0)`);
         ctx.fillStyle = rGlow;
         ctx.beginPath();
         ctx.arc(0, 0, rs * 3.5, 0, Math.PI * 2);
         ctx.fill();
+        ctx.globalAlpha = 1.0;
         ctx.restore();
       }
 
@@ -297,7 +329,7 @@ function LifecycleBadge({ status }) {
 // Main Mission Control
 // ---------------------------------------------------------------------------
 export default function MissionControl() {
-  const [expandedShop, setExpandedShop] = useState(null);
+  const [expandedShops, setExpandedShops] = useState(new Set());
   const [shopLogs, setShopLogs] = useState({});
   const [shopLogLoading, setShopLogLoading] = useState(null);
   const [selectedPanel, setSelectedPanel] = useState('alerts');
@@ -377,8 +409,12 @@ export default function MissionControl() {
   };
 
   const toggleShop = (slug) => {
-    if (expandedShop === slug) { setExpandedShop(null); }
-    else { setExpandedShop(slug); if (!shopLogs[slug]) loadShopLogs(slug); }
+    setExpandedShops(prev => {
+      const next = new Set(prev);
+      if (next.has(slug)) { next.delete(slug); }
+      else { next.add(slug); if (!shopLogs[slug]) loadShopLogs(slug); }
+      return next;
+    });
   };
 
   const utc = now.toISOString().replace('T', ' ').split('.')[0] + ' UTC';
@@ -463,12 +499,12 @@ export default function MissionControl() {
                     >
                       ORD
                     </Link>
-                    {expandedShop === shop.slug
+                    {expandedShops.has(shop.slug)
                       ? <ChevronUp className="h-3 w-3 text-[#484f58]" />
                       : <ChevronDown className="h-3 w-3 text-[#484f58]" />}
                   </div>
                 </div>
-                {expandedShop === shop.slug && (
+                {expandedShops.has(shop.slug) && (
                   <div className="lp-fadein" style={{ borderColor: '#151b27' }}>
                     {/* Recent orders */}
                     {shop.recentOrders && shop.recentOrders.length > 0 && (
