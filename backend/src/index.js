@@ -63,6 +63,7 @@ const inventoryRouter = require('./inventory');
 const updateRouter = require('./update');
 const ordersWebhookRouter = require('./orders-webhook');
 const missionControlRouter = require('./mission-control');
+const { trackRouter: analyticsTrackRouter, queryRouter: analyticsQueryRouter } = require('./analytics');
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -239,11 +240,24 @@ const notifyLimiter = rateLimit({
 });
 app.use('/api/shops', notifyLimiter, ordersWebhookRouter);
 
+// Unauthenticated analytics tracking beacon (must come BEFORE requireAuth)
+const analyticsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: 'Too many tracking requests' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/shops', analyticsLimiter, analyticsTrackRouter);
+
 // Protected routes — CSRF enforced on state-changing requests
 app.use('/api/shops', requireAuth, csrfProtection, shopsRouter);
 app.use('/api/shops', requireAuth, csrfProtection, ordersRouter);
 app.use('/api/shops', requireAuth, csrfProtection, filesRouter);
 app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
+
+// Analytics query routes (protected, read-only so no CSRF needed)
+app.use('/api/shops', requireAuth, analyticsQueryRouter);
 
 // System / update routes (protected + CSRF)
 app.use('/api/system', requireAuth, csrfProtection, updateRouter);

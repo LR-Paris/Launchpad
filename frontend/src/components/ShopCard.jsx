@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package } from 'lucide-react';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3 } from 'lucide-react';
 
 const STATUS_COLORS = {
   running: 'text-[hsl(142,70%,50%)]',
@@ -204,6 +204,12 @@ export default function ShopCard({ shop }) {
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <Package className="h-3 w-3" /> Catalog
+        </Link>
+        <Link
+          to={`/shops/${shop.slug}/analytics`}
+          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
+        >
+          <BarChart3 className="h-3 w-3" /> Analytics
         </Link>
         <Link
           to={`/shops/${shop.slug}/settings`}

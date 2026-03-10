@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getOrders, getOrdersDownloadUrl } from '../lib/api';
 import OrderTable from '../components/OrderTable';
 import OrderCards from '../components/OrderCards';
-import { ArrowLeft, Download, ShoppingBag, RefreshCw, LayoutGrid, Table } from 'lucide-react';
+import { ArrowLeft, Download, ShoppingBag, RefreshCw, LayoutGrid, Table, BarChart3 } from 'lucide-react';
 
 export default function Orders() {
   const { slug } = useParams();
@@ -51,6 +51,12 @@ export default function Orders() {
           <h1 className="text-xl font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{slug}</h1>
         </div>
         <div className="flex-1" />
+        <Link
+          to={`/shops/${slug}/analytics`}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors border border-border/40 rounded-md px-2.5 py-1.5"
+        >
+          <BarChart3 className="h-3 w-3" /> Analytics
+        </Link>
         <button
           onClick={() => refetch()}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors border border-border/40 rounded-md px-2.5 py-1.5"

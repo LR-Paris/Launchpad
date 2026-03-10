@@ -10,6 +10,7 @@ import Catalog from './pages/Catalog';
 import Settings from './pages/Settings';
 import GlobalSettings from './pages/GlobalSettings';
 import MissionControl from './pages/MissionControl';
+import Analytics from './pages/Analytics';
 import Header from './components/Header';
 
 function ProtectedRoute({ children, user }) {
@@ -110,6 +111,14 @@ function AppContent({ user, theme, toggleTheme }) {
             element={
               <ProtectedRoute user={user}>
                 <Catalog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/analytics"
+            element={
+              <ProtectedRoute user={user}>
+                <Analytics />
               </ProtectedRoute>
             }
           />

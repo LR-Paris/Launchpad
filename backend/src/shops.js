@@ -431,6 +431,35 @@ function patchShopCartKey(shopDir, slug) {
   return 1;
 }
 
+function patchShopAnalytics(shopDir) {
+  const layoutPath = path.join(shopDir, 'app', 'layout.tsx');
+  if (!fs.existsSync(layoutPath)) return 0;
+
+  let content = fs.readFileSync(layoutPath, 'utf8');
+
+  // Already patched
+  if (content.includes('AnalyticsTracker')) return 0;
+
+  // Add import at top (after last import statement)
+  const importLine = "import AnalyticsTracker from '@/components/Analytics';";
+  const lastImportIdx = content.lastIndexOf('\nimport ');
+  if (lastImportIdx >= 0) {
+    const lineEnd = content.indexOf('\n', lastImportIdx + 1);
+    content = content.slice(0, lineEnd + 1) + importLine + '\n' + content.slice(lineEnd + 1);
+  } else {
+    content = importLine + '\n' + content;
+  }
+
+  // Insert <AnalyticsTracker /> right after <body...>
+  content = content.replace(
+    /(<body[^>]*>)/,
+    '$1\n        <AnalyticsTracker />'
+  );
+
+  fs.writeFileSync(layoutPath, content);
+  return 1;
+}
+
 // POST /api/shops — Create new shop
 router.post('/', (req, res) => {
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
@@ -525,6 +554,12 @@ router.post('/', (req, res) => {
       log.push('Patched cart localStorage key for shop isolation.');
     }
 
+    // Inject analytics tracker into layout
+    const analyticsPatchCount = patchShopAnalytics(shopDir);
+    if (analyticsPatchCount > 0) {
+      log.push('Injected analytics tracker into shop layout.');
+    }
+
     // Create orders directory
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
@@ -564,7 +599,7 @@ router.post('/', (req, res) => {
 
     // Write .env for shop (includes base path vars for path-based routing)
     const launchpadPort = process.env.PORT || 3001;
-    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\nLAUNCHPAD_API_URL=http://172.17.0.1:${launchpadPort}\n`;
+    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\nLAUNCHPAD_API_URL=http://172.17.0.1:${launchpadPort}\nNEXT_PUBLIC_LAUNCHPAD_API=http://172.17.0.1:${launchpadPort}\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
     log.push('Wrote shop .env file.');
 
@@ -1235,6 +1270,9 @@ router.post('/:slug/update-template', (req, res) => {
     const cartPatchCount = patchShopCartKey(shopDir, slug);
     if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
 
+    const analyticsPatchCount2 = patchShopAnalytics(shopDir);
+    if (analyticsPatchCount2 > 0) log.push('Injected analytics tracker into shop layout.');
+
     // Ensure shop package.json version reflects the updated template
     const templateVer = readShopVersion(shopDir);
     if (templateVer) {
@@ -1370,6 +1408,9 @@ router.post('/:slug/upgrade', (req, res) => {
 
     const cartPatchCount = patchShopCartKey(shopDir, slug);
     if (cartPatchCount > 0) log.push('Patched cart localStorage key for shop isolation.');
+
+    const analyticsPatchCount3 = patchShopAnalytics(shopDir);
+    if (analyticsPatchCount3 > 0) log.push('Injected analytics tracker into shop layout.');
 
     // Ensure shop package.json version reflects the updated template
     const templateVer = readShopVersion(shopDir);

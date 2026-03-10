@@ -183,6 +183,22 @@ export const getMissionErrors = () =>
 export const getMissionSecurity = () =>
   api.get('/mission-control/security').then(r => r.data);
 
+// Analytics
+export const getAnalyticsOverview = (slug, range = '7d') =>
+  api.get(`/shops/${slug}/analytics/overview?range=${range}`).then(r => r.data);
+
+export const getAnalyticsTimeseries = (slug, range = '7d', interval) =>
+  api.get(`/shops/${slug}/analytics/timeseries?range=${range}${interval ? `&interval=${interval}` : ''}`).then(r => r.data);
+
+export const getAnalyticsCountries = (slug, range = '7d') =>
+  api.get(`/shops/${slug}/analytics/countries?range=${range}`).then(r => r.data);
+
+export const getAnalyticsPages = (slug, range = '7d') =>
+  api.get(`/shops/${slug}/analytics/pages?range=${range}`).then(r => r.data);
+
+export const getAnalyticsProducts = (slug, range = '7d') =>
+  api.get(`/shops/${slug}/analytics/products?range=${range}`).then(r => r.data);
+
 // Health check — resolves true if backend reachable, false otherwise
 export const checkHealth = () =>
   api.get('/health', { timeout: 5000 }).then(() => true).catch(() => false);
