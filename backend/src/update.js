@@ -176,11 +176,18 @@ router.get('/check-update', async (req, res) => {
   }
 });
 
+// Strict branch name validation to prevent command injection
+const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\/-]+$/;
+
 // POST /api/system/update — pull latest from GitHub and rebuild
 router.post('/update', async (req, res) => {
   const log = [];
   const { branch } = req.body || {};
   const targetBranch = branch || 'main';
+
+  if (!SAFE_BRANCH_RE.test(targetBranch)) {
+    return res.status(400).json({ error: 'Invalid branch name.' });
+  }
 
   try {
     // Ensure we're in a git repo
