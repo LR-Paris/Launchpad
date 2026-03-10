@@ -241,4 +241,85 @@ router.get('/errors', (req, res) => {
   res.json({ errors, count: errors.length });
 });
 
+// GET /api/mission-control/security — Security intelligence from audit log + sessions
+router.get('/security', (req, res) => {
+  const auditLogPath = path.join(DATA_DIR, 'audit.log');
+  const sessionsDbPath = path.join(DATA_DIR, 'sessions.db');
+
+  // 1. Parse audit log
+  let entries = [];
+  if (fs.existsSync(auditLogPath)) {
+    try {
+      const content = fs.readFileSync(auditLogPath, 'utf8');
+      const allLines = content.split('\n').filter(l => l.trim());
+      const tail = allLines.slice(-500);
+      entries = tail.map(line => {
+        try { return JSON.parse(line); } catch { return null; }
+      }).filter(Boolean);
+    } catch { /* file unreadable */ }
+  }
+
+  // 2. Recent events (last 20)
+  const recentEvents = entries.slice(-20).reverse().map(e => ({
+    timestamp: e.timestamp,
+    event: e.event,
+    actor: e.actor,
+    ip: e.ip,
+    details: e.details,
+  }));
+
+  // 3. Stats for last 24 hours
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+  const recent = entries.filter(e => new Date(e.timestamp).getTime() > oneDayAgo);
+
+  const shopActionEvents = /^shop_(created|updated|deleted|started|stopped|restarted|deployed)$/;
+  const fileOpEvents = /^(file_written|file_deleted|files_uploaded|file_replaced|zip_uploaded)$/;
+
+  const stats24h = {
+    totalEvents: recent.length,
+    loginSuccess: recent.filter(e => e.event === 'login_success').length,
+    loginFailed: recent.filter(e => e.event === 'login_failed').length,
+    passwordChanges: recent.filter(e => e.event === 'password_changed').length,
+    shopActions: recent.filter(e => shopActionEvents.test(e.event)).length,
+    fileOperations: recent.filter(e => fileOpEvents.test(e.event)).length,
+    uniqueIPs: new Set(recent.map(e => e.ip).filter(Boolean)).size,
+  };
+
+  // 4. Failed logins (last 24h, max 20)
+  const failedLogins = recent
+    .filter(e => e.event === 'login_failed')
+    .slice(-20)
+    .reverse()
+    .map(e => ({ timestamp: e.timestamp, ip: e.ip, actor: e.details?.username || e.actor }));
+
+  // 5. Active sessions count
+  let activeSessions = 0;
+  try {
+    if (fs.existsSync(sessionsDbPath)) {
+      const sessDb = new Database(sessionsDbPath, { readonly: true });
+      const row = sessDb.prepare('SELECT COUNT(*) as count FROM sessions WHERE expired > ?').get(now);
+      activeSessions = row?.count || 0;
+      sessDb.close();
+    }
+  } catch { /* sessions db unavailable */ }
+
+  // 6. Security score (0-100)
+  let securityScore = 100;
+  const failedLoginDeduction = Math.min(stats24h.loginFailed * 5, 40);
+  const failedPwDeduction = Math.min(
+    recent.filter(e => e.event === 'password_change_failed').length * 5, 20
+  );
+  const highIpDeduction = stats24h.uniqueIPs > 5 ? 10 : 0;
+  securityScore = Math.max(0, securityScore - failedLoginDeduction - failedPwDeduction - highIpDeduction);
+
+  res.json({
+    recentEvents,
+    stats24h,
+    failedLogins,
+    activeSessions,
+    securityScore,
+  });
+});
+
 module.exports = router;

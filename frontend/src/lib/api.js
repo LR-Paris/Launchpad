@@ -180,6 +180,9 @@ export const getAllShopLogs = (lines = 50) =>
 export const getMissionErrors = () =>
   api.get('/mission-control/errors').then(r => r.data);
 
+export const getMissionSecurity = () =>
+  api.get('/mission-control/security').then(r => r.data);
+
 // Health check — resolves true if backend reachable, false otherwise
 export const checkHealth = () =>
   api.get('/health', { timeout: 5000 }).then(() => true).catch(() => false);

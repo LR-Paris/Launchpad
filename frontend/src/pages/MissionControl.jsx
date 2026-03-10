@@ -4,9 +4,9 @@ import { Link } from 'react-router-dom';
 import {
   ArrowLeft, AlertTriangle, Server, RefreshCw,
   ChevronDown, ChevronUp, Terminal, ShieldAlert, Store, ShoppingCart, X,
-  Rocket, Clock, Radio, Wifi, WifiOff, Package
+  Rocket, Clock, Radio, Wifi, WifiOff, Package, Shield, Lock, Eye, Users
 } from 'lucide-react';
-import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors, getOrders } from '../lib/api';
+import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors, getMissionSecurity, getOrders } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Palantir-style 3D Globe — continent dot cloud, HQ city markers, arcs, rockets
@@ -589,6 +589,16 @@ export default function MissionControl() {
   const { data: errorsData, refetch: refetchErrors } = useQuery({
     queryKey: ['mission-errors'], queryFn: getMissionErrors, refetchInterval: 30000,
   });
+  const { data: securityData, refetch: refetchSecurity } = useQuery({
+    queryKey: ['mission-security'], queryFn: getMissionSecurity, refetchInterval: 30000,
+  });
+
+  const security = securityData || {};
+  const securityScore = security.securityScore ?? 100;
+  const recentSecEvents = security.recentEvents || [];
+  const stats24h = security.stats24h || {};
+  const failedLogins = security.failedLogins || [];
+  const activeSessions = security.activeSessions ?? 0;
 
   const shops = overviewData?.shops || [];
   const runningShops = shops.filter(s => s.containerStatus === 'running');
@@ -673,6 +683,11 @@ export default function MissionControl() {
           <span className="text-[11px] font-mono text-[#484f58]">LOCAL {local}</span>
         </div>
         <div className="flex items-center gap-5">
+          <span className={`text-[11px] font-mono flex items-center gap-1 ${
+            securityScore >= 80 ? 'text-emerald-400' : securityScore >= 50 ? 'text-amber-400' : 'text-red-400'
+          }`}>
+            <Shield className="h-3 w-3" /> SEC {securityScore}
+          </span>
           {totalErrors > 0 && (
             <span className="text-[11px] font-mono text-amber-400 flex items-center gap-1 animate-pulse">
               <AlertTriangle className="h-3 w-3" /> {totalErrors} ALERT{totalErrors !== 1 ? 'S' : ''}
@@ -683,7 +698,7 @@ export default function MissionControl() {
             {runningShops.length}/{shops.length} ONLINE
           </span>
           <button
-            onClick={() => { refetchOverview(); refetchSysLogs(); refetchErrors(); }}
+            onClick={() => { refetchOverview(); refetchSysLogs(); refetchErrors(); refetchSecurity(); }}
             className="text-[11px] font-mono text-[#484f58] hover:text-[#8b949e] flex items-center gap-1 transition-colors"
           >
             <RefreshCw className={`h-3 w-3 ${overviewLoading ? 'animate-spin' : ''}`} /> SYNC
@@ -818,6 +833,7 @@ export default function MissionControl() {
               { label: 'RUNNING', value: runningShops.length, color: '#34d399' },
               { label: 'STOPPED', value: stoppedShops.length, color: stoppedShops.length > 0 ? '#f87171' : '#484f58' },
               { label: 'ALERTS', value: totalErrors, color: totalErrors > 0 ? '#fbbf24' : '#484f58' },
+              { label: 'SECURITY', value: securityScore, color: securityScore >= 80 ? '#34d399' : securityScore >= 50 ? '#fbbf24' : '#f87171' },
             ].map(m => (
               <div key={m.label} className="text-center px-4 py-2 rounded-lg"
                    style={{ background: 'rgba(10,15,26,0.75)', border: '1px solid #151b27' }}>
@@ -855,6 +871,7 @@ export default function MissionControl() {
             {[
               { id: 'alerts', label: 'ALERTS', count: totalErrors },
               { id: 'activity', label: 'ACTIVITY' },
+              { id: 'security', label: 'SECURITY', count: stats24h.loginFailed || 0 },
             ].map(t => (
               <button
                 key={t.id}
@@ -941,6 +958,133 @@ export default function MissionControl() {
                   <div className="text-center py-8 text-[#484f58] text-[11px] font-mono">NO ACTIVITY</div>
                 )}
               </div>
+            )}
+
+            {selectedPanel === 'security' && (
+              <>
+                {/* Security Score */}
+                <div className="flex flex-col items-center py-5 border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="relative w-16 h-16 flex items-center justify-center">
+                    <svg className="absolute inset-0 w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                      <circle cx="32" cy="32" r="28" fill="none" stroke="#151b27" strokeWidth="3" />
+                      <circle cx="32" cy="32" r="28" fill="none"
+                        stroke={securityScore >= 80 ? '#34d399' : securityScore >= 50 ? '#fbbf24' : '#f87171'}
+                        strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray={`${securityScore * 1.76} 176`} />
+                    </svg>
+                    <span className={`text-[18px] font-bold font-mono ${
+                      securityScore >= 80 ? 'text-emerald-400' : securityScore >= 50 ? 'text-amber-400' : 'text-red-400'
+                    }`}>{securityScore}</span>
+                  </div>
+                  <span className="text-[10px] font-mono tracking-[0.2em] text-[#484f58] mt-2">SECURITY SCORE</span>
+                </div>
+
+                {/* Quick stats row */}
+                <div className="grid grid-cols-3 border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="text-center py-2.5 border-r" style={{ borderColor: '#151b27' }}>
+                    <div className="text-[16px] font-bold font-mono text-[#c9d1d9]">{activeSessions}</div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">SESSIONS</div>
+                  </div>
+                  <div className="text-center py-2.5 border-r" style={{ borderColor: '#151b27' }}>
+                    <div className="text-[16px] font-bold font-mono text-[#c9d1d9]">{stats24h.uniqueIPs || 0}</div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">UNIQUE IPS</div>
+                  </div>
+                  <div className="text-center py-2.5">
+                    <div className="text-[16px] font-bold font-mono text-[#c9d1d9]">{stats24h.totalEvents || 0}</div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">EVENTS 24H</div>
+                  </div>
+                </div>
+
+                {/* 24h Event Breakdown */}
+                <div className="px-3 py-3 border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58] mb-2.5">24H EVENT BREAKDOWN</div>
+                  {[
+                    { label: 'LOGIN OK', value: stats24h.loginSuccess || 0, color: '#34d399' },
+                    { label: 'LOGIN FAIL', value: stats24h.loginFailed || 0, color: '#f87171' },
+                    { label: 'PW CHANGES', value: stats24h.passwordChanges || 0, color: '#fbbf24' },
+                    { label: 'SHOP OPS', value: stats24h.shopActions || 0, color: '#39C5BB' },
+                    { label: 'FILE OPS', value: stats24h.fileOperations || 0, color: '#818cf8' },
+                  ].map(row => {
+                    const maxVal = stats24h.totalEvents || 1;
+                    const pct = Math.max(2, (row.value / maxVal) * 100);
+                    return (
+                      <div key={row.label} className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[9px] font-mono text-[#484f58] w-[72px] shrink-0">{row.label}</span>
+                        <div className="flex-1 h-[6px] rounded-full overflow-hidden" style={{ background: '#151b27' }}>
+                          {row.value > 0 && (
+                            <div className="h-full rounded-full transition-all duration-500"
+                              style={{ width: `${pct}%`, background: row.color, opacity: 0.8 }} />
+                          )}
+                        </div>
+                        <span className="text-[10px] font-mono text-[#8b949e] w-[24px] text-right">{row.value}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Failed Login Attempts */}
+                <div className="border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="px-3 py-2">
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">FAILED LOGIN ATTEMPTS</div>
+                  </div>
+                  {failedLogins.length === 0 ? (
+                    <div className="text-center py-4 pb-5">
+                      <Lock className="h-4 w-4 text-emerald-400/40 mx-auto mb-1" />
+                      <p className="text-[10px] font-mono text-emerald-400/60">NO FAILED LOGINS (24H)</p>
+                    </div>
+                  ) : (
+                    failedLogins.map((fl, i) => (
+                      <div key={i} className="flex items-start gap-2 px-3 py-2 border-t" style={{ borderColor: '#151b27' }}>
+                        <div className="w-1 h-1 rounded-full bg-red-400 mt-1.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-red-400">{fl.actor || 'unknown'}</span>
+                            <span className="text-[9px] font-mono text-[#484f58] ml-auto">
+                              {fl.timestamp ? new Date(fl.timestamp).toLocaleTimeString('en-US', { hour12: false }) : ''}
+                            </span>
+                          </div>
+                          <span className="text-[9px] font-mono text-[#484f58]">IP: {fl.ip || 'unknown'}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Recent Security Events */}
+                <div>
+                  <div className="px-3 py-2 border-b" style={{ borderColor: '#151b27' }}>
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">RECENT EVENTS</div>
+                  </div>
+                  {recentSecEvents.length === 0 ? (
+                    <div className="text-center py-8 text-[#484f58] text-[11px] font-mono">NO AUDIT DATA</div>
+                  ) : (
+                    recentSecEvents.map((evt, i) => {
+                      const isFailure = /failed/.test(evt.event);
+                      const isDestructive = /deleted|wiped|password_changed/.test(evt.event);
+                      const isSuccess = /login_success/.test(evt.event);
+                      const dotColor = isFailure ? 'bg-red-400' : isDestructive ? 'bg-amber-400' : isSuccess ? 'bg-emerald-400' : 'bg-cyan-400';
+                      const textColor = isFailure ? 'text-red-400' : isDestructive ? 'text-amber-400' : isSuccess ? 'text-emerald-400/80' : 'text-[#8b949e]';
+                      const eventLabel = evt.event.replace(/_/g, ' ').toUpperCase();
+                      const time = evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString('en-US', { hour12: false }) : '';
+                      return (
+                        <div key={i} className="flex items-start gap-2 px-3 py-1.5 border-b hover:bg-[#0d1520] transition-colors" style={{ borderColor: '#151b27' }}>
+                          <div className={`w-1 h-1 rounded-full ${dotColor} mt-1.5 flex-shrink-0`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[10px] font-mono font-bold ${textColor}`}>{eventLabel}</span>
+                              <span className="text-[9px] font-mono text-[#484f58] ml-auto">{time}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono text-[#484f58]">{evt.actor || 'system'}</span>
+                              {evt.ip && <span className="text-[9px] font-mono text-[#484f58]">{evt.ip}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
