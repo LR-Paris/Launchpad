@@ -23,7 +23,7 @@ export default function Orders() {
     if (statusFilter === 'all') return orders;
     return orders.filter(o => {
       const status = (o['Status'] || 'Pending').toLowerCase();
-      if (statusFilter === 'cancelled') return status === 'cancelled' || status === 'canceled';
+      if (statusFilter === 'cancelled') return status.includes('cancel');
       if (statusFilter === 'pending') return status === 'pending' || status === '';
       return status === statusFilter;
     });
@@ -34,10 +34,7 @@ export default function Orders() {
     return s === 'pending' || s === '';
   }).length, [orders]);
   const shippedCount = useMemo(() => orders.filter(o => (o['Status'] || '').toLowerCase() === 'shipped').length, [orders]);
-  const cancelledCount = useMemo(() => orders.filter(o => {
-    const s = (o['Status'] || '').toLowerCase();
-    return s === 'cancelled' || s === 'canceled';
-  }).length, [orders]);
+  const cancelledCount = useMemo(() => orders.filter(o => (o['Status'] || '').toLowerCase().includes('cancel')).length, [orders]);
 
   return (
     <div className="max-w-6xl lp-fadein">

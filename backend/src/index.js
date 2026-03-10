@@ -1,4 +1,5 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+require('./logger'); // File logging — must be first after dotenv
 
 const express = require('express');
 const session = require('express-session');
@@ -61,6 +62,7 @@ const filesRouter = require('./files');
 const inventoryRouter = require('./inventory');
 const updateRouter = require('./update');
 const ordersWebhookRouter = require('./orders-webhook');
+const missionControlRouter = require('./mission-control');
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -245,6 +247,9 @@ app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
 
 // System / update routes (protected + CSRF)
 app.use('/api/system', requireAuth, csrfProtection, updateRouter);
+
+// Mission Control (protected)
+app.use('/api/mission-control', requireAuth, missionControlRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

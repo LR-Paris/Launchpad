@@ -138,7 +138,7 @@ export default function OrderTable({ orders, slug }) {
     if (/^(status|order[\s_-]?status)$/i.test(col)) {
       const v = value?.trim().toLowerCase() || 'pending';
       const isShipped = v === 'shipped';
-      const isCancelled = v === 'cancelled' || v === 'canceled';
+      const isCancelled = v.includes('cancel');
       return (
         <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full ${
           isCancelled

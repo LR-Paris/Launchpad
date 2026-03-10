@@ -85,8 +85,8 @@ export const getCatalogPhotos = (slug) =>
 export const shipOrder = (slug, orderId, trackingNumber) =>
   api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/ship`, { trackingNumber }).then(r => r.data);
 
-export const cancelOrder = (slug, orderId) =>
-  api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel`).then(r => r.data);
+export const cancelOrder = (slug, orderId, reason) =>
+  api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel`, { reason }).then(r => r.data);
 
 // Shop Files
 export const listShopFiles = (slug, dirPath = '.') =>
@@ -163,5 +163,25 @@ export const installUpdate = (branch) =>
 
 export const getSystemBranches = () =>
   api.get('/system/branches').then(r => r.data);
+
+// Mission Control
+export const getMissionOverview = () =>
+  api.get('/mission-control/overview').then(r => r.data);
+
+export const getSystemLogs = (lines = 200) =>
+  api.get(`/mission-control/logs/system?lines=${lines}`).then(r => r.data);
+
+export const getShopMissionLogs = (slug, lines = 100) =>
+  api.get(`/mission-control/logs/shop/${slug}?lines=${lines}`).then(r => r.data);
+
+export const getAllShopLogs = (lines = 50) =>
+  api.get(`/mission-control/logs/all?lines=${lines}`).then(r => r.data);
+
+export const getMissionErrors = () =>
+  api.get('/mission-control/errors').then(r => r.data);
+
+// Health check — resolves true if backend reachable, false otherwise
+export const checkHealth = () =>
+  api.get('/health', { timeout: 5000 }).then(() => true).catch(() => false);
 
 export default api;

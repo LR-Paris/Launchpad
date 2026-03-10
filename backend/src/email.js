@@ -75,6 +75,18 @@ function getProductImageUrl(slug, productId) {
   return `${getBaseUrl()}/api/shops/${slug}/orders/email-image/${encodeURIComponent(productId)}`;
 }
 
+function getLogoUrl(slug) {
+  return `${getBaseUrl()}/api/shops/${slug}/orders/logo`;
+}
+
+function shopHasLogo(slug) {
+  const detailsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details');
+  try {
+    const files = fs.readdirSync(detailsDir);
+    return files.some(f => /^logo\.(png|jpe?g|webp|svg)$/i.test(f));
+  } catch { return false; }
+}
+
 function getCancelUrl(slug, orderId, token) {
   return `${getBaseUrl()}/api/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel?token=${token}`;
 }
@@ -111,7 +123,7 @@ function getCustomerName(row) {
 }
 
 function getOrderId(row) {
-  return col(row, 'Order ID', 'order_id', 'Order #', 'Order Number', 'ID', 'id');
+  return col(row, 'Order ID', 'order_id', 'orderId', 'Order #', 'Order Number', 'ID', 'id');
 }
 
 function getOrderDate(row) {
@@ -122,16 +134,46 @@ function getTotal(row) {
   return col(row, 'Total', 'total', 'Order Total', 'Amount Due', 'Price');
 }
 
+// Format a raw value as proper money: "$284.00"
+function formatMoney(val) {
+  if (!val) return '';
+  const str = String(val).trim();
+  // Strip existing $ and commas, parse as number
+  const num = parseFloat(str.replace(/[$,]/g, ''));
+  if (isNaN(num)) return str; // not a number, return as-is
+  return '$' + num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// Format a raw date string to human-readable: "March 4, 2026"
+function formatDate(val) {
+  if (!val) return '';
+  const str = String(val).trim();
+  const d = new Date(str);
+  if (isNaN(d.getTime())) return str; // unparseable, return as-is
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 // ---------------------------------------------------------------------------
 // Receipt builder — itemized receipt with product images
 // ---------------------------------------------------------------------------
 
 function buildReceipt(row, primaryColor, slug) {
-  const itemsRaw = col(row, 'Items', 'items', 'Products', 'products');
+  // Robust Items extraction — handles both string JSON and already-parsed arrays
   let items = [];
-  if (itemsRaw) {
-    try { items = JSON.parse(itemsRaw); } catch { /* not JSON */ }
-    if (!Array.isArray(items)) items = [];
+  const itemKeys = ['Items', 'items', 'Products', 'products'];
+  for (const key of itemKeys) {
+    const val = row[key];
+    if (val == null) continue;
+    if (Array.isArray(val)) { items = val; break; }
+    if (typeof val === 'object' && !Array.isArray(val)) { items = [val]; break; }
+    const str = String(val).trim();
+    if (str) {
+      try {
+        const parsed = JSON.parse(str);
+        items = Array.isArray(parsed) ? parsed : [parsed];
+        break;
+      } catch { /* not JSON, continue */ }
+    }
   }
 
   const total = getTotal(row);
@@ -176,20 +218,20 @@ function buildReceipt(row, primaryColor, slug) {
       </tr>`;
     }).join('');
 
-    const displayTotal = total || (subtotal ? '$' + subtotal.toFixed(2) : '');
+    const displayTotal = formatMoney(total) || (subtotal ? '$' + subtotal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '');
 
     return `
       <table style="width:100%;border-collapse:collapse;margin:20px 0;border:1px solid #eee;border-radius:8px;overflow:hidden;">
         <tr style="background:#fafafa;">
           <th style="padding:10px 12px;text-align:left;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;" colspan="2">Item</th>
           <th style="padding:10px 8px;text-align:center;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Qty</th>
-          <th style="padding:10px 8px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Price</th>
-          <th style="padding:10px 12px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Total</th>
+          <th style="padding:10px 8px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Unit Price</th>
+          <th style="padding:10px 12px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Line Total</th>
         </tr>
         ${rows}
         ${displayTotal ? `
         <tr style="background:#fafafa;">
-          <td colspan="4" style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px;color:#333;">Order Total</td>
+          <td colspan="4" style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px;color:#333;">Total Cost</td>
           <td style="padding:14px 12px;text-align:right;font-weight:700;font-size:18px;color:${primaryColor};">${esc(displayTotal)}</td>
         </tr>
         ` : ''}
@@ -203,7 +245,7 @@ function buildReceipt(row, primaryColor, slug) {
   if (itemName || total) {
     let html = '<div style="margin:16px 0;padding:16px;background:#fafafa;border-radius:8px;border:1px solid #eee;">';
     if (itemName) html += `<p style="margin:0 0 4px;font-size:13px;"><strong>Item:</strong> ${esc(itemName)}${qty ? ' &times; ' + esc(qty) : ''}</p>`;
-    if (total) html += `<p style="margin:4px 0 0;font-size:16px;font-weight:700;color:${primaryColor};">Total: ${esc(total)}</p>`;
+    if (total) html += `<p style="margin:4px 0 0;font-size:16px;font-weight:700;color:${primaryColor};">Total Cost: ${esc(formatMoney(total))}</p>`;
     html += '</div>';
     return html;
   }
@@ -253,12 +295,18 @@ function buildInfoBlock(row) {
 // Email shell — company-branded wrapper
 // ---------------------------------------------------------------------------
 
-function emailShell({ companyName, primaryColor, body }) {
+function emailShell({ companyName, primaryColor, body, slug }) {
+  const hasLogo = slug && shopHasLogo(slug);
+  const logoHtml = hasLogo
+    ? `<img src="${getLogoUrl(slug)}" alt="${esc(companyName)}" style="max-height:60px;max-width:200px;margin-bottom:12px;display:inline-block;" /><br>`
+    : '';
+
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
   <div style="max-width:600px;margin:0 auto;padding:24px 16px;">
     <div style="background:${primaryColor};padding:28px 24px;text-align:center;border-radius:12px 12px 0 0;">
+      ${logoHtml}
       <h1 style="color:#fff;margin:0;font-size:22px;font-weight:700;letter-spacing:0.5px;">${esc(companyName)}</h1>
     </div>
     <div style="background:#fff;padding:28px 32px;border-radius:0 0 12px 12px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
@@ -266,6 +314,7 @@ function emailShell({ companyName, primaryColor, body }) {
     </div>
     <div style="text-align:center;padding:20px 0;">
       <p style="color:#bbb;font-size:11px;margin:0;">&copy; ${new Date().getFullYear()} ${esc(companyName)}. All rights reserved.</p>
+      <p style="color:#ccc;font-size:10px;margin:8px 0 0;">Powered by <span style="font-weight:600;color:#aaa;">LR Paris</span></p>
     </div>
   </div>
 </body></html>`;
@@ -291,6 +340,8 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   const cancelUrl = (orderId && cancelToken) ? getCancelUrl(shopSlug, orderId, cancelToken) : '';
 
   // Order header with ID, date, and status
+  const prettyDate = formatDate(orderDate);
+  const prettyTotal = formatMoney(total);
   const orderHeader = `
     <div style="margin:20px 0;padding:16px 20px;background:#fafafa;border-radius:8px;border:1px solid #eee;">
       <table style="width:100%;border-collapse:collapse;">
@@ -298,9 +349,9 @@ async function sendOrderConfirmation(orderData, shopSlug) {
           <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Order Number</span></td>
           <td style="padding:4px 0;text-align:right;"><span style="font-size:15px;font-weight:700;color:${primaryColor};">${esc(orderId)}</span></td>
         </tr>` : ''}
-        ${orderDate ? `<tr>
+        ${prettyDate ? `<tr>
           <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Order Date</span></td>
-          <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(orderDate)}</span></td>
+          <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(prettyDate)}</span></td>
         </tr>` : ''}
         <tr>
           <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Status</span></td>
@@ -310,16 +361,16 @@ async function sendOrderConfirmation(orderData, shopSlug) {
           <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Email</span></td>
           <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(email)}</span></td>
         </tr>` : ''}
-        ${total ? `<tr>
-          <td style="padding:8px 0 0;border-top:1px solid #eee;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Total</span></td>
-          <td style="padding:8px 0 0;text-align:right;border-top:1px solid #eee;"><span style="font-size:18px;font-weight:700;color:${primaryColor};">${esc(total)}</span></td>
+        ${prettyTotal ? `<tr>
+          <td style="padding:8px 0 0;border-top:1px solid #eee;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Total Cost</span></td>
+          <td style="padding:8px 0 0;text-align:right;border-top:1px solid #eee;"><span style="font-size:18px;font-weight:700;color:${primaryColor};">${esc(prettyTotal)}</span></td>
         </tr>` : ''}
       </table>
     </div>
   `;
 
   const body = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">Order Confirmation</h2>
+    <h2 style="margin-top:0;font-size:20px;color:#111;">Order Confirmation${orderId ? ' — ' + esc(orderId) : ''}</h2>
     <p style="color:#666;font-size:14px;line-height:1.5;">Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.</p>
     ${orderHeader}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
@@ -341,7 +392,7 @@ async function sendOrderConfirmation(orderData, shopSlug) {
     <p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">You'll receive a shipping notification with tracking details when your order is on its way.</p>
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Order Confirmation${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
@@ -380,7 +431,7 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   if (customerEmail) contactRows.push(['Email', `<a href="mailto:${esc(customerEmail)}" style="color:${primaryColor};text-decoration:none;">${esc(customerEmail)}</a>`]);
   if (phone) contactRows.push(['Phone', `<a href="tel:${esc(phone)}" style="color:${primaryColor};text-decoration:none;">${esc(phone)}</a>`]);
   if (company) contactRows.push(['Company', company]);
-  if (orderDate) contactRows.push(['Date', orderDate]);
+  if (orderDate) contactRows.push(['Date', formatDate(orderDate)]);
 
   const contactCard = `
     <div style="margin:16px 0;padding:16px;background:${primaryColor}08;border-radius:8px;border-left:4px solid ${primaryColor};">
@@ -462,7 +513,7 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   ` : '';
 
   const adminBody = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">New Order${orderId ? ' — ' + esc(orderId) : ''}${total ? ' <span style="color:' + primaryColor + ';">' + esc(total) + '</span>' : ''}</h2>
+    <h2 style="margin-top:0;font-size:20px;color:#111;">New Order${orderId ? ' — ' + esc(orderId) : ''}${total ? ' <span style="color:' + primaryColor + ';">' + esc(formatMoney(total)) + '</span>' : ''}</h2>
     ${contactCard}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
     ${buildReceipt(orderData, primaryColor, shopSlug)}
@@ -472,8 +523,8 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
     ${allFieldsCard}
   `;
 
-  const adminHtml = emailShell({ companyName, primaryColor, body: adminBody });
-  const adminSubject = `[New Order] ${orderId || 'Order'} from ${customerName}${total ? ' — ' + total : ''} | ${companyName}`;
+  const adminHtml = emailShell({ companyName, primaryColor, body: adminBody, slug: shopSlug });
+  const adminSubject = `[New Order] ${orderId || 'Order'} from ${customerName}${total ? ' — ' + formatMoney(total) : ''} | ${companyName}`;
   sendMail({ to: adminEmail, from: fromAddress, subject: adminSubject, html: adminHtml }).catch(() => {});
 }
 
@@ -519,7 +570,7 @@ async function sendShippedNotification(orderData, trackingNumber, shopSlug) {
     ${buildInfoBlock(orderData)}
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Your order has shipped${orderId ? ' — ' + orderId : ''} | ${companyName}`;
   sendMail({ to: customerEmail, from: fromAddress, subject, html }).catch(() => {});
 }
@@ -528,28 +579,35 @@ async function sendShippedNotification(orderData, trackingNumber, shopSlug) {
 // Public: sendCancellationEmail — confirms cancellation to customer + admin
 // ---------------------------------------------------------------------------
 
-async function sendCancellationEmail(orderData, shopSlug) {
+async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
+  const { cancelledBy = 'customer', reason = '' } = opts;
   const { companyName, primaryColor } = getShopBranding(shopSlug);
   const fromAddress = getFromAddress(companyName);
   const customerEmail = getCustomerEmail(orderData);
   const customerName = getCustomerName(orderData);
   const orderId = getOrderId(orderData);
   const total = getTotal(orderData);
+  const prettyTotal = formatMoney(total);
+
+  const reasonHtml = reason
+    ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Reason</td><td style="padding:4px 0;font-size:13px;color:#333;">${esc(reason)}</td></tr>`
+    : '';
 
   const body = `
     <h2 style="margin-top:0;font-size:20px;color:#111;">Order Cancelled</h2>
-    <p style="color:#666;font-size:14px;line-height:1.5;">Hi ${esc(customerName)}, your order${orderId ? ' <strong>' + esc(orderId) + '</strong>' : ''} has been cancelled as requested.</p>
+    <p style="color:#666;font-size:14px;line-height:1.5;">Hi ${esc(customerName)}, your order${orderId ? ' <strong>' + esc(orderId) + '</strong>' : ''} has been cancelled.</p>
     <div style="margin:20px 0;padding:16px 20px;background:#fef2f2;border-radius:8px;border:1px solid #fecaca;">
       <table style="width:100%;">
         ${orderId ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;width:100px;text-transform:uppercase;">Order</td><td style="padding:4px 0;font-size:14px;font-weight:700;color:#991b1b;">${esc(orderId)}</td></tr>` : ''}
-        ${total ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Amount</td><td style="padding:4px 0;font-size:14px;color:#333;">${esc(total)}</td></tr>` : ''}
+        ${prettyTotal ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Total Cost</td><td style="padding:4px 0;font-size:14px;color:#333;">${esc(prettyTotal)}</td></tr>` : ''}
         <tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Status</td><td style="padding:4px 0;font-size:12px;font-weight:600;color:#dc2626;">Cancelled</td></tr>
+        ${reasonHtml}
       </table>
     </div>
-    <p style="color:#999;font-size:12px;line-height:1.5;margin:20px 0 0;">If you did not request this cancellation, please contact us immediately.</p>
+    ${buildReceipt(orderData, primaryColor, shopSlug)}
   `;
 
-  const html = emailShell({ companyName, primaryColor, body });
+  const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
   const subject = `Order Cancelled${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
@@ -559,19 +617,23 @@ async function sendCancellationEmail(orderData, shopSlug) {
   // Notify admin
   const adminEmail = getAdminEmail(shopSlug);
   if (adminEmail) {
+    const actionText = cancelledBy === 'admin'
+      ? `Cancelled by Admin${reason ? ': ' + reason : ''}`
+      : 'Customer self-cancelled within 2-hour window';
+
     const adminBody = `
       <h2 style="margin-top:0;font-size:20px;color:#dc2626;">Order Cancelled — ${esc(orderId || 'Unknown')}</h2>
       <div style="margin:16px 0;padding:16px;background:#fef2f2;border-radius:8px;border-left:4px solid #dc2626;">
         <table style="width:100%;">
           <tr><td style="padding:4px 0;color:#999;font-size:11px;width:80px;text-transform:uppercase;">Customer</td><td style="padding:4px 0;font-size:14px;font-weight:700;color:#111;">${esc(customerName)}</td></tr>
           ${customerEmail ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Email</td><td style="padding:4px 0;font-size:13px;">${esc(customerEmail)}</td></tr>` : ''}
-          ${total ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Amount</td><td style="padding:4px 0;font-size:14px;font-weight:600;">${esc(total)}</td></tr>` : ''}
-          <tr><td style="padding:4px 0;color:#999;font-size:11px;">Action</td><td style="padding:4px 0;font-size:13px;font-weight:600;color:#dc2626;">Customer self-cancelled within 2-hour window</td></tr>
+          ${prettyTotal ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Total Cost</td><td style="padding:4px 0;font-size:14px;font-weight:600;">${esc(prettyTotal)}</td></tr>` : ''}
+          <tr><td style="padding:4px 0;color:#999;font-size:11px;">Action</td><td style="padding:4px 0;font-size:13px;font-weight:600;color:#dc2626;">${esc(actionText)}</td></tr>
         </table>
       </div>
       ${buildReceipt(orderData, primaryColor, shopSlug)}
     `;
-    const adminHtml = emailShell({ companyName, primaryColor, body: adminBody });
+    const adminHtml = emailShell({ companyName, primaryColor, body: adminBody, slug: shopSlug });
     const adminSubject = `[Cancelled] ${orderId || 'Order'} from ${customerName} | ${companyName}`;
     sendMail({ to: adminEmail, from: fromAddress, subject: adminSubject, html: adminHtml }).catch(() => {});
   }

@@ -110,6 +110,8 @@ export default function OrderCards({ orders, slug }) {
   const [trackingInput, setTrackingInput] = useState('');
   const [shipLoading, setShipLoading] = useState(false);
   const [shipError, setShipError] = useState('');
+  const [cancellingOrder, setCancellingOrder] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
   const [cancelLoading, setCancelLoading] = useState(null);
   const [cancelError, setCancelError] = useState('');
 
@@ -362,7 +364,7 @@ export default function OrderCards({ orders, slug }) {
                       const status = getStatus(row);
                       const sl = status.toLowerCase();
                       const isShipped = sl === 'shipped';
-                      const isCancelled = sl === 'cancelled' || sl === 'canceled';
+                      const isCancelled = sl.includes('cancel');
                       return (
                         <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full flex-shrink-0 inline-flex items-center gap-0.5 ${
                           isCancelled
@@ -463,15 +465,17 @@ export default function OrderCards({ orders, slug }) {
                     ))}
                   </div>
 
-                  {/* Actions — ship / cancel for pending orders */}
-                  {(() => {
+                  {/* Actions — ship (pending only) + cancel (pending only, not after shipped) */}
+                  {orderId && (() => {
                     const sl = getStatus(row).toLowerCase();
-                    const isPending = sl !== 'shipped' && sl !== 'cancelled' && sl !== 'canceled';
-                    if (!isPending || !orderId) return null;
+                    const isPending = !sl.includes('shipped') && !sl.includes('cancel');
+                    const isCancelled = sl.includes('cancel');
+                    const isShipped = sl === 'shipped';
                     return (
                       <div className="mt-3 pt-3 border-t border-border/20">
-                        {shippingOrder === i ? (
-                          <div className="flex items-center gap-2">
+                        {/* Ship action — pending orders only */}
+                        {isPending && shippingOrder === i && (
+                          <div className="flex items-center gap-2 mb-2">
                             <input
                               type="text"
                               placeholder="Tracking number (optional)"
@@ -508,40 +512,75 @@ export default function OrderCards({ orders, slug }) {
                               Back
                             </button>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
+                        )}
+
+                        {/* Cancel action — with reason input */}
+                        {cancellingOrder === i && (
+                          <div className="flex items-center gap-2 mb-2">
+                            <input
+                              type="text"
+                              placeholder="Cancellation reason (required)"
+                              value={cancelReason}
+                              onChange={(e) => setCancelReason(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex-1 text-xs font-mono bg-background border border-red-500/40 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500/50"
+                            />
                             <button
-                              onClick={(e) => { e.stopPropagation(); setShippingOrder(i); }}
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-md transition-all"
-                            >
-                              <Truck className="h-3 w-3" /> Mark as Shipped
-                            </button>
-                            <button
-                              disabled={cancelLoading === i}
+                              disabled={cancelLoading === i || !cancelReason.trim()}
                               onClick={async (e) => {
                                 e.stopPropagation();
-                                if (!window.confirm(`Cancel order ${orderId}? This will remove the order and notify the customer.`)) return;
                                 setCancelError('');
                                 setCancelLoading(i);
                                 try {
-                                  await cancelOrder(slug, orderId);
+                                  await cancelOrder(slug, orderId, cancelReason.trim());
                                   queryClient.invalidateQueries({ queryKey: ['orders', slug] });
+                                  setCancellingOrder(null);
+                                  setCancelReason('');
                                 } catch (err) {
                                   setCancelError(err.response?.data?.error || 'Failed to cancel');
                                 } finally {
                                   setCancelLoading(null);
                                 }
                               }}
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-md transition-all disabled:opacity-50"
+                              className="text-xs px-3 py-1.5 rounded-md inline-flex items-center gap-1 disabled:opacity-50 bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
                             >
-                              <Ban className="h-3 w-3" /> {cancelLoading === i ? 'Cancelling...' : 'Cancel Order'}
+                              <Ban className="h-3 w-3" /> {cancelLoading === i ? 'Cancelling...' : 'Confirm'}
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setCancellingOrder(null); setCancelReason(''); setCancelError(''); }}
+                              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1.5"
+                            >
+                              Back
                             </button>
                           </div>
                         )}
+
+                        {/* Action buttons row — shown when not in ship/cancel input mode */}
+                        {shippingOrder !== i && cancellingOrder !== i && !isCancelled && (
+                          <div className="flex items-center gap-2">
+                            {isPending && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setShippingOrder(i); }}
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-md transition-all"
+                              >
+                                <Truck className="h-3 w-3" /> Mark as Shipped
+                              </button>
+                            )}
+                            {!isShipped && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setCancellingOrder(i); }}
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-md transition-all"
+                              >
+                                <Ban className="h-3 w-3" /> Cancel Order
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {shipError && shippingOrder === i && (
                           <p className="text-xs text-destructive mt-1">{shipError}</p>
                         )}
-                        {cancelError && cancelLoading === null && (
+                        {cancelError && (cancellingOrder === i || cancelLoading === null) && (
                           <p className="text-xs text-destructive mt-1">{cancelError}</p>
                         )}
                       </div>

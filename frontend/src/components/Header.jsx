@@ -1,7 +1,7 @@
 import { useNavigate, Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { logout } from '../lib/api';
-import { LogOut, Plus, Rocket, Sun, Moon, Settings } from 'lucide-react';
+import { LogOut, Plus, Rocket, Sun, Moon, Settings, Activity } from 'lucide-react';
 
 export default function Header({ user, theme, toggleTheme }) {
   const navigate = useNavigate();
@@ -33,6 +33,13 @@ export default function Header({ user, theme, toggleTheme }) {
           >
             <Rocket className="h-3.5 w-3.5" />
             Launch Shop
+          </Link>
+          <Link
+            to="/mission-control"
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border/60 hover:border-primary/40 rounded-md px-3 py-1.5 transition-all"
+          >
+            <Activity className="h-3.5 w-3.5" />
+            Mission Control
           </Link>
           <Link
             to="/settings"
