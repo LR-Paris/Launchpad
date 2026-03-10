@@ -183,6 +183,9 @@ export const getMissionErrors = () =>
 export const getMissionSecurity = () =>
   api.get('/mission-control/security').then(r => r.data);
 
+export const getMissionAnalytics = () =>
+  api.get('/mission-control/analytics').then(r => r.data);
+
 // Analytics
 export const getAnalyticsOverview = (slug, range = '7d') =>
   api.get(`/shops/${slug}/analytics/overview?range=${range}`).then(r => r.data);

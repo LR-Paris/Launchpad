@@ -12,6 +12,13 @@ const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const { LOG_DIR } = require('./logger');
 
+function countryFlag(code) {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(
+    ...[...code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)
+  );
+}
+
 function findCsvPath(slug) {
   const candidates = [
     path.join(SHOPS_DIR, slug, 'DATABASE', 'Orders', 'orders.csv'),
@@ -320,6 +327,188 @@ router.get('/security', (req, res) => {
     activeSessions,
     securityScore,
   });
+});
+
+// GET /api/mission-control/analytics — Fleet-wide traffic intelligence
+router.get('/analytics', (req, res) => {
+  const db = getDb();
+  try {
+    // Check if page_views table exists
+    const tableExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='page_views'"
+    ).get();
+    if (!tableExists) {
+      return res.json({
+        totalViews: 0, totalVisitors: 0, liveVisitors: 0,
+        shopBreakdown: [], timeseries: [], topCountries: [],
+        topPages: [], topProducts: [], devices: { mobile: 0, tablet: 0, desktop: 0, total: 0 },
+        recentViews: [], hourlyHeatmap: [],
+      });
+    }
+
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const fifteenMinAgo = new Date(now - 15 * 60 * 1000).toISOString();
+    const oneHourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+
+    // Total views + unique visitors (24h)
+    const totals24h = db.prepare(`
+      SELECT COUNT(*) as totalViews, COUNT(DISTINCT visitor_id) as totalVisitors
+      FROM page_views WHERE created_at >= ?
+    `).get(twentyFourHoursAgo);
+
+    // "Live" visitors (active in last 15 minutes)
+    const live = db.prepare(`
+      SELECT COUNT(DISTINCT visitor_id) as count FROM page_views WHERE created_at >= ?
+    `).get(fifteenMinAgo);
+
+    // Visitors active in last hour (for trend)
+    const lastHour = db.prepare(`
+      SELECT COUNT(DISTINCT visitor_id) as count FROM page_views WHERE created_at >= ?
+    `).get(oneHourAgo);
+
+    // Per-shop breakdown (24h) — views, visitors, top country per shop
+    const shopBreakdown = db.prepare(`
+      SELECT shop_slug, COUNT(*) as views, COUNT(DISTINCT visitor_id) as visitors
+      FROM page_views WHERE created_at >= ?
+      GROUP BY shop_slug ORDER BY views DESC
+    `).all(twentyFourHoursAgo);
+
+    // Get shop names
+    const shopNames = {};
+    const allShops = db.prepare('SELECT slug, name FROM shops').all();
+    for (const s of allShops) shopNames[s.slug] = s.name;
+
+    // Top country per shop
+    const shopCountries = {};
+    for (const s of shopBreakdown) {
+      const topC = db.prepare(`
+        SELECT country, COUNT(*) as cnt FROM page_views
+        WHERE shop_slug = ? AND created_at >= ? AND country IS NOT NULL
+        GROUP BY country ORDER BY cnt DESC LIMIT 1
+      `).get(s.shop_slug, twentyFourHoursAgo);
+      shopCountries[s.shop_slug] = topC?.country || null;
+    }
+
+    const shopBreakdownEnriched = shopBreakdown.map(s => ({
+      slug: s.shop_slug,
+      name: shopNames[s.shop_slug] || s.shop_slug,
+      views: s.views,
+      visitors: s.visitors,
+      topCountry: shopCountries[s.shop_slug],
+    }));
+
+    // Hourly timeseries (last 24h)
+    const timeseries = db.prepare(`
+      SELECT strftime('%Y-%m-%d %H:00', created_at) as period,
+             COUNT(*) as views,
+             COUNT(DISTINCT visitor_id) as visitors
+      FROM page_views WHERE created_at >= ?
+      GROUP BY period ORDER BY period
+    `).all(twentyFourHoursAgo);
+
+    // Top countries (24h)
+    const topCountries = db.prepare(`
+      SELECT country, COUNT(*) as views, COUNT(DISTINCT visitor_id) as visitors
+      FROM page_views WHERE created_at >= ? AND country IS NOT NULL
+      GROUP BY country ORDER BY views DESC LIMIT 12
+    `).all(twentyFourHoursAgo);
+
+    const totalViewsForPct = totals24h.totalViews || 1;
+    const countriesEnriched = topCountries.map(c => ({
+      country: c.country,
+      views: c.views,
+      visitors: c.visitors,
+      percentage: Math.round((c.views / totalViewsForPct) * 100),
+      flag: countryFlag(c.country),
+    }));
+
+    // Top pages across all shops (24h)
+    const topPages = db.prepare(`
+      SELECT shop_slug, path, COUNT(*) as views, COUNT(DISTINCT visitor_id) as uniqueVisitors
+      FROM page_views WHERE created_at >= ?
+      GROUP BY shop_slug, path ORDER BY views DESC LIMIT 15
+    `).all(twentyFourHoursAgo);
+
+    const topPagesEnriched = topPages.map(p => ({
+      ...p,
+      shopName: shopNames[p.shop_slug] || p.shop_slug,
+    }));
+
+    // Top products across all shops (24h)
+    const topProducts = db.prepare(`
+      SELECT shop_slug, product_slug, COUNT(*) as views, COUNT(DISTINCT visitor_id) as uniqueVisitors
+      FROM page_views WHERE created_at >= ? AND product_slug IS NOT NULL
+      GROUP BY shop_slug, product_slug ORDER BY views DESC LIMIT 10
+    `).all(twentyFourHoursAgo);
+
+    const topProductsEnriched = topProducts.map(p => ({
+      ...p,
+      shopName: shopNames[p.shop_slug] || p.shop_slug,
+    }));
+
+    // Device breakdown (24h)
+    const devices = db.prepare(`
+      SELECT
+        SUM(CASE WHEN screen_w < 768 THEN 1 ELSE 0 END) as mobile,
+        SUM(CASE WHEN screen_w >= 768 AND screen_w < 1024 THEN 1 ELSE 0 END) as tablet,
+        SUM(CASE WHEN screen_w >= 1024 THEN 1 ELSE 0 END) as desktop,
+        COUNT(*) as total
+      FROM page_views WHERE created_at >= ? AND screen_w IS NOT NULL
+    `).get(twentyFourHoursAgo);
+
+    // Recent page views (last 20, for live feed)
+    const recentViews = db.prepare(`
+      SELECT shop_slug, path, visitor_id, country, product_slug, created_at
+      FROM page_views ORDER BY id DESC LIMIT 20
+    `).all();
+
+    const recentViewsEnriched = recentViews.map(v => ({
+      shopSlug: v.shop_slug,
+      shopName: shopNames[v.shop_slug] || v.shop_slug,
+      path: v.path,
+      visitorId: v.visitor_id.slice(0, 6),
+      country: v.country,
+      flag: countryFlag(v.country),
+      productSlug: v.product_slug,
+      timestamp: v.created_at,
+    }));
+
+    // Hourly heatmap (last 7 days, hour of day × day of week)
+    const heatmap = db.prepare(`
+      SELECT
+        CAST(strftime('%w', created_at) AS INTEGER) as dow,
+        CAST(strftime('%H', created_at) AS INTEGER) as hour,
+        COUNT(*) as views
+      FROM page_views WHERE created_at >= ?
+      GROUP BY dow, hour
+    `).all(sevenDaysAgo);
+
+    res.json({
+      totalViews: totals24h.totalViews || 0,
+      totalVisitors: totals24h.totalVisitors || 0,
+      liveVisitors: live?.count || 0,
+      lastHourVisitors: lastHour?.count || 0,
+      shopBreakdown: shopBreakdownEnriched,
+      timeseries,
+      topCountries: countriesEnriched,
+      topPages: topPagesEnriched,
+      topProducts: topProductsEnriched,
+      devices: {
+        mobile: devices?.mobile || 0,
+        tablet: devices?.tablet || 0,
+        desktop: devices?.desktop || 0,
+        total: devices?.total || 0,
+      },
+      recentViews: recentViewsEnriched,
+      hourlyHeatmap: heatmap,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    db.close();
+  }
 });
 
 module.exports = router;

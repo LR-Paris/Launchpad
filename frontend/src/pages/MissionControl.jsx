@@ -4,9 +4,10 @@ import { Link } from 'react-router-dom';
 import {
   ArrowLeft, AlertTriangle, Server, RefreshCw,
   ChevronDown, ChevronUp, Terminal, ShieldAlert, Store, ShoppingCart, X,
-  Rocket, Clock, Radio, Wifi, WifiOff, Package, Shield, Lock, Eye, Users
+  Rocket, Clock, Radio, Wifi, WifiOff, Package, Shield, Lock, Eye, Users,
+  BarChart3, Globe as GlobeIcon, Smartphone, Monitor, TrendingUp, Activity
 } from 'lucide-react';
-import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors, getMissionSecurity, getOrders } from '../lib/api';
+import { getMissionOverview, getSystemLogs, getShopMissionLogs, getMissionErrors, getMissionSecurity, getMissionAnalytics, getOrders } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Palantir-style 3D Globe — continent dot cloud, HQ city markers, arcs, rockets
@@ -559,6 +560,14 @@ function LifecycleBadge({ status }) {
   );
 }
 
+// Country code → flag emoji
+function countryFlag(code) {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(
+    ...[...code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main Mission Control
 // ---------------------------------------------------------------------------
@@ -592,8 +601,27 @@ export default function MissionControl() {
   const { data: securityData, refetch: refetchSecurity } = useQuery({
     queryKey: ['mission-security'], queryFn: getMissionSecurity, refetchInterval: 30000,
   });
+  const { data: analyticsData, refetch: refetchAnalytics } = useQuery({
+    queryKey: ['mission-analytics'], queryFn: getMissionAnalytics, refetchInterval: 15000,
+  });
 
   const security = securityData || {};
+  const analytics = analyticsData || {};
+  const liveVisitors = analytics.liveVisitors || 0;
+  const totalViews24h = analytics.totalViews || 0;
+  const totalVisitors24h = analytics.totalVisitors || 0;
+  const shopTraffic = analytics.shopBreakdown || [];
+  const trafficTimeseries = analytics.timeseries || [];
+  const trafficCountries = analytics.topCountries || [];
+  const trafficPages = analytics.topPages || [];
+  const trafficProducts = analytics.topProducts || [];
+  const trafficDevices = analytics.devices || { mobile: 0, tablet: 0, desktop: 0, total: 0 };
+  const recentPageViews = analytics.recentViews || [];
+  const hourlyHeatmap = analytics.hourlyHeatmap || [];
+
+  // Build traffic lookup per shop slug for left panel
+  const shopTrafficMap = {};
+  for (const s of shopTraffic) shopTrafficMap[s.slug] = s;
   const securityScore = security.securityScore ?? 100;
   const recentSecEvents = security.recentEvents || [];
   const stats24h = security.stats24h || {};
@@ -688,6 +716,12 @@ export default function MissionControl() {
           }`}>
             <Shield className="h-3 w-3" /> SEC {securityScore}
           </span>
+          <span className={`text-[11px] font-mono flex items-center gap-1 ${liveVisitors > 0 ? 'text-cyan-400' : 'text-[#484f58]'}`}>
+            <Eye className="h-3 w-3" /> {liveVisitors} LIVE
+          </span>
+          <span className="text-[11px] font-mono flex items-center gap-1 text-[#484f58]">
+            <BarChart3 className="h-3 w-3" /> {totalViews24h.toLocaleString()} VW
+          </span>
           {totalErrors > 0 && (
             <span className="text-[11px] font-mono text-amber-400 flex items-center gap-1 animate-pulse">
               <AlertTriangle className="h-3 w-3" /> {totalErrors} ALERT{totalErrors !== 1 ? 'S' : ''}
@@ -698,7 +732,7 @@ export default function MissionControl() {
             {runningShops.length}/{shops.length} ONLINE
           </span>
           <button
-            onClick={() => { refetchOverview(); refetchSysLogs(); refetchErrors(); refetchSecurity(); }}
+            onClick={() => { refetchOverview(); refetchSysLogs(); refetchErrors(); refetchSecurity(); refetchAnalytics(); }}
             className="text-[11px] font-mono text-[#484f58] hover:text-[#8b949e] flex items-center gap-1 transition-colors"
           >
             <RefreshCw className={`h-3 w-3 ${overviewLoading ? 'animate-spin' : ''}`} /> SYNC
@@ -737,6 +771,11 @@ export default function MissionControl() {
                       <span className="text-[10px] font-mono text-[#484f58] truncate">{shop.subdomain}</span>
                       {shop.errorCount > 0 && (
                         <span className="text-[10px] font-mono text-amber-400">{shop.errorCount}ERR</span>
+                      )}
+                      {shopTrafficMap[shop.slug] && (
+                        <span className="text-[10px] font-mono text-cyan-400/70">
+                          {shopTrafficMap[shop.slug].views}vw
+                        </span>
                       )}
                     </div>
                   </div>
@@ -834,6 +873,7 @@ export default function MissionControl() {
               { label: 'STOPPED', value: stoppedShops.length, color: stoppedShops.length > 0 ? '#f87171' : '#484f58' },
               { label: 'ALERTS', value: totalErrors, color: totalErrors > 0 ? '#fbbf24' : '#484f58' },
               { label: 'SECURITY', value: securityScore, color: securityScore >= 80 ? '#34d399' : securityScore >= 50 ? '#fbbf24' : '#f87171' },
+              { label: 'VISITORS', value: liveVisitors, color: liveVisitors > 0 ? '#22d3ee' : '#484f58' },
             ].map(m => (
               <div key={m.label} className="text-center px-4 py-2 rounded-lg"
                    style={{ background: 'rgba(10,15,26,0.75)', border: '1px solid #151b27' }}>
@@ -871,6 +911,7 @@ export default function MissionControl() {
             {[
               { id: 'alerts', label: 'ALERTS', count: totalErrors },
               { id: 'activity', label: 'ACTIVITY' },
+              { id: 'analytics', label: 'TRAFFIC', count: liveVisitors || 0 },
               { id: 'security', label: 'SECURITY', count: stats24h.loginFailed || 0 },
             ].map(t => (
               <button
@@ -958,6 +999,244 @@ export default function MissionControl() {
                   <div className="text-center py-8 text-[#484f58] text-[11px] font-mono">NO ACTIVITY</div>
                 )}
               </div>
+            )}
+
+            {selectedPanel === 'analytics' && (
+              <>
+                {/* Live + 24h summary */}
+                <div className="grid grid-cols-3 border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="text-center py-3 border-r" style={{ borderColor: '#151b27' }}>
+                    <div className={`text-[18px] font-bold font-mono ${liveVisitors > 0 ? 'text-cyan-400' : 'text-[#484f58]'}`}>
+                      {liveVisitors}
+                    </div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">LIVE NOW</div>
+                  </div>
+                  <div className="text-center py-3 border-r" style={{ borderColor: '#151b27' }}>
+                    <div className="text-[18px] font-bold font-mono text-[#c9d1d9]">{totalViews24h.toLocaleString()}</div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">VIEWS 24H</div>
+                  </div>
+                  <div className="text-center py-3">
+                    <div className="text-[18px] font-bold font-mono text-[#c9d1d9]">{totalVisitors24h.toLocaleString()}</div>
+                    <div className="text-[8px] font-mono tracking-[0.15em] text-[#484f58]">VISITORS</div>
+                  </div>
+                </div>
+
+                {/* Hourly sparkline (CSS-based) */}
+                <div className="px-3 py-3 border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58] mb-2">TRAFFIC 24H</div>
+                  {trafficTimeseries.length > 0 ? (
+                    <div className="flex items-end gap-px h-[48px]">
+                      {(() => {
+                        const maxV = Math.max(...trafficTimeseries.map(t => t.views), 1);
+                        return trafficTimeseries.map((t, i) => {
+                          const h = Math.max(2, (t.views / maxV) * 100);
+                          const isRecent = i >= trafficTimeseries.length - 2;
+                          return (
+                            <div key={i} className="flex-1 flex flex-col items-center justify-end group relative">
+                              <div
+                                className="w-full rounded-t-sm transition-all duration-300 min-h-[2px]"
+                                style={{
+                                  height: `${h}%`,
+                                  background: isRecent ? '#22d3ee' : 'rgba(57,197,187,0.4)',
+                                }}
+                              />
+                              <div className="absolute bottom-full mb-1 hidden group-hover:block px-1.5 py-0.5 rounded text-[9px] font-mono text-[#c9d1d9] whitespace-nowrap z-10"
+                                   style={{ background: '#0d1520', border: '1px solid #1b2333' }}>
+                                {t.period.split(' ')[1] || t.period} — {t.views}vw / {t.visitors}uv
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="h-[48px] flex items-center justify-center text-[10px] font-mono text-[#484f58]">
+                      NO TRAFFIC DATA
+                    </div>
+                  )}
+                </div>
+
+                {/* Per-shop traffic breakdown */}
+                <div className="border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="px-3 py-2">
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">SHOP TRAFFIC</div>
+                  </div>
+                  {shopTraffic.length > 0 ? shopTraffic.map((s, i) => {
+                    const maxViews = shopTraffic[0]?.views || 1;
+                    const barPct = Math.max(3, (s.views / maxViews) * 100);
+                    return (
+                      <div key={i} className="px-3 py-1.5 border-t hover:bg-[#0d1520] transition-colors" style={{ borderColor: '#151b27' }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Store className="h-2.5 w-2.5 text-[#39C5BB]" />
+                          <span className="text-[10px] font-mono font-bold text-[#c9d1d9] flex-1 truncate">{s.name}</span>
+                          {s.topCountry && (
+                            <span className="text-[10px]" title={s.topCountry}>{countryFlag(s.topCountry)}</span>
+                          )}
+                          <span className="text-[10px] font-mono text-cyan-400">{s.views}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-[4px] rounded-full overflow-hidden" style={{ background: '#151b27' }}>
+                            <div className="h-full rounded-full" style={{ width: `${barPct}%`, background: 'rgba(34,211,238,0.5)' }} />
+                          </div>
+                          <span className="text-[9px] font-mono text-[#484f58]">{s.visitors}uv</span>
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="text-center py-4 text-[10px] font-mono text-[#484f58]">NO SHOP TRAFFIC</div>
+                  )}
+                </div>
+
+                {/* Top Countries */}
+                <div className="border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="px-3 py-2">
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">TOP COUNTRIES</div>
+                  </div>
+                  {trafficCountries.length > 0 ? trafficCountries.slice(0, 8).map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-1 border-t" style={{ borderColor: '#151b27' }}>
+                      <span className="text-[12px] w-5 text-center">{c.flag}</span>
+                      <span className="text-[10px] font-mono text-[#8b949e] w-[32px]">{c.country}</span>
+                      <div className="flex-1 h-[4px] rounded-full overflow-hidden" style={{ background: '#151b27' }}>
+                        <div className="h-full rounded-full" style={{ width: `${Math.max(3, c.percentage)}%`, background: 'rgba(57,197,187,0.5)' }} />
+                      </div>
+                      <span className="text-[9px] font-mono text-[#484f58] w-[36px] text-right">{c.views}</span>
+                      <span className="text-[9px] font-mono text-[#484f58] w-[28px] text-right">{c.percentage}%</span>
+                    </div>
+                  )) : (
+                    <div className="text-center py-4 text-[10px] font-mono text-[#484f58]">NO GEO DATA</div>
+                  )}
+                </div>
+
+                {/* Device Breakdown */}
+                <div className="border-b" style={{ borderColor: '#151b27' }}>
+                  <div className="px-3 py-2">
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">DEVICES</div>
+                  </div>
+                  {trafficDevices.total > 0 ? (
+                    <div className="px-3 pb-2.5">
+                      <div className="flex h-[6px] rounded-full overflow-hidden mb-2" style={{ background: '#151b27' }}>
+                        {trafficDevices.desktop > 0 && (
+                          <div style={{ width: `${(trafficDevices.desktop / trafficDevices.total) * 100}%`, background: '#39C5BB' }} />
+                        )}
+                        {trafficDevices.tablet > 0 && (
+                          <div style={{ width: `${(trafficDevices.tablet / trafficDevices.total) * 100}%`, background: '#818cf8' }} />
+                        )}
+                        {trafficDevices.mobile > 0 && (
+                          <div style={{ width: `${(trafficDevices.mobile / trafficDevices.total) * 100}%`, background: '#fbbf24' }} />
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <Monitor className="h-2.5 w-2.5 text-[#39C5BB]" />
+                          <span className="text-[9px] font-mono text-[#8b949e]">
+                            {Math.round((trafficDevices.desktop / trafficDevices.total) * 100)}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-mono text-[#8b949e]" style={{ color: '#818cf8' }}>TAB</span>
+                          <span className="text-[9px] font-mono text-[#8b949e]">
+                            {Math.round((trafficDevices.tablet / trafficDevices.total) * 100)}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Smartphone className="h-2.5 w-2.5 text-amber-400" />
+                          <span className="text-[9px] font-mono text-[#8b949e]">
+                            {Math.round((trafficDevices.mobile / trafficDevices.total) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-3 text-[10px] font-mono text-[#484f58]">NO DEVICE DATA</div>
+                  )}
+                </div>
+
+                {/* Top Products */}
+                {trafficProducts.length > 0 && (
+                  <div className="border-b" style={{ borderColor: '#151b27' }}>
+                    <div className="px-3 py-2">
+                      <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">POPULAR PRODUCTS</div>
+                    </div>
+                    {trafficProducts.slice(0, 6).map((p, i) => (
+                      <div key={i} className="flex items-center gap-2 px-3 py-1 border-t" style={{ borderColor: '#151b27' }}>
+                        <span className="text-[9px] font-mono text-[#484f58] w-[14px]">{i + 1}</span>
+                        <span className="text-[10px] font-mono text-[#8b949e] flex-1 truncate">{p.product_slug}</span>
+                        <span className="text-[9px] font-mono text-[#484f58] truncate max-w-[60px]">{p.shopName}</span>
+                        <span className="text-[10px] font-mono text-cyan-400">{p.views}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Hourly Heatmap (7d) */}
+                {hourlyHeatmap.length > 0 && (
+                  <div className="border-b" style={{ borderColor: '#151b27' }}>
+                    <div className="px-3 py-2">
+                      <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">WEEKLY HEATMAP</div>
+                    </div>
+                    <div className="px-3 pb-2.5">
+                      <div className="flex gap-px">
+                        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, dow) => {
+                          const dayData = hourlyHeatmap.filter(h => h.dow === dow);
+                          return (
+                            <div key={dow} className="flex-1 flex flex-col gap-px items-center">
+                              <span className="text-[7px] font-mono text-[#484f58] mb-0.5">{day}</span>
+                              {Array.from({ length: 24 }, (_, hour) => {
+                                const cell = dayData.find(d => d.hour === hour);
+                                const maxH = Math.max(...hourlyHeatmap.map(h => h.views), 1);
+                                const intensity = cell ? cell.views / maxH : 0;
+                                return (
+                                  <div
+                                    key={hour}
+                                    className="w-full aspect-square rounded-[1px]"
+                                    style={{
+                                      background: intensity > 0
+                                        ? `rgba(34,211,238,${0.1 + intensity * 0.8})`
+                                        : '#0d1117',
+                                    }}
+                                    title={`${day} ${hour}:00 — ${cell?.views || 0} views`}
+                                  />
+                                );
+                              })}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Feed — Recent Page Views */}
+                <div>
+                  <div className="px-3 py-2 border-b" style={{ borderColor: '#151b27' }}>
+                    <div className="text-[9px] font-mono tracking-[0.2em] text-[#484f58]">LIVE FEED</div>
+                  </div>
+                  {recentPageViews.length > 0 ? recentPageViews.map((v, i) => {
+                    const time = v.timestamp ? new Date(v.timestamp).toLocaleTimeString('en-US', { hour12: false }) : '';
+                    return (
+                      <div key={i} className="flex items-start gap-2 px-3 py-1.5 border-b hover:bg-[#0d1520] transition-colors" style={{ borderColor: '#151b27' }}>
+                        <div className="w-1 h-1 rounded-full bg-cyan-400 mt-1.5 flex-shrink-0" style={{ opacity: i === 0 ? 1 : 0.4 + (1 - i / 20) * 0.6 }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-cyan-400/80 truncate">{v.shopName}</span>
+                            <span className="text-[9px] font-mono text-[#484f58] ml-auto">{time}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-mono text-[#8b949e] truncate">{v.path}</span>
+                            {v.flag && <span className="text-[10px]">{v.flag}</span>}
+                            <span className="text-[8px] font-mono text-[#484f58] ml-auto">{v.visitorId}</span>
+                          </div>
+                          {v.productSlug && (
+                            <span className="text-[9px] font-mono text-amber-400/60">product: {v.productSlug}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="text-center py-8 text-[#484f58] text-[11px] font-mono">NO PAGE VIEWS YET</div>
+                  )}
+                </div>
+              </>
             )}
 
             {selectedPanel === 'security' && (
