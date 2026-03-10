@@ -583,4 +583,5 @@ module.exports = {
   sendCancellationEmail,
   getAdminEmail,
   getShopBranding,
+  esc,
 };

@@ -3,12 +3,14 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const express = require('express');
 const session = require('express-session');
 const cors = require('cors');
+const crypto = require('crypto');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 
 const Database = require('better-sqlite3');
-const { router: authRouter, requireAuth, loadUsers } = require('./auth');
+const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME } = require('./auth');
 
 // Minimal session store using better-sqlite3 (replaces connect-sqlite3 which
 // depends on the native sqlite3 module that fails to build on alpine).
@@ -80,8 +82,38 @@ if (users.length === 0) {
   console.warn('\n⚠  No admin user found. Run: npm run create-admin\n');
 }
 
+// ---------------------------------------------------------------------------
+// Audit logger — append-only structured log for security-relevant events
+// ---------------------------------------------------------------------------
+const AUDIT_LOG_PATH = path.join(__dirname, '..', 'data', 'audit.log');
+function auditLog(event, { actor, details, req } = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    actor: actor || (req?.session?.user?.username) || 'system',
+    ip: req ? (req.ip || req.connection?.remoteAddress) : undefined,
+    details,
+  };
+  try {
+    fs.appendFileSync(AUDIT_LOG_PATH, JSON.stringify(entry) + '\n');
+  } catch { /* best-effort */ }
+}
+// Expose auditLog so routes can use it
+app.locals.auditLog = auditLog;
+
 // Middleware
-app.use(express.json());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+app.use(express.json({ limit: '10mb' }));
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (server-to-server, curl, etc.)
@@ -99,8 +131,8 @@ app.use(cors({
       if (domainPattern.test(origin)) return callback(null, true);
     }
 
-    // Allow raw IP access (same server) and local dev
-    if (/^https?:\/\/(localhost|127\.0\.0\.1|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin)) {
+    // Allow localhost and loopback only in development
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return callback(null, true);
     }
 
@@ -120,6 +152,7 @@ app.use(session({
     dir: dataDir,
     db: 'sessions.db',
   }),
+  name: SESSION_COOKIE_NAME,
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -131,7 +164,37 @@ app.use(session({
   },
 }));
 
-// Rate limit login endpoint
+// ---------------------------------------------------------------------------
+// CSRF protection — double-submit cookie pattern
+// ---------------------------------------------------------------------------
+function csrfProtection(req, res, next) {
+  // Skip for GET/HEAD/OPTIONS (safe methods) and unauthenticated webhook routes
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+  // Generate CSRF token if session doesn't have one
+  if (req.session && !req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+  }
+
+  // Check token from header matches session
+  const headerToken = req.headers['x-csrf-token'];
+  if (!req.session?.csrfToken || headerToken !== req.session.csrfToken) {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
+  }
+  next();
+}
+
+// Endpoint to fetch CSRF token (called by frontend on load)
+app.get('/api/auth/csrf-token', (req, res) => {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+  }
+  res.json({ csrfToken: req.session.csrfToken });
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5,
@@ -140,8 +203,28 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Global rate limiter for authenticated API endpoints
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120,
+  message: { error: 'Too many requests, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', globalLimiter);
+
+// Rate limit password change endpoint
+const passwordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many password change attempts, try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Routes
 app.post('/api/auth/login', loginLimiter);
+app.post('/api/auth/change-password', passwordChangeLimiter);
 app.use('/api/auth', authRouter);
 
 // Unauthenticated webhook for Shuttle containers (must come BEFORE requireAuth)
@@ -154,24 +237,28 @@ const notifyLimiter = rateLimit({
 });
 app.use('/api/shops', notifyLimiter, ordersWebhookRouter);
 
-// Protected routes
-app.use('/api/shops', requireAuth, shopsRouter);
-app.use('/api/shops', requireAuth, ordersRouter);
-app.use('/api/shops', requireAuth, filesRouter);
-app.use('/api/shops', requireAuth, inventoryRouter);
+// Protected routes — CSRF enforced on state-changing requests
+app.use('/api/shops', requireAuth, csrfProtection, shopsRouter);
+app.use('/api/shops', requireAuth, csrfProtection, ordersRouter);
+app.use('/api/shops', requireAuth, csrfProtection, filesRouter);
+app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
 
-// System / update routes (protected)
-app.use('/api/system', requireAuth, updateRouter);
+// System / update routes (protected + CSRF)
+app.use('/api/system', requireAuth, csrfProtection, updateRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Global error handler — surface useful error messages instead of bare 500s
+// Global error handler — return generic messages in production
 app.use((err, req, res, next) => {
-  console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  console.error(`[ERROR] ${req.method} ${req.path}:`, err.message, err.stack);
+  const status = err.status || 500;
+  const message = process.env.NODE_ENV === 'production' && status === 500
+    ? 'Internal server error'
+    : err.message || 'Internal server error';
+  res.status(status).json({ error: message });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -121,7 +121,8 @@ router.get('/branches', async (req, res) => {
 
     res.json({ branches: unique, currentBranch: git.branch });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[update] branches error:', err.message);
+    res.status(500).json({ error: 'Failed to list branches.' });
   }
 });
 
@@ -172,15 +173,23 @@ router.get('/check-update', async (req, res) => {
       releaseUrl,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[update] check-update error:', err.message);
+    res.status(500).json({ error: 'Failed to check for updates.' });
   }
 });
+
+// Strict branch name validation to prevent command injection
+const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\/-]+$/;
 
 // POST /api/system/update — pull latest from GitHub and rebuild
 router.post('/update', async (req, res) => {
   const log = [];
   const { branch } = req.body || {};
   const targetBranch = branch || 'main';
+
+  if (!SAFE_BRANCH_RE.test(targetBranch)) {
+    return res.status(400).json({ error: 'Invalid branch name.' });
+  }
 
   try {
     // Ensure we're in a git repo
@@ -222,9 +231,10 @@ router.post('/update', async (req, res) => {
           });
           log.push(`git checkout -b ${targetBranch}: ${checkout.trim()}`);
         } catch (e2) {
-          log.push(`Failed to switch to branch ${targetBranch}: ${e2.message}`);
+          console.error(`[update] switch to ${targetBranch} failed:`, e2.message);
+          log.push(`Failed to switch to branch ${targetBranch}.`);
           try { execSync('git stash pop 2>&1', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch {}
-          return res.status(500).json({ error: `Could not switch to branch "${targetBranch}".`, log: log.join('\n') });
+          return res.status(500).json({ error: `Could not switch to branch "${targetBranch}".` });
         }
       }
     }
@@ -239,10 +249,11 @@ router.post('/update', async (req, res) => {
       });
       log.push(`git pull origin ${targetBranch}: ${pull.trim()}`);
     } catch (e) {
-      log.push(`git pull failed: ${e.stderr || e.message}`);
+      console.error(`[update] git pull failed:`, e.stderr || e.message);
+      log.push('git pull failed.');
       // Try to restore stash before returning error
       try { execSync('git stash pop 2>&1', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch {}
-      return res.status(500).json({ error: 'Git pull failed.', log: log.join('\n') });
+      return res.status(500).json({ error: 'Git pull failed.' });
     }
 
     // Pop stash if we had one
@@ -285,10 +296,11 @@ router.post('/update', async (req, res) => {
       }
     }
 
+    req.app.locals.auditLog?.('system_updated', { req, details: { branch: targetBranch, version: newVersion } });
     res.json({ message: 'Update complete', version: newVersion, log: log.join('\n') });
   } catch (err) {
-    log.push(`Error: ${err.message}`);
-    res.status(500).json({ error: err.message, log: log.join('\n') });
+    console.error('[update] system update error:', err.message, err.stack);
+    res.status(500).json({ error: 'System update failed.' });
   }
 });
 

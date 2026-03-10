@@ -6,6 +6,16 @@ const path = require('path');
 const router = express.Router();
 const USERS_FILE = path.join(__dirname, '..', 'data', 'users.json');
 const BCRYPT_ROUNDS = 12;
+const SESSION_COOKIE_NAME = '__lp_sid';
+
+// Password complexity: min 8 chars, at least one uppercase, one lowercase, one digit
+function validatePasswordComplexity(password) {
+  if (password.length < 8) return 'Password must be at least 8 characters';
+  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+  if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
+  return null;
+}
 
 function loadUsers() {
   if (!fs.existsSync(USERS_FILE)) {
@@ -37,6 +47,7 @@ function requireAuth(req, res, next) {
 // POST /api/auth/login
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
+  const audit = req.app.locals.auditLog;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
@@ -46,6 +57,7 @@ router.post('/login', (req, res) => {
   const user = users.find(u => u.username === username);
 
   if (!user) {
+    audit?.('login_failed', { req, details: { username, reason: 'user_not_found' } });
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -54,6 +66,7 @@ router.post('/login', (req, res) => {
       return res.status(500).json({ error: 'Authentication error' });
     }
     if (!match) {
+      audit?.('login_failed', { req, details: { username, reason: 'wrong_password' } });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -62,6 +75,7 @@ router.post('/login', (req, res) => {
       if (saveErr) {
         return res.status(500).json({ error: 'Failed to save session' });
       }
+      audit?.('login_success', { req, actor: user.username });
       res.json({ user: { username: user.username } });
     });
   });
@@ -73,12 +87,15 @@ router.post('/change-password', (req, res) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
+  const audit = req.app.locals.auditLog;
   const { oldPassword, newPassword } = req.body;
   if (!oldPassword || !newPassword) {
     return res.status(400).json({ error: 'oldPassword and newPassword are required' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+
+  const complexityError = validatePasswordComplexity(newPassword);
+  if (complexityError) {
+    return res.status(400).json({ error: complexityError });
   }
 
   const users = loadUsers();
@@ -89,12 +106,16 @@ router.post('/change-password', (req, res) => {
 
   bcrypt.compare(oldPassword, users[userIndex].password, (err, match) => {
     if (err) return res.status(500).json({ error: 'Authentication error' });
-    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
+    if (!match) {
+      audit?.('password_change_failed', { req, details: { reason: 'wrong_current_password' } });
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
 
     bcrypt.hash(newPassword, BCRYPT_ROUNDS, (hashErr, hash) => {
       if (hashErr) return res.status(500).json({ error: 'Failed to hash password' });
       users[userIndex].password = hash;
       saveUsers(users);
+      audit?.('password_changed', { req });
       res.json({ message: 'Password changed successfully' });
     });
   });
@@ -102,11 +123,14 @@ router.post('/change-password', (req, res) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
+  const audit = req.app.locals.auditLog;
+  const username = req.session?.user?.username;
   req.session.destroy(err => {
     if (err) {
       return res.status(500).json({ error: 'Logout failed' });
     }
-    res.clearCookie('connect.sid');
+    audit?.('logout', { actor: username, req });
+    res.clearCookie(SESSION_COOKIE_NAME);
     res.json({ message: 'Logged out' });
   });
 });
@@ -119,4 +143,4 @@ router.get('/me', (req, res) => {
   res.json({ user: req.session.user });
 });
 
-module.exports = { router, requireAuth, loadUsers, saveUsers, BCRYPT_ROUNDS };
+module.exports = { router, requireAuth, loadUsers, saveUsers, BCRYPT_ROUNDS, SESSION_COOKIE_NAME };

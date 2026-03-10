@@ -195,9 +195,11 @@ router.post('/:slug/orders/wipe', (req, res) => {
     const firstLine = content.split('\n')[0];
     // Write back just the header row
     fs.writeFileSync(csvPath, firstLine + '\n');
+    req.app.locals.auditLog?.('orders_wiped', { req, details: { slug } });
     res.json({ message: 'Orders wiped. CSV header preserved.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[orders] wipe ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to wipe orders.' });
   }
 });
 
@@ -407,6 +409,7 @@ router.post('/:slug/orders/:orderId/ship', (req, res) => {
     console.error(`[ship] Email failed for ${slug}/${orderId}: ${err.message}`);
   });
 
+  req.app.locals.auditLog?.('order_shipped', { req, details: { slug, orderId, trackingNumber } });
   res.json({ message: 'Order marked as shipped', order: updatedRow });
 });
 
@@ -446,6 +449,7 @@ router.post('/:slug/orders/:orderId/cancel', (req, res) => {
     console.error(`[cancel] Email failed for ${slug}/${orderId}: ${err.message}`);
   });
 
+  req.app.locals.auditLog?.('order_cancelled', { req, details: { slug, orderId } });
   res.json({ message: 'Order cancelled', order: row });
 });
 

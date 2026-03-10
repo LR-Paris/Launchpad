@@ -615,13 +615,15 @@ router.post('/', (req, res) => {
     log.push('Nginx reloaded.');
 
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
+    req.app.locals.auditLog?.('shop_created', { req, details: { slug, name } });
     res.status(201).json({ shop, log: log.join('\n') });
   } catch (err) {
     // Cleanup on failure
+    console.error(`[shops] create ${slug} error:`, err.message);
     if (fs.existsSync(shopDir)) {
       fs.rmSync(shopDir, { recursive: true, force: true });
     }
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to create shop.' });
   } finally {
     db.close();
   }
@@ -641,7 +643,8 @@ router.get('/', (req, res) => {
 
     res.json({ shops: updatedShops });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[shops] list error:', err.message);
+    res.status(500).json({ error: 'Failed to list shops.' });
   } finally {
     db.close();
   }
@@ -656,7 +659,8 @@ router.get('/:slug', (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
     res.json({ shop: { ...shop, status: getContainerStatus(slug) } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] get ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to get shop details.' });
   } finally {
     db.close();
   }
@@ -754,9 +758,11 @@ router.patch('/:slug', (req, res) => {
     ).run(newSlug, newName, newDescription, newSlug, newLifecycle, slug);
 
     const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
+    req.app.locals.auditLog?.('shop_updated', { req, details: { slug, newSlug, name: newName, lifecycle_status: newLifecycle } });
     res.json({ shop: updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] patch ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to update shop.' });
   } finally {
     db.close();
   }
@@ -783,7 +789,8 @@ router.get('/:slug/logs', (req, res) => {
     }
     res.json({ logs });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] logs ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to retrieve logs.' });
   } finally {
     db.close();
   }
@@ -834,6 +841,7 @@ router.delete('/:slug', (req, res) => {
     // Remove from database
     db.prepare('DELETE FROM shops WHERE slug = ?').run(slug);
 
+    req.app.locals.auditLog?.('shop_deleted', { req, details: { slug, deleteFiles } });
     res.json({ message: `Shop "${slug}" removed` });
   } finally {
     db.close();
@@ -861,13 +869,16 @@ router.post('/:slug/start', (req, res) => {
       });
     } catch (err) {
       const msg = err.stdout?.toString() || err.stderr?.toString() || err.message;
+      console.error(`[shops] start ${slug} failed:`, msg);
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
-      return res.status(500).json({ error: msg });
+      return res.status(500).json({ error: 'Failed to start shop container.' });
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    req.app.locals.auditLog?.('shop_started', { req, details: { slug } });
     res.json({ message: `Shop "${slug}" started`, log: out });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] start ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to start shop.' });
   } finally {
     db.close();
   }
@@ -891,12 +902,15 @@ router.post('/:slug/stop', (req, res) => {
       });
     } catch (err) {
       const msg = err.stdout?.toString() || err.stderr?.toString() || err.message;
-      return res.status(500).json({ error: msg });
+      console.error(`[shops] stop ${slug} failed:`, msg);
+      return res.status(500).json({ error: 'Failed to stop shop container.' });
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('stopped', slug);
+    req.app.locals.auditLog?.('shop_stopped', { req, details: { slug } });
     res.json({ message: `Shop "${slug}" stopped`, log: out });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] stop ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to stop shop.' });
   } finally {
     db.close();
   }
@@ -930,14 +944,17 @@ router.post('/:slug/restart', (req, res) => {
         });
       } catch (upErr) {
         const msg = upErr.stdout?.toString() || upErr.stderr?.toString() || upErr.message;
+        console.error(`[shops] restart ${slug} failed:`, msg);
         db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
-        return res.status(500).json({ error: msg });
+        return res.status(500).json({ error: 'Failed to restart shop container.' });
       }
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    req.app.locals.auditLog?.('shop_restarted', { req, details: { slug } });
     res.json({ message: `Shop "${slug}" restarted`, log: out });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[shops] restart ${slug} error:`, err.message);
+    res.status(500).json({ error: 'Failed to restart shop.' });
   } finally {
     db.close();
   }
@@ -997,16 +1014,19 @@ router.post('/:slug/deploy', (req, res) => {
       log.push(upOut || 'Container rebuilt.');
     } catch (buildErr) {
       const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
-      log.push(`Build error: ${msg}`);
+      console.error(`[shops] deploy ${slug} build failed:`, msg);
+      log.push('Build error: container rebuild failed.');
       db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
-      return res.status(500).json({ error: msg, log: log.join('\n') });
+      return res.status(500).json({ error: 'Container rebuild failed.', log: log.join('\n') });
     }
 
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
+    req.app.locals.auditLog?.('shop_deployed', { req, details: { slug } });
     res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n') });
   } catch (err) {
+    console.error(`[shops] deploy ${slug} error:`, err.message);
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Deploy failed.' });
   } finally {
     db.close();
   }
@@ -1082,7 +1102,8 @@ router.get('/:slug/check-update', (req, res) => {
       commitsBehind,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[shops] error:', err.message);
+    res.status(500).json({ error: 'An unexpected error occurred.' });
   }
 });
 
@@ -1117,7 +1138,8 @@ router.get('/:slug/version', (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[shops] error:', err.message);
+    res.status(500).json({ error: 'An unexpected error occurred.' });
   } finally {
     db.close();
   }
@@ -1251,7 +1273,8 @@ router.post('/:slug/update-template', (req, res) => {
     log.push(`Update complete. Now at ${updatedVersion} (commit ${newCommit}).`);
     res.json({ message: `Shop "${slug}" updated to ${updatedVersion}`, commit: newCommit, log: log.join('\n') });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[shops] error:', err.message);
+    res.status(500).json({ error: 'An unexpected error occurred.' });
   } finally {
     db.close();
   }
@@ -1378,7 +1401,8 @@ router.post('/:slug/upgrade', (req, res) => {
 
     res.json({ message: `Shop "${slug}" upgraded to ${upgradedVersion}`, log: log.join('\n') });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[shops] error:', err.message);
+    res.status(500).json({ error: 'An unexpected error occurred.' });
   } finally {
     db.close();
   }

@@ -17,7 +17,11 @@ const CANCEL_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
 // ---------------------------------------------------------------------------
 
 function getSecret() {
-  return process.env.SESSION_SECRET || process.env.MAILGUN_API_KEY || 'launchpad-cancel-fallback';
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error('SESSION_SECRET is not set — cannot generate cancel tokens.');
+  }
+  return secret;
 }
 
 function generateCancelToken(orderId, slug) {
@@ -103,8 +107,19 @@ router.post('/:slug/orders/notify', (req, res) => {
   const { slug } = req.params;
   const { orderData } = req.body;
 
-  if (!orderData || typeof orderData !== 'object') {
-    return res.status(400).json({ error: 'orderData is required' });
+  if (!orderData || typeof orderData !== 'object' || Array.isArray(orderData)) {
+    return res.status(400).json({ error: 'orderData must be a non-array object' });
+  }
+
+  // Validate and sanitize orderData fields — reject unexpected types
+  const MAX_FIELD_LENGTH = 10000;
+  for (const [key, value] of Object.entries(orderData)) {
+    if (value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean' && !Array.isArray(value) && typeof value !== 'object') {
+      return res.status(400).json({ error: `Invalid type for orderData field "${key}"` });
+    }
+    if (typeof value === 'string' && value.length > MAX_FIELD_LENGTH) {
+      return res.status(400).json({ error: `orderData field "${key}" exceeds maximum length` });
+    }
   }
 
   if (!shopExists(slug)) {
@@ -274,8 +289,12 @@ router.get('/:slug/orders/email-image/:productId', (req, res) => {
 // Cancel page HTML renderer
 // ---------------------------------------------------------------------------
 function cancelPage({ error, companyName, primaryColor, orderId, customerName, slug, token, showForm, success }) {
-  const brand = primaryColor || '#00b4d8';
-  const name = companyName || 'Store';
+  const { esc } = require('./email');
+  const brand = /^#[0-9a-fA-F]{3,8}$/.test(primaryColor || '') ? primaryColor : '#00b4d8';
+  const name = esc(companyName || 'Store');
+  const safeOrderId = esc(orderId || '');
+  const safeName = esc(customerName || '');
+  const safeToken = esc(token || '');
 
   let body = '';
   if (error) {
@@ -283,26 +302,26 @@ function cancelPage({ error, companyName, primaryColor, orderId, customerName, s
       <div style="text-align:center;padding:40px 20px;">
         <div style="font-size:48px;margin-bottom:16px;">&#10060;</div>
         <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Cannot Cancel Order</h2>
-        <p style="color:#666;font-size:14px;line-height:1.5;max-width:400px;margin:0 auto;">${error}</p>
+        <p style="color:#666;font-size:14px;line-height:1.5;max-width:400px;margin:0 auto;">${esc(error)}</p>
       </div>`;
   } else if (success) {
     body = `
       <div style="text-align:center;padding:40px 20px;">
         <div style="font-size:48px;margin-bottom:16px;">&#9989;</div>
         <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Order Cancelled</h2>
-        <p style="color:#666;font-size:14px;line-height:1.5;">Order <strong>${orderId}</strong> has been successfully cancelled.</p>
+        <p style="color:#666;font-size:14px;line-height:1.5;">Order <strong>${safeOrderId}</strong> has been successfully cancelled.</p>
         <p style="color:#999;font-size:12px;margin-top:12px;">You will receive a confirmation email shortly.</p>
       </div>`;
   } else if (showForm) {
     body = `
       <div style="text-align:center;padding:40px 20px;">
         <div style="font-size:48px;margin-bottom:16px;">&#9888;&#65039;</div>
-        <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Cancel Order ${orderId}?</h2>
+        <h2 style="margin:0 0 8px;font-size:20px;color:#111;">Cancel Order ${safeOrderId}?</h2>
         <p style="color:#666;font-size:14px;line-height:1.5;max-width:400px;margin:0 auto;">
-          Hi ${customerName}, are you sure you want to cancel this order? This action cannot be undone.
+          Hi ${safeName}, are you sure you want to cancel this order? This action cannot be undone.
         </p>
         <form method="POST" style="margin-top:24px;">
-          <input type="hidden" name="token" value="${token}" />
+          <input type="hidden" name="token" value="${safeToken}" />
           <button type="submit" style="background:#dc2626;color:#fff;border:none;padding:12px 32px;font-size:14px;font-weight:600;border-radius:8px;cursor:pointer;letter-spacing:0.3px;">
             Yes, Cancel My Order
           </button>

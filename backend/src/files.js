@@ -7,9 +7,20 @@ const AdmZip = require('adm-zip');
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB per file
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const tmpDir = path.join(__dirname, '..', 'data', 'tmp');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      cb(null, tmpDir);
+    },
+    filename: (req, file, cb) => {
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    },
+  }),
+  limits: { fileSize: MAX_FILE_SIZE },
 });
 
 function safeShopPath(slug, relPath) {
@@ -149,6 +160,7 @@ router.put('/:slug/files/write', (req, res) => {
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, content, 'utf8');
+  req.app.locals.auditLog?.('file_written', { req, details: { slug, path: relPath } });
   res.json({ message: 'File saved', path: relPath });
 });
 
@@ -171,11 +183,27 @@ router.delete('/:slug/files', (req, res) => {
   } else {
     fs.unlinkSync(resolved);
   }
+  req.app.locals.auditLog?.('file_deleted', { req, details: { slug, path: relPath, isDirectory: stat.isDirectory() } });
   res.json({ message: 'Deleted', path: relPath });
 });
 
 // POST /api/shops/:slug/files/upload-zip?path=DATABASE
-const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 1024 } }); // 1GB
+const uploadZip = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const tmpDir = path.join(__dirname, '..', 'data', 'tmp');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      cb(null, tmpDir);
+    },
+    filename: (req, file, cb) => {
+      cb(null, `zip-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    },
+  }),
+  limits: { fileSize: MAX_FILE_SIZE },
+});
+
+const MAX_ZIP_EXTRACTED_SIZE = 500 * 1024 * 1024; // 500MB max uncompressed
+
 router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';
@@ -183,8 +211,18 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    const zip = new AdmZip(req.file.buffer);
+    const zip = new AdmZip(req.file.path);
     const entries = zip.getEntries();
+
+    // Zip bomb protection: check total uncompressed size
+    let totalSize = 0;
+    for (const entry of entries) {
+      totalSize += entry.header.size;
+      if (totalSize > MAX_ZIP_EXTRACTED_SIZE) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: `Zip uncompressed size exceeds ${MAX_ZIP_EXTRACTED_SIZE / 1024 / 1024}MB limit` });
+      }
+    }
 
     // Delete the existing target folder entirely so the zip fully replaces it
     const targetDir = path.join(shopDir, relPath);
@@ -244,8 +282,13 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
       }
     }
 
+    // Clean up temp file
+    try { fs.unlinkSync(req.file.path); } catch {}
+
+    req.app.locals.auditLog?.('zip_uploaded', { req, details: { slug, path: relPath, fileCount } });
     res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
   } catch (err) {
+    try { fs.unlinkSync(req.file.path); } catch {}
     res.status(400).json({ error: 'Failed to extract zip: ' + err.message });
   }
 });
@@ -263,7 +306,8 @@ router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, req.file.buffer);
+  fs.renameSync(req.file.path, resolved);
+  req.app.locals.auditLog?.('file_replaced', { req, details: { slug, path: relPath } });
   res.json({ message: 'File replaced', path: relPath });
 });
 
@@ -284,10 +328,11 @@ router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
   for (const file of req.files) {
     const safeName = path.basename(file.originalname);
     const dest = path.join(resolved, safeName);
-    fs.writeFileSync(dest, file.buffer);
+    fs.renameSync(file.path, dest);
     saved.push(safeName);
   }
 
+  req.app.locals.auditLog?.('files_uploaded', { req, details: { slug, path: relPath, files: saved } });
   res.json({ message: `Uploaded ${saved.length} file(s)`, files: saved });
 });
 
