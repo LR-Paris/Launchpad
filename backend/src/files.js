@@ -160,6 +160,7 @@ router.put('/:slug/files/write', (req, res) => {
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, content, 'utf8');
+  req.app.locals.auditLog?.('file_written', { req, details: { slug, path: relPath } });
   res.json({ message: 'File saved', path: relPath });
 });
 
@@ -182,6 +183,7 @@ router.delete('/:slug/files', (req, res) => {
   } else {
     fs.unlinkSync(resolved);
   }
+  req.app.locals.auditLog?.('file_deleted', { req, details: { slug, path: relPath, isDirectory: stat.isDirectory() } });
   res.json({ message: 'Deleted', path: relPath });
 });
 
@@ -283,6 +285,7 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
     // Clean up temp file
     try { fs.unlinkSync(req.file.path); } catch {}
 
+    req.app.locals.auditLog?.('zip_uploaded', { req, details: { slug, path: relPath, fileCount } });
     res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
   } catch (err) {
     try { fs.unlinkSync(req.file.path); } catch {}
@@ -304,6 +307,7 @@ router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.renameSync(req.file.path, resolved);
+  req.app.locals.auditLog?.('file_replaced', { req, details: { slug, path: relPath } });
   res.json({ message: 'File replaced', path: relPath });
 });
 
@@ -328,6 +332,7 @@ router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
     saved.push(safeName);
   }
 
+  req.app.locals.auditLog?.('files_uploaded', { req, details: { slug, path: relPath, files: saved } });
   res.json({ message: `Uploaded ${saved.length} file(s)`, files: saved });
 });
 

@@ -1,4 +1,21 @@
 services:
+  # Docker socket proxy — restricts Docker API access to only needed endpoints
+  # instead of giving backend full host-level Docker daemon control
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    environment:
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+      POST: 1
+      BUILD: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
@@ -12,7 +29,10 @@ services:
       - .:/host/project:ro
     environment:
       - HOST_PROJECT_DIR=${PWD}
+      - DOCKER_HOST=tcp://docker-proxy:2375
     env_file: .env
+    depends_on:
+      - docker-proxy
     restart: unless-stopped
 
   frontend:

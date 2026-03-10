@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 
 const Database = require('better-sqlite3');
-const { router: authRouter, requireAuth, loadUsers } = require('./auth');
+const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME } = require('./auth');
 
 // Minimal session store using better-sqlite3 (replaces connect-sqlite3 which
 // depends on the native sqlite3 module that fails to build on alpine).
@@ -152,6 +152,7 @@ app.use(session({
     dir: dataDir,
     db: 'sessions.db',
   }),
+  name: SESSION_COOKIE_NAME,
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -212,8 +213,18 @@ const globalLimiter = rateLimit({
 });
 app.use('/api/', globalLimiter);
 
+// Rate limit password change endpoint
+const passwordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many password change attempts, try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Routes
 app.post('/api/auth/login', loginLimiter);
+app.post('/api/auth/change-password', passwordChangeLimiter);
 app.use('/api/auth', authRouter);
 
 // Unauthenticated webhook for Shuttle containers (must come BEFORE requireAuth)
