@@ -182,6 +182,11 @@ router.post('/update', async (req, res) => {
   const { branch } = req.body || {};
   const targetBranch = branch || 'main';
 
+  // Validate branch name to prevent command injection
+  if (!/^[a-zA-Z0-9._\/-]+$/.test(targetBranch)) {
+    return res.status(400).json({ error: 'Invalid branch name.' });
+  }
+
   try {
     // Ensure we're in a git repo
     try {

@@ -3,6 +3,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const express = require('express');
 const session = require('express-session');
 const cors = require('cors');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
@@ -79,6 +80,12 @@ const users = loadUsers();
 if (users.length === 0) {
   console.warn('\n⚠  No admin user found. Run: npm run create-admin\n');
 }
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // CSP can break inline styles in emails/cancel page
+  crossOriginEmbedderPolicy: false, // Allow embedding shop images
+}));
 
 // Middleware
 app.use(express.json());
@@ -168,10 +175,14 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Global error handler — surface useful error messages instead of bare 500s
+// Global error handler — log details server-side, return generic messages in production
 app.use((err, req, res, next) => {
   console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  const status = err.status || 500;
+  const message = process.env.NODE_ENV === 'production' && status >= 500
+    ? 'Internal server error'
+    : err.message || 'Internal server error';
+  res.status(status).json({ error: message });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

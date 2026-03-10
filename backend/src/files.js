@@ -7,9 +7,10 @@ const AdmZip = require('adm-zip');
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB per file
+  limits: { fileSize: MAX_FILE_SIZE },
 });
 
 function safeShopPath(slug, relPath) {
@@ -175,7 +176,9 @@ router.delete('/:slug/files', (req, res) => {
 });
 
 // POST /api/shops/:slug/files/upload-zip?path=DATABASE
-const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 1024 } }); // 1GB
+const MAX_ZIP_SIZE = 500 * 1024 * 1024; // 500MB compressed
+const MAX_ZIP_UNCOMPRESSED = 2 * 1024 * 1024 * 1024; // 2GB uncompressed limit (zip bomb protection)
+const uploadZip = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ZIP_SIZE } });
 router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';
@@ -185,6 +188,15 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
   try {
     const zip = new AdmZip(req.file.buffer);
     const entries = zip.getEntries();
+
+    // Zip bomb protection: check total uncompressed size before extracting
+    let totalUncompressed = 0;
+    for (const entry of entries) {
+      totalUncompressed += entry.header.size;
+      if (totalUncompressed > MAX_ZIP_UNCOMPRESSED) {
+        return res.status(400).json({ error: `Zip uncompressed size exceeds ${MAX_ZIP_UNCOMPRESSED / (1024 * 1024 * 1024)}GB limit` });
+      }
+    }
 
     // Delete the existing target folder entirely so the zip fully replaces it
     const targetDir = path.join(shopDir, relPath);
