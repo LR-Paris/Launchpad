@@ -13,10 +13,11 @@ const ROLE_DISPLAY = {
 };
 
 const PERM_LABELS = {
+  can_edit_ui: { label: 'Settings', desc: 'Access shop settings, files, and deploy' },
+  can_edit_items: { label: 'Catalog', desc: 'View and edit catalog & inventory' },
+  can_view_orders: { label: 'Orders', desc: 'View & manage orders' },
+  can_view_analytics: { label: 'Analytics', desc: 'View shop analytics' },
   can_delete: { label: 'Delete', desc: 'Delete files, orders, shops' },
-  can_edit_ui: { label: 'Edit Shop', desc: 'Access shop settings, files, and deploy' },
-  can_edit_items: { label: 'Edit Items', desc: 'Edit catalog & inventory' },
-  can_view_orders: { label: 'View Orders', desc: 'View & manage orders' },
 };
 
 function CreateUserModal({ shops, onClose, onCreated }) {
@@ -54,7 +55,7 @@ function CreateUserModal({ shops, onClose, onCreated }) {
   const setAllPerms = (slug, value) => {
     setShopPerms(prev => ({
       ...prev,
-      [slug]: { can_delete: value, can_edit_ui: value, can_edit_items: value, can_view_orders: value },
+      [slug]: { can_delete: value, can_edit_ui: value, can_edit_items: value, can_view_orders: value, can_view_analytics: value },
     }));
   };
 
@@ -118,7 +119,7 @@ function CreateUserModal({ shops, onClose, onCreated }) {
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                   {shops.map(shop => {
                     const sp = shopPerms[shop.slug] || {};
-                    const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders;
+                    const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders && sp.can_view_analytics;
                     return (
                       <div key={shop.slug} className="rounded-lg border border-border/40 p-3">
                         <div className="flex items-center justify-between mb-2">
@@ -203,7 +204,7 @@ function UserRow({ user: u, shops, currentUserId }) {
   const setAllPerms = (slug, value) => {
     const updated = {
       ...shopPerms,
-      [slug]: { can_delete: value, can_edit_ui: value, can_edit_items: value, can_view_orders: value },
+      [slug]: { can_delete: value, can_edit_ui: value, can_edit_items: value, can_view_orders: value, can_view_analytics: value },
     };
     setShopPerms(updated);
     permsMutation.mutate(updated);
@@ -341,7 +342,7 @@ function UserRow({ user: u, shops, currentUserId }) {
               ) : (
                 shops.map(shop => {
                   const sp = shopPerms[shop.slug] || {};
-                  const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders;
+                  const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders && sp.can_view_analytics;
                   return (
                     <div key={shop.slug} className="rounded-lg border border-border/40 p-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">

@@ -230,12 +230,13 @@ export default function ShopCard({ shop }) {
         >
           <Package className="h-3 w-3" /> Catalog
         </Link>
-        <Link
+        <PermLink
+          allowed={perms.can_view_analytics}
           to={`/shops/${shop.slug}/analytics`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <BarChart3 className="h-3 w-3" /> Analytics
-        </Link>
+        </PermLink>
         <PermLink
           allowed={perms.can_edit_ui}
           to={`/shops/${shop.slug}/settings`}

@@ -23,7 +23,7 @@ export function usePermissions() {
       canAccessMissionControl: false,
       canAccessGlobalSettings: false,
       canCreateShops: false,
-      getShopPerms: () => ({ can_delete: false, can_edit_ui: false, can_edit_items: false, can_view_orders: false }),
+      getShopPerms: () => ({ can_delete: false, can_edit_ui: false, can_edit_items: false, can_view_orders: false, can_view_analytics: false }),
       canShop: () => false,
     };
   }
@@ -36,7 +36,7 @@ export function usePermissions() {
   // Get permissions for a specific shop
   const getShopPerms = (slug) => {
     if (isAdminOrAbove) {
-      return { can_delete: true, can_edit_ui: true, can_edit_items: true, can_view_orders: true };
+      return { can_delete: true, can_edit_ui: true, can_edit_items: true, can_view_orders: true, can_view_analytics: true };
     }
     const perms = user.permissions?.[slug];
     return {
@@ -44,6 +44,7 @@ export function usePermissions() {
       can_edit_ui: !!perms?.can_edit_ui,
       can_edit_items: !!perms?.can_edit_items,
       can_view_orders: !!perms?.can_view_orders,
+      can_view_analytics: !!perms?.can_view_analytics,
     };
   };
 

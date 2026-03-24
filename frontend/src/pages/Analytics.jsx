@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { usePermissions } from '../lib/permissions';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -88,6 +89,18 @@ function DeviceBreakdown({ devices }) {
 }
 
 export default function Analytics() {
+  const { slug } = useParams();
+  const { canShop, isAdminOrAbove } = usePermissions();
+  if (!isAdminOrAbove && !canShop(slug, 'can_view_analytics')) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center lp-fadein">
+        <Lock className="h-8 w-8 text-muted-foreground mb-3" />
+        <p className="text-sm font-semibold mb-1">Access Restricted</p>
+        <p className="text-xs text-muted-foreground">You need Analytics permission to view this shop's analytics.</p>
+      </div>
+    );
+  }
+
   const { slug } = useParams();
   const [range, setRange] = useState('7d');
 

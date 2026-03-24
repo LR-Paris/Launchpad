@@ -43,6 +43,7 @@ function initUsersDb() {
       can_edit_ui INTEGER DEFAULT 0,
       can_edit_items INTEGER DEFAULT 0,
       can_view_orders INTEGER DEFAULT 0,
+      can_view_analytics INTEGER DEFAULT 0,
       UNIQUE(user_id, shop_slug),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
@@ -160,13 +161,13 @@ function getUserCount() {
 // ---------------------------------------------------------------------------
 function getUserShopPermissions(userId, shopSlug) {
   return db.prepare(
-    'SELECT can_delete, can_edit_ui, can_edit_items, can_view_orders FROM user_shop_permissions WHERE user_id = ? AND shop_slug = ?'
-  ).get(userId, shopSlug) || { can_delete: 0, can_edit_ui: 0, can_edit_items: 0, can_view_orders: 0 };
+    'SELECT can_delete, can_edit_ui, can_edit_items, can_view_orders, can_view_analytics FROM user_shop_permissions WHERE user_id = ? AND shop_slug = ?'
+  ).get(userId, shopSlug) || { can_delete: 0, can_edit_ui: 0, can_edit_items: 0, can_view_orders: 0, can_view_analytics: 0 };
 }
 
 function getAllUserPermissions(userId) {
   const rows = db.prepare(
-    'SELECT shop_slug, can_delete, can_edit_ui, can_edit_items, can_view_orders FROM user_shop_permissions WHERE user_id = ?'
+    'SELECT shop_slug, can_delete, can_edit_ui, can_edit_items, can_view_orders, can_view_analytics FROM user_shop_permissions WHERE user_id = ?'
   ).all(userId);
   const perms = {};
   for (const row of rows) {
@@ -182,8 +183,8 @@ function getAllUserPermissions(userId) {
 
 function setUserShopPermissions(userId, shopSlug, perms) {
   db.prepare(`
-    INSERT INTO user_shop_permissions (user_id, shop_slug, can_delete, can_edit_ui, can_edit_items, can_view_orders)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO user_shop_permissions (user_id, shop_slug, can_delete, can_edit_ui, can_edit_items, can_view_orders, can_view_analytics)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, shop_slug) DO UPDATE SET
       can_delete = excluded.can_delete,
       can_edit_ui = excluded.can_edit_ui,
