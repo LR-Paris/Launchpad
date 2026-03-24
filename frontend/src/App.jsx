@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getMe, checkHealth } from './lib/api';
+import { PermissionsProvider, usePermissions } from './lib/permissions';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import NewShop from './pages/NewShop';
@@ -11,11 +12,48 @@ import Settings from './pages/Settings';
 import GlobalSettings from './pages/GlobalSettings';
 import MissionControl from './pages/MissionControl';
 import Analytics from './pages/Analytics';
+import AdminUsers from './pages/AdminUsers';
 import Header from './components/Header';
+import { ShieldX } from 'lucide-react';
 
 function ProtectedRoute({ children, user }) {
   if (!user) return <Navigate to="/login" replace />;
   return children;
+}
+
+// Route-level permission gate — blocks access even if user navigates via URL
+function RequireAdmin({ children }) {
+  const { isAdminOrAbove } = usePermissions();
+  if (!isAdminOrAbove) return <AccessDenied message="Admin access required" />;
+  return children;
+}
+
+function RequireSuperAdmin({ children }) {
+  const { canManageUsers } = usePermissions();
+  if (!canManageUsers) return <AccessDenied message="Super Admin access required" />;
+  return children;
+}
+
+function RequireShopPerm({ permission, children }) {
+  const { slug } = useParams();
+  const { canShop, isAdminOrAbove } = usePermissions();
+  if (!isAdminOrAbove && !canShop(slug, permission)) {
+    return <AccessDenied message="You don't have permission to access this page" />;
+  }
+  return children;
+}
+
+function AccessDenied({ message }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 lp-fadein">
+      <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-4"
+           style={{ background: 'hsl(0 70% 50% / 0.1)' }}>
+        <ShieldX className="h-7 w-7 text-destructive" />
+      </div>
+      <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>Access Denied</h2>
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
 }
 
 function ConnectionBanner({ visible }) {
@@ -62,7 +100,9 @@ function AppContent({ user, theme, toggleTheme }) {
             path="/mission-control"
             element={
               <ProtectedRoute user={user}>
-                <MissionControl />
+                <RequireAdmin>
+                  <MissionControl />
+                </RequireAdmin>
               </ProtectedRoute>
             }
           />
@@ -94,7 +134,9 @@ function AppContent({ user, theme, toggleTheme }) {
             path="/shops/new"
             element={
               <ProtectedRoute user={user}>
-                <NewShop />
+                <RequireAdmin>
+                  <NewShop />
+                </RequireAdmin>
               </ProtectedRoute>
             }
           />
@@ -102,7 +144,9 @@ function AppContent({ user, theme, toggleTheme }) {
             path="/shops/:slug/orders"
             element={
               <ProtectedRoute user={user}>
-                <Orders />
+                <RequireShopPerm permission="can_view_orders">
+                  <Orders />
+                </RequireShopPerm>
               </ProtectedRoute>
             }
           />
@@ -134,7 +178,19 @@ function AppContent({ user, theme, toggleTheme }) {
             path="/settings"
             element={
               <ProtectedRoute user={user}>
-                <GlobalSettings theme={theme} toggleTheme={toggleTheme} />
+                <RequireAdmin>
+                  <GlobalSettings theme={theme} toggleTheme={toggleTheme} />
+                </RequireAdmin>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireSuperAdmin>
+                  <AdminUsers />
+                </RequireSuperAdmin>
               </ProtectedRoute>
             }
           />
@@ -182,5 +238,9 @@ export default function App() {
     );
   }
 
-  return <AppContent user={user} theme={theme} toggleTheme={toggleTheme} />;
+  return (
+    <PermissionsProvider user={user}>
+      <AppContent user={user} theme={theme} toggleTheme={toggleTheme} />
+    </PermissionsProvider>
+  );
 }

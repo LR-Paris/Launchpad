@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getInventory, seedInventory, updateInventoryBulk } from '../lib/api';
+import { usePermissions } from '../lib/permissions';
 import CollectionsEditor from '../components/CollectionsEditor';
 import {
   ArrowLeft, Package, BarChart3, Search, Filter, Save, RefreshCw,
-  AlertTriangle, CheckCircle2, XCircle, Rocket,
+  AlertTriangle, CheckCircle2, XCircle, Rocket, Lock,
 } from 'lucide-react';
 
 function stockStatus(stock) {
@@ -25,6 +26,8 @@ export default function Catalog() {
   const { slug } = useParams();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('inventory');
+  const { canShop } = usePermissions();
+  const canEdit = canShop(slug, 'can_edit_items');
 
   // Inventory state
   const [editedRows, setEditedRows] = useState({});
@@ -224,10 +227,11 @@ export default function Catalog() {
             </button>
             <button
               onClick={() => seedMutation.mutate()}
-              disabled={seedMutation.isPending}
-              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary border border-border/40 hover:border-primary/30 rounded-md px-2.5 py-1 transition-all disabled:opacity-40"
+              disabled={seedMutation.isPending || !canEdit}
+              title={!canEdit ? 'You don\'t have permission to edit items' : undefined}
+              className={`inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary border border-border/40 hover:border-primary/30 rounded-md px-2.5 py-1 transition-all disabled:opacity-40 ${!canEdit ? 'cursor-not-allowed' : ''}`}
             >
-              <Rocket className="h-3 w-3" />
+              {!canEdit ? <Lock className="h-3 w-3" /> : <Rocket className="h-3 w-3" />}
               {seedMutation.isPending ? 'Loading...' : 'Seed from Catalog'}
             </button>
           </div>
@@ -369,7 +373,8 @@ export default function Catalog() {
                               min="0"
                               value={currentStock}
                               onChange={e => handleStockChange(productId, e.target.value)}
-                              className="w-16 text-center rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60 font-mono"
+                              disabled={!canEdit}
+                              className={`w-16 text-center rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60 font-mono ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
                             />
                           </td>
                           <td className="px-4 py-2.5 text-center">
@@ -383,7 +388,8 @@ export default function Catalog() {
                               value={currentNotes}
                               onChange={e => handleNotesChange(productId, e.target.value)}
                               placeholder="Notes..."
-                              className="w-full rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
+                              disabled={!canEdit}
+                              className={`w-full rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60 ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
                             />
                           </td>
                         </tr>
@@ -449,7 +455,7 @@ export default function Catalog() {
               <div className="px-5 py-3 border-t border-border/40 flex items-center gap-3">
                 <button
                   onClick={handleSave}
-                  disabled={dirtyCount === 0 || saveMutation.isPending}
+                  disabled={dirtyCount === 0 || saveMutation.isPending || !canEdit}
                   className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Save className="h-3.5 w-3.5" />

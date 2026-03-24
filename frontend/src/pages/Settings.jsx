@@ -7,11 +7,12 @@ import {
   getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
   getShopVersion, upgradeShop,
 } from '../lib/api';
+import { usePermissions } from '../lib/permissions';
 import {
   ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
-  ArrowUpCircle, Settings2, Package,
+  ArrowUpCircle, Settings2, Package, Lock,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 
@@ -37,6 +38,10 @@ export default function Settings() {
   const { slug } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { getShopPerms } = usePermissions();
+  const perms = getShopPerms(slug);
+  const canEditUI = perms.can_edit_ui;
+  const canDelete = perms.can_delete;
   const [message, setMessage] = useState('');
   const [deployLog, setDeployLog] = useState('');
   const terminalRef = useRef(null);
@@ -286,6 +291,7 @@ export default function Settings() {
   }, [slug]);
 
   const savePresets = async () => {
+    if (!canEditUI) return;
     setPresetSaving(true);
     setPresetError('');
     setPresetSuccess('');
@@ -367,6 +373,7 @@ export default function Settings() {
   });
 
   const handleUpgrade = () => {
+    if (!canEditUI) return;
     if (window.confirm('Upgrade this shop to the latest version? The container will be rebuilt.')) {
       upgradeMutation.mutate();
     }
@@ -382,6 +389,7 @@ export default function Settings() {
   };
 
   const saveDetailFile = async (filePath) => {
+    if (!canEditUI) return;
     setDetailsSaving(prev => ({ ...prev, [filePath]: true }));
     setDetailsError('');
     setDetailsSuccess('');
@@ -484,6 +492,7 @@ export default function Settings() {
   });
 
   const handleDelete = () => {
+    if (!canDelete) return;
     if (deleteTyped === currentShop?.name) {
       setShowDeleteConfirm(false);
       setDeleteTyped('');
@@ -492,7 +501,7 @@ export default function Settings() {
   };
 
   const handleWipeOrders = async () => {
-    if (wipeTyped !== currentShop?.name) return;
+    if (!canDelete || wipeTyped !== currentShop?.name) return;
     setWiping(true);
     setWipeMessage('');
     try {
@@ -524,6 +533,7 @@ export default function Settings() {
   };
 
   const handleSave = (targetSlug) => {
+    if (!canEditUI) return;
     const vals = editValues[targetSlug];
     if (!vals) return;
     updateMutation.mutate({ targetSlug, data: { name: vals.name, description: vals.description, slug: vals.slug } });
@@ -557,7 +567,7 @@ export default function Settings() {
   };
 
   const handleFileSave = async () => {
-    if (!openFilePath) return;
+    if (!openFilePath || !canEditUI) return;
     setFileSaving(true);
     setFileError('');
     setFileSuccess('');
@@ -575,6 +585,7 @@ export default function Settings() {
   };
 
   const handleDeleteFile = async (filePath) => {
+    if (!canDelete) return;
     if (!window.confirm(`Delete "${filePath}"?`)) return;
     try {
       await deleteShopFile(slug, filePath);
@@ -593,6 +604,7 @@ export default function Settings() {
   };
 
   const handleUpload = async (e) => {
+    if (!canEditUI) return;
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setUploading(true);
@@ -635,6 +647,7 @@ export default function Settings() {
   };
 
   const handleInstallUpdate = async () => {
+    if (!canEditUI) return;
     if (!window.confirm('Update the shop template? The shop will be rebuilt and restarted.')) return;
     setUpdateInstalling(true);
     setUpdateError('');
@@ -974,10 +987,13 @@ export default function Settings() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {!canEditUI && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-mono"><Lock className="h-3 w-3" /> Read-only</span>
+            )}
             {currentStatus !== 'running' && (
               <button
                 onClick={() => actionMutation.mutate('start')}
-                disabled={actionMutation.isPending}
+                disabled={actionMutation.isPending || !canEditUI}
                 className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
               >
                 <Play className="h-3.5 w-3.5" />
@@ -987,7 +1003,7 @@ export default function Settings() {
             {currentStatus === 'running' && (
               <button
                 onClick={() => actionMutation.mutate('stop')}
-                disabled={actionMutation.isPending}
+                disabled={actionMutation.isPending || !canEditUI}
                 className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
               >
                 <Square className="h-3.5 w-3.5" />
@@ -996,7 +1012,7 @@ export default function Settings() {
             )}
             <button
               onClick={() => actionMutation.mutate('restart')}
-              disabled={actionMutation.isPending}
+              disabled={actionMutation.isPending || !canEditUI}
               className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -1004,7 +1020,7 @@ export default function Settings() {
             </button>
             <button
               onClick={() => deployMutation.mutate()}
-              disabled={deployMutation.isPending}
+              disabled={deployMutation.isPending || !canEditUI}
               className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50 ml-auto"
             >
               <Rocket className="h-3.5 w-3.5" />
@@ -1071,7 +1087,7 @@ export default function Settings() {
                   </span>
                   <button
                     onClick={handleInstallUpdate}
-                    disabled={updateInstalling}
+                    disabled={updateInstalling || !canEditUI}
                     className="btn-launch inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs disabled:opacity-50"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -1151,7 +1167,7 @@ export default function Settings() {
             <div className="flex-1" />
             <button
               onClick={() => uploadInputRef.current?.click()}
-              disabled={uploading}
+              disabled={uploading || !canEditUI}
               className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
             >
               <Upload className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Upload'}
@@ -1280,11 +1296,11 @@ export default function Settings() {
                     {fileDirty && <span className="text-xs text-amber-400 font-mono">unsaved</span>}
                     <button
                       onClick={handleFileSave}
-                      disabled={fileSaving || !fileDirty}
+                      disabled={fileSaving || !fileDirty || !canEditUI}
                       className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-40 transition-colors"
                     >
-                      <Save className="h-3 w-3" />
-                      {fileSaving ? 'Saving...' : 'Save'}
+                      {!canEditUI ? <Lock className="h-3 w-3" /> : <Save className="h-3 w-3" />}
+                      {fileSaving ? 'Saving...' : !canEditUI ? 'Read-only' : 'Save'}
                     </button>
                     <button
                       onClick={() => { setOpenFilePath(null); setFileDirty(false); }}
@@ -1517,10 +1533,10 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowWipeConfirm(true)}
-                disabled={currentShop?.lifecycle_status === 'active'}
+                disabled={!canDelete || currentShop?.lifecycle_status === 'active'}
                 className="inline-flex items-center gap-1.5 rounded-md bg-destructive/80 text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                <ShoppingCart className="h-3.5 w-3.5" />
+                {!canDelete ? <Lock className="h-3.5 w-3.5" /> : <ShoppingCart className="h-3.5 w-3.5" />}
                 Wipe Orders
               </button>
             )}
@@ -1575,10 +1591,10 @@ export default function Settings() {
             ) : (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                disabled={deleteMutation.isPending || currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing'}
+                disabled={deleteMutation.isPending || !canDelete || currentShop?.lifecycle_status === 'active' || currentShop?.lifecycle_status === 'testing'}
                 className="inline-flex items-center gap-1.5 rounded-md bg-destructive text-destructive-foreground px-3 py-2 text-xs font-medium hover:bg-destructive/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                {!canDelete ? <Lock className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
                 Delete Shop
               </button>
             )}

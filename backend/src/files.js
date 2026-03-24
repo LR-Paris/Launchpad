@@ -4,6 +4,8 @@ const path = require('path');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
 
+const { checkShopPermission } = require('./users');
+
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
@@ -145,8 +147,11 @@ router.get('/:slug/files/image', (req, res) => {
   fs.createReadStream(resolved).pipe(res);
 });
 
-// PUT /api/shops/:slug/files/write?path=file.txt
+// PUT /api/shops/:slug/files/write?path=file.txt (requires can_edit_ui)
 router.put('/:slug/files/write', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const relPath = req.query.path;
   if (!relPath) return res.status(400).json({ error: 'path query param required' });
@@ -164,8 +169,11 @@ router.put('/:slug/files/write', (req, res) => {
   res.json({ message: 'File saved', path: relPath });
 });
 
-// DELETE /api/shops/:slug/files?path=file.txt
+// DELETE /api/shops/:slug/files?path=file.txt (requires can_delete)
 router.delete('/:slug/files', (req, res) => {
+  if (!checkShopPermission(req, 'can_delete')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const relPath = req.query.path;
   if (!relPath) return res.status(400).json({ error: 'path query param required' });
@@ -205,6 +213,9 @@ const uploadZip = multer({
 const MAX_ZIP_EXTRACTED_SIZE = 500 * 1024 * 1024; // 500MB max uncompressed
 
 router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';
   const shopDir = path.resolve(SHOPS_DIR, slug);
@@ -294,8 +305,11 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
 });
 
 // POST /api/shops/:slug/files/replace?path=DATABASE/Design/Details/Logo.png
-// Replaces a single file at the exact path specified (used for image replacement)
+// Replaces a single file at the exact path specified (used for image replacement, requires can_edit_ui)
 router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const relPath = req.query.path;
   if (!relPath) return res.status(400).json({ error: 'path query param required' });
@@ -311,8 +325,11 @@ router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
   res.json({ message: 'File replaced', path: relPath });
 });
 
-// POST /api/shops/:slug/files/upload?path=subdir
+// POST /api/shops/:slug/files/upload?path=subdir (requires can_edit_ui)
 router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const relPath = req.query.path || '.';
   const resolved = safeShopPath(slug, relPath);

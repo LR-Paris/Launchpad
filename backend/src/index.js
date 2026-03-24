@@ -11,7 +11,17 @@ const path = require('path');
 const fs = require('fs');
 
 const Database = require('better-sqlite3');
-const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME } = require('./auth');
+const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME, setUserFns } = require('./auth');
+const {
+  router: usersRouter,
+  initUsersDb,
+  getUserByUsernameOrEmail,
+  getUserCount,
+  generateOTP,
+  verifyOTP,
+  cleanupExpiredOTPs,
+  getAllUserPermissions,
+} = require('./users');
 
 // Minimal session store using better-sqlite3 (replaces connect-sqlite3 which
 // depends on the native sqlite3 module that fails to build on alpine).
@@ -76,14 +86,27 @@ if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
   process.exit(1);
 }
 
-// Initialize shops database on startup
+// Initialize databases on startup
 initDb();
+initUsersDb();
 
-// Check if admin user exists
+// Wire auth module to user functions (breaks circular dependency)
+setUserFns({
+  getUserByUsernameOrEmail,
+  getUserCount,
+  generateOTP,
+  verifyOTP,
+  getAllUserPermissions,
+});
+
+// Check if any user exists
 const users = loadUsers();
 if (users.length === 0) {
   console.warn('\n⚠  No admin user found. Run: npm run create-admin\n');
 }
+
+// Cleanup expired OTPs every 30 minutes
+setInterval(cleanupExpiredOTPs, 30 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
 // Audit logger — append-only structured log for security-relevant events
@@ -162,7 +185,7 @@ app.use(session({
   cookie: {
     secure: process.env.COOKIE_SECURE === 'true',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours default (overridden per-session on login)
     sameSite: 'lax',
   },
 }));
@@ -200,7 +223,7 @@ app.get('/api/auth/csrf-token', (req, res) => {
 // ---------------------------------------------------------------------------
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
+  max: 10, // Slightly higher since OTP needs 2 requests per login
   message: { error: 'Too many login attempts, try again in 15 minutes' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -216,19 +239,13 @@ const globalLimiter = rateLimit({
 });
 app.use('/api/', globalLimiter);
 
-// Rate limit password change endpoint
-const passwordChangeLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: { error: 'Too many password change attempts, try again later' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 // Routes
-app.post('/api/auth/login', loginLimiter);
-app.post('/api/auth/change-password', passwordChangeLimiter);
+app.post('/api/auth/login-request', loginLimiter);
+app.post('/api/auth/login-verify', loginLimiter);
 app.use('/api/auth', authRouter);
+
+// User management routes (protected + CSRF, super_admin enforced inside router)
+app.use('/api/users', requireAuth, csrfProtection, usersRouter);
 
 // Unauthenticated webhook for Shuttle containers (must come BEFORE requireAuth)
 const notifyLimiter = rateLimit({
@@ -259,10 +276,10 @@ app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
 // Analytics query routes (protected, read-only so no CSRF needed)
 app.use('/api/shops', requireAuth, analyticsQueryRouter);
 
-// System / update routes (protected + CSRF)
+// System / update routes (protected + CSRF, admin-only enforced inside router)
 app.use('/api/system', requireAuth, csrfProtection, updateRouter);
 
-// Mission Control (protected)
+// Mission Control (protected, admin-only enforced inside router)
 app.use('/api/mission-control', requireAuth, missionControlRouter);
 
 // Health check

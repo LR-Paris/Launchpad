@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3 } from 'lucide-react';
+import { usePermissions } from '../lib/permissions';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock } from 'lucide-react';
 
 const STATUS_COLORS = {
   running: 'text-[hsl(142,70%,50%)]',
@@ -25,10 +26,46 @@ const INVENTORY_DISPLAY = {
   'no-manifest': { label: 'No Inventory',  color: 'text-muted-foreground',   bg: 'bg-muted/30' },
 };
 
+// Disabled button wrapper — greys out and shows lock icon when no permission
+function PermButton({ allowed, children, className = '', ...props }) {
+  if (!allowed) {
+    return (
+      <span
+        className={`${className} opacity-40 cursor-not-allowed pointer-events-none select-none`}
+        title="You don't have permission for this action"
+        aria-disabled="true"
+      >
+        {children}
+        <Lock className="h-2.5 w-2.5 ml-0.5 opacity-60" />
+      </span>
+    );
+  }
+  return <button className={className} {...props}>{children}</button>;
+}
+
+// Disabled link wrapper
+function PermLink({ allowed, children, className = '', ...props }) {
+  if (!allowed) {
+    return (
+      <span
+        className={`${className} opacity-40 cursor-not-allowed pointer-events-none select-none`}
+        title="You don't have permission for this action"
+        aria-disabled="true"
+      >
+        {children}
+        <Lock className="h-2.5 w-2.5 ml-0.5 opacity-60" />
+      </span>
+    );
+  }
+  return <Link className={className} {...props}>{children}</Link>;
+}
+
 export default function ShopCard({ shop }) {
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTyped, setDeleteTyped] = useState('');
+  const { getShopPerms } = usePermissions();
+  const perms = getShopPerms(shop.slug);
 
   const actionMutation = useMutation({
     mutationFn: ({ slug, action }) => shopAction(slug, action),
@@ -131,7 +168,7 @@ export default function ShopCard({ shop }) {
       <div className="flex-1" />
 
       {/* Delete confirmation */}
-      {showDeleteConfirm && (
+      {showDeleteConfirm && perms.can_delete && (
         <div className="mb-3 p-3 rounded-lg border border-destructive/30 bg-destructive/5 space-y-2">
           <p className="text-xs text-destructive font-medium">
             Type <code className="font-mono bg-destructive/10 px-1 py-0.5 rounded">{shop.name}</code> to confirm:
@@ -166,39 +203,43 @@ export default function ShopCard({ shop }) {
       {/* Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {shop.status !== 'running' && (
-          <button
+          <PermButton
+            allowed={perms.can_edit_ui}
             disabled={busy}
             onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'start' })}
             className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
           >
             <Play className="h-3 w-3" /> Start
-          </button>
+          </PermButton>
         )}
         {shop.status === 'running' && (
-          <button
+          <PermButton
+            allowed={perms.can_edit_ui}
             disabled={busy}
             onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'stop' })}
             className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
           >
             <Square className="h-3 w-3" /> Stop
-          </button>
+          </PermButton>
         )}
-        <button
+        <PermButton
+          allowed={perms.can_edit_ui}
           disabled={busy}
           onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'restart' })}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
         >
           <RotateCcw className="h-3 w-3" /> Restart
-        </button>
+        </PermButton>
 
         <div className="flex-1" />
 
-        <Link
+        <PermLink
+          allowed={perms.can_view_orders}
           to={`/shops/${shop.slug}/orders`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <ShoppingCart className="h-3 w-3" /> Orders
-        </Link>
+        </PermLink>
         <Link
           to={`/shops/${shop.slug}/catalog`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
@@ -217,13 +258,14 @@ export default function ShopCard({ shop }) {
         >
           <Settings className="h-3 w-3" /> Settings
         </Link>
-        <button
+        <PermButton
+          allowed={perms.can_delete}
           disabled={busy}
           onClick={() => setShowDeleteConfirm(true)}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-destructive bg-secondary hover:bg-destructive/10 border border-border/60 hover:border-destructive/40 transition-all disabled:opacity-50"
         >
           <Trash2 className="h-3 w-3" />
-        </button>
+        </PermButton>
       </div>
     </div>
   );

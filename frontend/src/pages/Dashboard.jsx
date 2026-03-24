@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getShops } from '../lib/api';
+import { usePermissions } from '../lib/permissions';
 import ShopCard from '../components/ShopCard';
-import { Plus, Rocket, Activity, RefreshCw } from 'lucide-react';
+import { Rocket, Activity, RefreshCw } from 'lucide-react';
 
 export default function Dashboard() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
@@ -11,6 +12,7 @@ export default function Dashboard() {
     refetchInterval: 10000,
   });
 
+  const { canCreateShops } = usePermissions();
   const shops = data?.shops || [];
   const running = shops.filter(s => s.status === 'running').length;
 
@@ -44,13 +46,15 @@ export default function Dashboard() {
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
           </button>
-          <Link
-            to="/shops/new"
-            className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm disabled:opacity-50"
-          >
-            <Rocket className="h-4 w-4" />
-            Launch Shop
-          </Link>
+          {canCreateShops && (
+            <Link
+              to="/shops/new"
+              className="btn-launch inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm disabled:opacity-50"
+            >
+              <Rocket className="h-4 w-4" />
+              Launch Shop
+            </Link>
+          )}
         </div>
       </div>
 
@@ -74,15 +78,17 @@ export default function Dashboard() {
             No shops yet
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
-            Launch your first shop to get started.
+            {canCreateShops ? 'Launch your first shop to get started.' : 'No shops have been created yet. Ask an admin to set one up.'}
           </p>
-          <Link
-            to="/shops/new"
-            className="btn-launch inline-flex items-center gap-1.5 rounded-md px-5 py-2.5 text-sm"
-          >
-            <Rocket className="h-4 w-4" />
-            Launch your first shop
-          </Link>
+          {canCreateShops && (
+            <Link
+              to="/shops/new"
+              className="btn-launch inline-flex items-center gap-1.5 rounded-md px-5 py-2.5 text-sm"
+            >
+              <Rocket className="h-4 w-4" />
+              Launch your first shop
+            </Link>
+          )}
         </div>
       )}
 

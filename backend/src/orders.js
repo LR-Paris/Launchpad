@@ -4,6 +4,8 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { parse } = require('csv-parse/sync');
 
+const { checkShopPermission } = require('./users');
+
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -131,8 +133,11 @@ function findPoFile(slug, rawFilename) {
   return null;
 }
 
-// GET /api/shops/:slug/orders
+// GET /api/shops/:slug/orders (requires can_view_orders)
 router.get('/:slug/orders', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const csvPath = findCsvPath(slug);
 
@@ -156,8 +161,11 @@ router.get('/:slug/orders', (req, res) => {
   }
 });
 
-// GET /api/shops/:slug/orders/download
+// GET /api/shops/:slug/orders/download (requires can_view_orders)
 router.get('/:slug/orders/download', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const csvPath = findCsvPath(slug);
 
@@ -170,8 +178,11 @@ router.get('/:slug/orders/download', (req, res) => {
   fs.createReadStream(csvPath).pipe(res);
 });
 
-// POST /api/shops/:slug/orders/wipe — Replace orders CSV with header-only file
+// POST /api/shops/:slug/orders/wipe — Replace orders CSV with header-only file (requires can_delete)
 router.post('/:slug/orders/wipe', (req, res) => {
+  if (!checkShopPermission(req, 'can_delete')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
 
   // Protection: Active shops cannot have orders wiped
@@ -240,6 +251,9 @@ function findFileRecursive(dir, targetName, maxDepth = 3) {
 // Handles both exact filenames ("ORD-123.pdf") and Shuttle placeholder text
 // ("ORD-123 (see Orders folder)") by extracting the order ID and scanning the dir.
 router.get('/:slug/orders/po/:filename?', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const filename = req.params.filename || req.query.filename;
 
@@ -385,8 +399,11 @@ router.get('/:slug/orders/product-image/:productId', (req, res) => {
   return res.status(404).json({ error: 'Product image not found' });
 });
 
-// POST /api/shops/:slug/orders/:orderId/ship — Mark an order as shipped
+// POST /api/shops/:slug/orders/:orderId/ship — Mark an order as shipped (requires can_view_orders)
 router.post('/:slug/orders/:orderId/ship', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug, orderId } = req.params;
   const { trackingNumber } = req.body;
 
@@ -413,8 +430,11 @@ router.post('/:slug/orders/:orderId/ship', (req, res) => {
   res.json({ message: 'Order marked as shipped', order: updatedRow });
 });
 
-// POST /api/shops/:slug/orders/:orderId/cancel — Admin cancel (no time limit)
+// POST /api/shops/:slug/orders/:orderId/cancel — Admin cancel (no time limit, requires can_view_orders)
 router.post('/:slug/orders/:orderId/cancel', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug, orderId } = req.params;
   const { reason } = req.body;
 

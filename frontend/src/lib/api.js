@@ -19,9 +19,12 @@ api.interceptors.response.use(
   }
 );
 
-// Auth
-export const login = (username, password) =>
-  api.post('/auth/login', { username, password }).then(r => r.data);
+// Auth — OTP flow
+export const requestLoginCode = (identifier) =>
+  api.post('/auth/login-request', { identifier }).then(r => r.data);
+
+export const verifyLoginCode = (identifier, code, rememberMe) =>
+  api.post('/auth/login-verify', { identifier, code, rememberMe }).then(r => r.data);
 
 export const logout = () =>
   api.post('/auth/logout').then(r => r.data);
@@ -29,8 +32,24 @@ export const logout = () =>
 export const getMe = () =>
   api.get('/auth/me').then(r => r.data);
 
-export const changePassword = (oldPassword, newPassword) =>
-  api.post('/auth/change-password', { oldPassword, newPassword }).then(r => r.data);
+// Users — Admin management
+export const getUsers = () =>
+  api.get('/users').then(r => r.data);
+
+export const getUser = (id) =>
+  api.get(`/users/${id}`).then(r => r.data);
+
+export const createUserAccount = (data) =>
+  api.post('/users', data).then(r => r.data);
+
+export const updateUserAccount = (id, data) =>
+  api.patch(`/users/${id}`, data).then(r => r.data);
+
+export const deleteUserAccount = (id) =>
+  api.delete(`/users/${id}`).then(r => r.data);
+
+export const setUserPermissions = (id, shopPermissions) =>
+  api.put(`/users/${id}/permissions`, { shopPermissions }).then(r => r.data);
 
 // Shops
 export const getShops = () =>

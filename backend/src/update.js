@@ -4,7 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 
+const { requireRole } = require('./users');
+
 const router = express.Router();
+
+// System updates are admin-only
+router.use(requireRole('super_admin', 'admin'));
 
 // Project root — when running in Docker the host project is bind-mounted
 // at /host/project; outside Docker fall back to two levels up from this file.
