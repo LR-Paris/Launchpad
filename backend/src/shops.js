@@ -6,6 +6,8 @@ const Database = require('better-sqlite3');
 const slugify = require('slugify');
 const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx');
 
+const { checkShopPermission, isAdminOrAbove } = require('./users');
+
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -431,8 +433,11 @@ function patchShopCartKey(shopDir, slug) {
   return 1;
 }
 
-// POST /api/shops — Create new shop
+// POST /api/shops — Create new shop (admin only)
 router.post('/', (req, res) => {
+  if (!isAdminOrAbove(req)) {
+    return res.status(403).json({ error: 'Only admins can create shops' });
+  }
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
   let { slug: customSlug } = req.body;
 
@@ -672,8 +677,11 @@ const LIFECYCLE_LABELS = {
   none: 'No Status', development: 'Development', testing: 'In Testing', active: 'Active', closed: 'Closed',
 };
 
-// PATCH /api/shops/:slug — Update shop fields in the database
+// PATCH /api/shops/:slug — Update shop fields in the database (requires can_edit_ui)
 router.patch('/:slug', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const { name, description, lifecycle_status } = req.body;
   let { slug: newSlugRaw } = req.body;
@@ -796,8 +804,11 @@ router.get('/:slug/logs', (req, res) => {
   }
 });
 
-// DELETE /api/shops/:slug
+// DELETE /api/shops/:slug (requires can_delete)
 router.delete('/:slug', (req, res) => {
+  if (!checkShopPermission(req, 'can_delete')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const deleteFiles = req.query.deleteFiles === 'true';
   const db = getDb();
@@ -848,8 +859,11 @@ router.delete('/:slug', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/start
+// POST /api/shops/:slug/start (requires can_edit_ui)
 router.post('/:slug/start', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const db = getDb();
 
@@ -884,8 +898,11 @@ router.post('/:slug/start', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/stop
+// POST /api/shops/:slug/stop (requires can_edit_ui)
 router.post('/:slug/stop', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const db = getDb();
 
@@ -916,8 +933,11 @@ router.post('/:slug/stop', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/restart
+// POST /api/shops/:slug/restart (requires can_edit_ui)
 router.post('/:slug/restart', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const db = getDb();
 
@@ -960,8 +980,11 @@ router.post('/:slug/restart', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/deploy — Redeploy
+// POST /api/shops/:slug/deploy — Redeploy (requires can_edit_ui)
 router.post('/:slug/deploy', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const db = getDb();
 
@@ -1145,8 +1168,11 @@ router.get('/:slug/version', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/update-template — Pull latest Shuttle, re-apply patches, rebuild
+// POST /api/shops/:slug/update-template — Pull latest Shuttle, re-apply patches, rebuild (requires can_edit_ui)
 router.post('/:slug/update-template', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const db = getDb();
 
@@ -1280,8 +1306,11 @@ router.post('/:slug/update-template', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/upgrade — Opt-in Shuttle upgrade (alias with confirmation)
+// POST /api/shops/:slug/upgrade — Opt-in Shuttle upgrade (alias with confirmation, requires can_edit_ui)
 router.post('/:slug/upgrade', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const { confirm } = req.body;
 

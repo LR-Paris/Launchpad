@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
 
+const { checkShopPermission } = require('./users');
+
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
@@ -166,8 +168,11 @@ router.get('/:slug/inventory/summary', (req, res) => {
   res.json({ total: records.length, nominal, lowFuel, depleted, status });
 });
 
-// POST /api/shops/:slug/inventory/seed — Seed inventory from catalog
+// POST /api/shops/:slug/inventory/seed — Seed inventory from catalog (requires can_edit_items)
 router.post('/:slug/inventory/seed', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_items')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const shopDir = path.join(SHOPS_DIR, slug);
   if (!fs.existsSync(shopDir)) {
@@ -200,8 +205,11 @@ router.post('/:slug/inventory/seed', (req, res) => {
   res.json({ message: `Cargo manifest updated — ${added} new item(s) loaded onto the manifest`, added, total: existing.length });
 });
 
-// PATCH /api/shops/:slug/inventory/bulk — Bulk update stock
+// PATCH /api/shops/:slug/inventory/bulk — Bulk update stock (requires can_edit_items)
 router.patch('/:slug/inventory/bulk', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_items')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug } = req.params;
   const { updates } = req.body;
   if (!Array.isArray(updates)) {
@@ -232,8 +240,11 @@ router.patch('/:slug/inventory/bulk', (req, res) => {
   res.json({ success: true, message: `${updated} payload(s) updated`, updated });
 });
 
-// PATCH /api/shops/:slug/inventory/:productId — Update single item
+// PATCH /api/shops/:slug/inventory/:productId — Update single item (requires can_edit_items)
 router.patch('/:slug/inventory/:productId(*)', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_items')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const { slug, productId } = req.params;
   const { stock, notes } = req.body;
 

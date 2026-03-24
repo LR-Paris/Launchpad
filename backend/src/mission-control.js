@@ -6,11 +6,16 @@ const Database = require('better-sqlite3');
 
 const { parse } = require('csv-parse/sync');
 
+const { requireRole } = require('./users');
+
 const router = express.Router();
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const { LOG_DIR } = require('./logger');
+
+// Mission Control is admin-only
+router.use(requireRole('super_admin', 'admin'));
 
 function findCsvPath(slug) {
   const candidates = [
