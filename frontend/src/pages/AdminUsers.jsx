@@ -192,22 +192,28 @@ function UserRow({ user: u, shops, currentUserId }) {
     updateMutation.mutate({ ...editForm, shopPermissions: editForm.role === 'user' ? shopPerms : undefined });
   };
 
+  const [permsDirty, setPermsDirty] = useState(false);
+
   const togglePerm = (slug, perm) => {
-    const updated = {
-      ...shopPerms,
-      [slug]: { ...shopPerms[slug], [perm]: !shopPerms[slug]?.[perm] },
-    };
-    setShopPerms(updated);
-    permsMutation.mutate(updated);
+    setShopPerms(prev => ({
+      ...prev,
+      [slug]: { ...prev[slug], [perm]: !prev[slug]?.[perm] },
+    }));
+    setPermsDirty(true);
   };
 
   const setAllPerms = (slug, value) => {
-    const updated = {
-      ...shopPerms,
+    setShopPerms(prev => ({
+      ...prev,
       [slug]: { can_delete: value, can_edit_ui: value, can_edit_items: value, can_view_orders: value, can_view_analytics: value },
-    };
-    setShopPerms(updated);
-    permsMutation.mutate(updated);
+    }));
+    setPermsDirty(true);
+  };
+
+  const savePerms = () => {
+    permsMutation.mutate(shopPerms, {
+      onSuccess: () => setPermsDirty(false),
+    });
   };
 
   const rd = ROLE_DISPLAY[u.role] || ROLE_DISPLAY.user;
@@ -245,7 +251,7 @@ function UserRow({ user: u, shops, currentUserId }) {
             </button>
           )}
           <button
-            onClick={() => { setEditing(!editing); setExpanded(!expanded); }}
+            onClick={() => { setEditing(true); setExpanded(true); }}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
           >
             <Edit2 className="h-3 w-3" />
@@ -336,7 +342,28 @@ function UserRow({ user: u, shops, currentUserId }) {
           {/* Per-shop permissions (only for 'user' role) */}
           {u.role === 'user' && (
             <div className="space-y-2">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Shop Permissions</p>
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest">Shop Permissions</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground">Can create shops</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newVal = !u.can_create_shops;
+                      updateMutation.mutate({ can_create_shops: newVal });
+                    }}
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
+                      u.can_create_shops
+                        ? 'bg-primary/15 text-primary border-primary/30'
+                        : 'text-muted-foreground border-border/40 hover:border-primary/30'
+                    }`}
+                  >
+                    {u.can_create_shops ? 'On' : 'Off'}
+                  </button>
+                </div>
+              </div>
               {shops.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No shops created yet.</p>
               ) : (
@@ -378,6 +405,18 @@ function UserRow({ user: u, shops, currentUserId }) {
                     </div>
                   );
                 })
+              )}
+              {permsDirty && (
+                <div className="pt-2">
+                  <button
+                    onClick={savePerms}
+                    disabled={permsMutation.isPending}
+                    className="inline-flex items-center gap-1.5 btn-launch rounded-md px-3 py-1.5 text-xs disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" />
+                    {permsMutation.isPending ? 'Saving...' : 'Save Permissions'}
+                  </button>
+                </div>
               )}
             </div>
           )}

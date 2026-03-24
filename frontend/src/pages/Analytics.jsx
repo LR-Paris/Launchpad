@@ -101,7 +101,6 @@ export default function Analytics() {
     );
   }
 
-  const { slug } = useParams();
   const [range, setRange] = useState('7d');
 
   const { data, isLoading, refetch, isFetching } = useQuery({
@@ -139,7 +138,7 @@ export default function Analytics() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link
-            to={`/shops/${slug}/orders`}
+            to="/"
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />

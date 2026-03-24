@@ -63,7 +63,7 @@ export function usePermissions() {
     canManageUsers: isSuperAdmin,
     canAccessMissionControl: isAdminOrAbove,
     canAccessGlobalSettings: isAdminOrAbove,
-    canCreateShops: isAdminOrAbove,
+    canCreateShops: isAdminOrAbove || !!user.can_create_shops,
     getShopPerms,
     canShop,
   };

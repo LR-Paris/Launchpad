@@ -29,6 +29,7 @@ function initUsersDb() {
       email TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      can_create_shops INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       created_by TEXT
     )
@@ -60,6 +61,10 @@ function initUsersDb() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+
+  // Safe column migrations for existing DBs
+  try { db.exec('ALTER TABLE user_shop_permissions ADD COLUMN can_view_analytics INTEGER NOT NULL DEFAULT 1'); } catch(e) { /* already exists */ }
+  try { db.exec('ALTER TABLE users ADD COLUMN can_create_shops INTEGER DEFAULT 0'); } catch(e) { /* already exists */ }
 
   // Migrate from legacy users.json if it exists and users table is empty
   migrateFromUsersJson();
@@ -107,11 +112,11 @@ function migrateFromUsersJson() {
 // User CRUD helpers
 // ---------------------------------------------------------------------------
 function getAllUsers() {
-  return db.prepare('SELECT id, username, email, name, role, created_at, created_by FROM users').all();
+  return db.prepare('SELECT id, username, email, name, role, can_create_shops, created_at, created_by FROM users').all();
 }
 
 function getUserById(id) {
-  return db.prepare('SELECT id, username, email, name, role, created_at, created_by FROM users WHERE id = ?').get(id);
+  return db.prepare('SELECT id, username, email, name, role, can_create_shops, created_at, created_by FROM users WHERE id = ?').get(id);
 }
 
 function getUserByUsername(username) {
@@ -133,13 +138,14 @@ function createUser({ username, email, name, role, created_by }) {
   return getUserById(result.lastInsertRowid);
 }
 
-function updateUser(id, { username, email, name, role }) {
+function updateUser(id, { username, email, name, role, can_create_shops }) {
   const fields = [];
   const values = [];
   if (username !== undefined) { fields.push('username = ?'); values.push(username); }
   if (email !== undefined) { fields.push('email = ?'); values.push(email); }
   if (name !== undefined) { fields.push('name = ?'); values.push(name); }
   if (role !== undefined) { fields.push('role = ?'); values.push(role); }
+  if (can_create_shops !== undefined) { fields.push('can_create_shops = ?'); values.push(can_create_shops ? 1 : 0); }
   if (fields.length === 0) return getUserById(id);
   values.push(id);
   db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
@@ -176,6 +182,7 @@ function getAllUserPermissions(userId) {
       can_edit_ui: !!row.can_edit_ui,
       can_edit_items: !!row.can_edit_items,
       can_view_orders: !!row.can_view_orders,
+      can_view_analytics: !!row.can_view_analytics,
     };
   }
   return perms;
@@ -189,14 +196,16 @@ function setUserShopPermissions(userId, shopSlug, perms) {
       can_delete = excluded.can_delete,
       can_edit_ui = excluded.can_edit_ui,
       can_edit_items = excluded.can_edit_items,
-      can_view_orders = excluded.can_view_orders
+      can_view_orders = excluded.can_view_orders,
+      can_view_analytics = excluded.can_view_analytics
   `).run(
     userId,
     shopSlug,
     perms.can_delete ? 1 : 0,
     perms.can_edit_ui ? 1 : 0,
     perms.can_edit_items ? 1 : 0,
-    perms.can_view_orders ? 1 : 0
+    perms.can_view_orders ? 1 : 0,
+    perms.can_view_analytics ? 1 : 0
   );
 }
 

@@ -9,7 +9,7 @@ import {
 } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import {
-  ArrowLeft, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
+  ArrowLeft, ChevronDown, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
   ArrowUpCircle, Settings2, Package, Lock,
@@ -92,6 +92,7 @@ export default function Settings() {
   const [passwordShown, setPasswordShown] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
 
+  const [shopSettingsOpen, setShopSettingsOpen] = useState(false);
   // Shop Settings UI — DATABASE/Design/Details
   const [detailsEntries, setDetailsEntries] = useState([]);
   const [detailsValues, setDetailsValues] = useState({});
@@ -738,12 +739,19 @@ export default function Settings() {
 
         {/* Shop Settings — DATABASE/Design/Details */}
         <div className={`lp-card rounded-xl overflow-hidden${!detailsLoading ? ' lp-fadein' : ''}`}>
-          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+          <button
+            type="button"
+            onClick={() => setShopSettingsOpen(o => !o)}
+            className="w-full flex items-center gap-2 px-5 py-3 hover:bg-foreground/[0.02] transition-colors text-left"
+          >
             <SlidersHorizontal className="h-4 w-4 text-primary/70" />
             <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Shop Settings</h2>
             <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE / Design / Details</span>
-          </div>
+            <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground ml-auto transition-transform ${shopSettingsOpen ? 'rotate-180' : ''}`} />
+          </button>
 
+          {shopSettingsOpen && (
+            <>
           {detailsSuccess && (
             <div className="px-5 py-2 text-xs text-[hsl(142,70%,50%)] border-b border-[hsl(142,70%,20%)] bg-[hsl(142,70%,5%)] flex items-center gap-1.5">
               <Check className="h-3 w-3" />
@@ -782,6 +790,8 @@ export default function Settings() {
               imageTimestamps={imageTimestamps}
               hiddenFiles={['README.md', 'Hotels.txt']}
             />
+          )}
+            </>
           )}
         </div>
 
@@ -921,61 +931,7 @@ export default function Settings() {
                 {presetSaving ? 'Saving...' : 'Save Configuration'}
               </button>
 
-              {/* Preset Folder Files — DATABASE/Presets */}
-              <div className="border-t border-border/40 pt-4 mt-1">
-                <div className="flex items-center gap-2 mb-3">
-                  <Folder className="h-3.5 w-3.5 text-primary/70" />
-                  <span className="text-xs font-semibold" style={{ fontFamily: 'Syne, sans-serif' }}>Preset Files</span>
-                  <span className="text-[10px] text-muted-foreground font-mono ml-1">DATABASE / Presets</span>
-                </div>
 
-                {presetsLoading ? (
-                  <p className="text-xs text-muted-foreground font-mono">Loading preset files...</p>
-                ) : presetsEntries.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No preset files yet. Save configuration above to create them.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {presetsEntries.filter(e => e.readable && !['README.md', 'DataRequired.txt', 'ShopType.txt'].includes(e.name)).map(entry => {
-                      const filePath = `DATABASE/Presets/${entry.name}`;
-                      const content = presetsValues[filePath] ?? '';
-                      const original = presetsOriginal[filePath] ?? '';
-                      const isDirty = content !== original;
-                      const isSaving = presetsSaving[filePath];
-                      const label = friendlyLabel(entry.name);
-                      const lineCount = Math.max(2, Math.min(6, content.split('\n').length));
-                      return (
-                        <div key={entry.name} className="rounded-md border border-border/40 bg-muted/20 p-3">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-medium">{label}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono">{entry.name}</span>
-                          </div>
-                          <textarea
-                            value={content}
-                            onChange={(e) => setPresetsValues(prev => ({ ...prev, [filePath]: e.target.value }))}
-                            className="w-full rounded-md border border-border/60 bg-input px-3 py-1.5 text-xs font-mono outline-none focus:ring-1 focus:ring-primary/60 transition-all resize-none"
-                            rows={lineCount}
-                            spellCheck={false}
-                          />
-                          <div className="flex items-center gap-2 mt-1.5">
-                            {isDirty && <span className="text-[10px] text-amber-400 font-mono">unsaved</span>}
-                            <div className="flex-1" />
-                            <button
-                              onClick={() => savePresetFile(filePath)}
-                              disabled={!isDirty || isSaving}
-                              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                            >
-                              <Save className="h-2.5 w-2.5" />
-                              {isSaving ? 'Saving...' : 'Save'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </div>

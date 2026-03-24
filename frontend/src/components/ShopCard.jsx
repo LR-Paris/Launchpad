@@ -224,12 +224,13 @@ export default function ShopCard({ shop }) {
         >
           <ShoppingCart className="h-3 w-3" /> Orders
         </PermLink>
-        <Link
+        <PermLink
+          allowed={perms.can_edit_items}
           to={`/shops/${shop.slug}/catalog`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <Package className="h-3 w-3" /> Catalog
-        </Link>
+        </PermLink>
         <PermLink
           allowed={perms.can_view_analytics}
           to={`/shops/${shop.slug}/analytics`}

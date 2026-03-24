@@ -224,27 +224,6 @@ export default function NewShop() {
             )}
           </div>
 
-          {/* Template Presets */}
-          <div>
-            <label className="block text-sm font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>
-              Quick Setup
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {SHOP_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  disabled={mutation.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
-                >
-                  <Zap className="h-3 w-3" />
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Shop Type */}
           <div>
             <label className="block text-sm font-semibold mb-1.5" htmlFor="shopType"
@@ -308,27 +287,6 @@ export default function NewShop() {
               </p>
             </div>
           )}
-
-          {/* Source folder (optional) */}
-          <div>
-            <label className="block text-sm font-semibold mb-1.5" htmlFor="folderPath"
-                   style={{ fontFamily: 'Syne, sans-serif' }}>
-              Source Folder Path{' '}
-              <span className="text-muted-foreground font-normal text-xs">(optional)</span>
-            </label>
-            <input
-              id="folderPath"
-              type="text"
-              value={folderPath}
-              onChange={(e) => setFolderPath(e.target.value)}
-              placeholder="/path/to/local/shop"
-              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all"
-              disabled={mutation.isPending}
-            />
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Leave empty to clone from the default template repository.
-            </p>
-          </div>
 
           {/* DATABASE zip upload */}
           <div className="rounded-lg border border-dashed border-border hover:border-primary/40 transition-colors p-4">
