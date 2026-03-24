@@ -41,6 +41,17 @@ export default function Settings() {
   const { getShopPerms } = usePermissions();
   const perms = getShopPerms(slug);
   const canEditUI = perms.can_edit_ui;
+
+  // No edit permission = no access to settings at all
+  if (!canEditUI) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center lp-fadein">
+        <Lock className="h-8 w-8 text-muted-foreground mb-3" />
+        <p className="text-sm font-semibold mb-1">Access Restricted</p>
+        <p className="text-xs text-muted-foreground">You need Edit Shop permission to access settings for this shop.</p>
+      </div>
+    );
+  }
   const canDelete = perms.can_delete;
   const [message, setMessage] = useState('');
   const [deployLog, setDeployLog] = useState('');

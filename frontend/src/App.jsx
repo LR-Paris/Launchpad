@@ -93,7 +93,7 @@ function AppContent({ user, theme, toggleTheme }) {
   // Mission Control is a full-screen immersive layout — no header/footer/padding
   if (isMissionControl) {
     return (
-      <div className="h-screen bg-background overflow-hidden">
+      <div className="h-screen bg-background overflow-auto">
         <ConnectionBanner visible={backendDown} />
         <Routes>
           <Route

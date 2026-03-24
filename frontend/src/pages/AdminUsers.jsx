@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getUsers, getShops, createUserAccount, updateUserAccount, deleteUserAccount, setUserPermissions } from '../lib/api';
@@ -13,7 +14,7 @@ const ROLE_DISPLAY = {
 
 const PERM_LABELS = {
   can_delete: { label: 'Delete', desc: 'Delete files, orders, shops' },
-  can_edit_ui: { label: 'Edit UI', desc: 'Edit shop settings, files, deploy' },
+  can_edit_ui: { label: 'Edit Shop', desc: 'Access shop settings, files, and deploy' },
   can_edit_items: { label: 'Edit Items', desc: 'Edit catalog & inventory' },
   can_view_orders: { label: 'View Orders', desc: 'View & manage orders' },
 };
@@ -57,146 +58,106 @@ function CreateUserModal({ shops, onClose, onCreated }) {
     }));
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border bg-card p-6 lp-fadein">
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Create User</h2>
+  return createPortal(
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm">
+      <div className="flex min-h-full items-center justify-center p-6">
+        <div className="w-full max-w-lg rounded-xl border bg-card p-6 lp-fadein">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2">
+              <Plus className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Create User</h2>
+            </div>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium mb-1 text-muted-foreground">Username</label>
+                <input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+                  className="w-full rounded-md border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 transition-all" required />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1 text-muted-foreground">Display Name</label>
+                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full rounded-md border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 transition-all" required />
+              </div>
+            </div>
             <div>
-              <label className="block text-xs font-medium mb-1 text-muted-foreground">Username</label>
-              <input
-                value={form.username}
-                onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">Email</label>
+              <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                 className="w-full rounded-md border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 transition-all"
-                required
-              />
+                placeholder="user@example.com" required />
+              <p className="text-[10px] text-muted-foreground mt-1">Sign-in codes will be sent to this email.</p>
             </div>
             <div>
-              <label className="block text-xs font-medium mb-1 text-muted-foreground">Display Name</label>
-              <input
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full rounded-md border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 transition-all"
-                required
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1 text-muted-foreground">Email</label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              className="w-full rounded-md border bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 transition-all"
-              placeholder="user@example.com"
-              required
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">Sign-in codes will be sent to this email.</p>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1 text-muted-foreground">Role</label>
-            <div className="flex rounded-lg border border-border/60 overflow-hidden">
-              {['user', 'admin', 'super_admin'].map((r) => {
-                const rd = ROLE_DISPLAY[r];
-                return (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, role: r }))}
-                    className={`flex-1 px-3 py-2 text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-                      form.role === r ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
-                    } ${r !== 'user' ? 'border-l border-border/60' : ''}`}
-                  >
-                    <rd.icon className="h-3 w-3" />
-                    {rd.label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-1.5">
-              {form.role === 'super_admin' && 'Full access to everything including user management.'}
-              {form.role === 'admin' && 'Full access to all shops. Cannot manage users.'}
-              {form.role === 'user' && 'Access controlled by per-shop permissions below.'}
-            </p>
-          </div>
-
-          {/* Per-shop permissions — only for 'user' role */}
-          {form.role === 'user' && shops.length > 0 && (
-            <div>
-              <label className="block text-xs font-medium mb-2 text-muted-foreground">Shop Permissions</label>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {shops.map(shop => {
-                  const sp = shopPerms[shop.slug] || {};
-                  const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders;
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">Role</label>
+              <div className="flex rounded-lg border border-border/60 overflow-hidden">
+                {['user', 'admin', 'super_admin'].map((r) => {
+                  const rd = ROLE_DISPLAY[r];
                   return (
-                    <div key={shop.slug} className="rounded-lg border border-border/40 p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold">{shop.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => setAllPerms(shop.slug, !allOn)}
-                          className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
-                            allOn ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground border-border/40 hover:border-primary/30'
-                          }`}
-                        >
-                          {allOn ? 'Full Access' : 'Grant All'}
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {Object.entries(PERM_LABELS).map(([key, meta]) => (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => togglePerm(shop.slug, key)}
-                            title={meta.desc}
-                            className={`text-[10px] font-medium px-2 py-1 rounded border transition-all ${
-                              sp[key]
-                                ? 'bg-primary/15 text-primary border-primary/30'
-                                : 'text-muted-foreground border-border/40 hover:border-primary/30'
-                            }`}
-                          >
-                            {meta.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <button key={r} type="button" onClick={() => setForm(f => ({ ...f, role: r }))}
+                      className={`flex-1 px-3 py-2 text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                        form.role === r ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                      } ${r !== 'user' ? 'border-l border-border/60' : ''}`}>
+                      <rd.icon className="h-3 w-3" />{rd.label}
+                    </button>
                   );
                 })}
               </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5">
+                {form.role === 'super_admin' && 'Full access to everything including user management.'}
+                {form.role === 'admin' && 'Full access to all shops. Cannot manage users.'}
+                {form.role === 'user' && 'Access controlled by per-shop permissions below.'}
+              </p>
             </div>
-          )}
-
-          {error && <p className="text-xs text-destructive font-mono">{error}</p>}
-
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="btn-launch rounded-md px-5 py-2.5 text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {createMutation.isPending ? 'Creating...' : 'Create User'}
-            </button>
-            <button type="button" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-              Cancel
-            </button>
-          </div>
-        </form>
+            {form.role === 'user' && shops.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium mb-2 text-muted-foreground">Shop Permissions</label>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {shops.map(shop => {
+                    const sp = shopPerms[shop.slug] || {};
+                    const allOn = sp.can_delete && sp.can_edit_ui && sp.can_edit_items && sp.can_view_orders;
+                    return (
+                      <div key={shop.slug} className="rounded-lg border border-border/40 p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-semibold">{shop.name}</span>
+                          <button type="button" onClick={() => setAllPerms(shop.slug, !allOn)}
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-all ${
+                              allOn ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground border-border/40 hover:border-primary/30'
+                            }`}>{allOn ? 'Full Access' : 'Grant All'}</button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {Object.entries(PERM_LABELS).map(([key, meta]) => (
+                            <button key={key} type="button" onClick={() => togglePerm(shop.slug, key)} title={meta.desc}
+                              className={`text-[10px] font-medium px-2 py-1 rounded border transition-all ${
+                                sp[key] ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground border-border/40 hover:border-primary/30'
+                              }`}>{meta.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {error && <p className="text-xs text-destructive font-mono">{error}</p>}
+            <div className="flex items-center gap-3 pt-2">
+              <button type="submit" disabled={createMutation.isPending}
+                className="btn-launch rounded-md px-5 py-2.5 text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
+                <Plus className="h-3.5 w-3.5" />
+                {createMutation.isPending ? 'Creating...' : 'Create User'}
+              </button>
+              <button type="button" onClick={onClose} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
-
 function UserRow({ user: u, shops, currentUserId }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);

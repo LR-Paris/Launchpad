@@ -19,6 +19,25 @@ api.interceptors.response.use(
   }
 );
 
+// CSRF token cache + auto-inject on mutating requests
+let _csrfToken = null;
+async function getCsrfToken() {
+  if (_csrfToken) return _csrfToken;
+  const res = await api.get('/auth/csrf-token');
+  _csrfToken = res.data.csrfToken;
+  return _csrfToken;
+}
+
+api.interceptors.request.use(async (config) => {
+  if (['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase())) {
+    try {
+      const token = await getCsrfToken();
+      config.headers['x-csrf-token'] = token;
+    } catch {}
+  }
+  return config;
+});
+
 // Auth — OTP flow
 export const requestLoginCode = (identifier) =>
   api.post('/auth/login-request', { identifier }).then(r => r.data);
