@@ -212,24 +212,8 @@ export default function ShopCard({ shop }) {
             <Play className="h-3 w-3" /> Start
           </PermButton>
         )}
-        {shop.status === 'running' && (
-          <PermButton
-            allowed={perms.can_edit_ui}
-            disabled={busy}
-            onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'stop' })}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
-          >
-            <Square className="h-3 w-3" /> Stop
-          </PermButton>
-        )}
-        <PermButton
-          allowed={perms.can_edit_ui}
-          disabled={busy}
-          onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'restart' })}
-          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 transition-all disabled:opacity-50"
-        >
-          <RotateCcw className="h-3 w-3" /> Restart
-        </PermButton>
+
+
 
         <div className="flex-1" />
 
@@ -252,20 +236,14 @@ export default function ShopCard({ shop }) {
         >
           <BarChart3 className="h-3 w-3" /> Analytics
         </Link>
-        <Link
+        <PermLink
+          allowed={perms.can_edit_ui}
           to={`/shops/${shop.slug}/settings`}
           className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all"
         >
           <Settings className="h-3 w-3" /> Settings
-        </Link>
-        <PermButton
-          allowed={perms.can_delete}
-          disabled={busy}
-          onClick={() => setShowDeleteConfirm(true)}
-          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-destructive bg-secondary hover:bg-destructive/10 border border-border/60 hover:border-destructive/40 transition-all disabled:opacity-50"
-        >
-          <Trash2 className="h-3 w-3" />
-        </PermButton>
+        </PermLink>
+
       </div>
     </div>
   );
