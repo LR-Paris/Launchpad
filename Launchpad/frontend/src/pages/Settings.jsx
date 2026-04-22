@@ -79,6 +79,10 @@ export default function Settings() {
   // DATABASE/Design/Details info
   const [shopTitle, setShopTitle] = useState('');
   const [shopDescription, setShopDescription] = useState('');
+  const [shopAbout, setShopAbout] = useState('');
+  const [aboutSaving, setAboutSaving] = useState(false);
+  const [aboutDirty, setAboutDirty] = useState(false);
+  const [aboutSaved, setAboutSaved] = useState(false);
 
   // Template update state
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -178,6 +182,9 @@ export default function Settings() {
         setShopDescription(aboutMatch ? aboutMatch[1].trim() : raw);
       })
       .catch(() => setShopDescription(''));
+    readShopFile(slug, 'DATABASE/Design/Details/About.txt')
+      .then((d) => { setShopAbout(d.content.trimEnd()); setAboutDirty(false); })
+      .catch(() => setAboutDirty(false));
   }, [slug]);
 
   // Load DATABASE/Design/Details/Password.txt
@@ -793,6 +800,49 @@ export default function Settings() {
           )}
             </>
           )}
+        </div>
+
+        {/* About Page Editor */}
+        <div className="lp-card rounded-xl overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
+            <FileText className="h-4 w-4 text-primary/70" />
+            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>About Page</h2>
+            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/Design/Details/About.txt</span>
+          </div>
+          <div className="p-5 space-y-3">
+            <textarea
+              className="w-full text-sm border border-border/50 rounded-lg px-3 py-2.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/50 resize-y font-mono leading-relaxed"
+              rows={8}
+              placeholder="Write your about page content here...&#10;&#10;Use blank lines to separate paragraphs."
+              value={shopAbout}
+              onChange={e => { setShopAbout(e.target.value); setAboutDirty(true); setAboutSaved(false); }}
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Blank lines create new paragraphs on the About page.</p>
+              <button
+                onClick={async () => {
+                  if (!canEditUI) return;
+                  setAboutSaving(true);
+                  try {
+                    await writeShopFile(slug, 'DATABASE/Design/Details/About.txt', shopAbout);
+                    setAboutDirty(false);
+                    setAboutSaved(true);
+                    setTimeout(() => setAboutSaved(false), 3000);
+                  } catch (err) {
+                    console.error('Failed to save About.txt', err);
+                  } finally {
+                    setAboutSaving(false);
+                  }
+                }}
+                disabled={!aboutDirty || aboutSaving || !canEditUI}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                style={{ background: (aboutDirty && !aboutSaving) ? 'hsl(var(--primary))' : undefined, color: (aboutDirty && !aboutSaving) ? 'hsl(var(--primary-foreground))' : 'hsl(var(--muted-foreground))', border: (aboutDirty && !aboutSaving) ? 'none' : '1px solid hsl(var(--border))' }}
+              >
+                <Save className="h-3 w-3" />
+                {aboutSaving ? 'Saving...' : aboutSaved ? 'Saved!' : 'Save About'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Product catalog & inventory — /shops/:slug/catalog */}

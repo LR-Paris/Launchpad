@@ -5,3 +5,5 @@ shops/
 dist/
 *.log
 .DS_Store
+Launchpad/docker-compose.yml
+Launchpad/backend/data/
