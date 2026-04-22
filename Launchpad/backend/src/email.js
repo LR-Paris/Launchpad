@@ -259,19 +259,29 @@ function buildReceipt(row, primaryColor, slug) {
 function buildInfoBlock(row) {
   const fields = [];
   const company = col(row, 'Company', 'company', 'Company Name');
+  const country = col(row, 'Country', 'country');
   const address = col(row, 'Shipping Address', 'Address', 'shipping_address');
   const phone = col(row, 'Phone', 'phone', 'Telephone', 'Mobile');
   const freight = col(row, 'Freight Option', 'freight_option', 'Shipping Method');
   const freightCo = col(row, 'Freight Company', 'freight_company');
   const notes = col(row, 'Order Notes', 'Notes', 'notes', 'Comments', 'Special Instructions');
   const hotel = col(row, 'Hotel', 'hotel', 'Hotel Name', 'Hotel Selection', 'Accommodation');
+  const billingName = col(row, 'Billing Name', 'billingName');
+  const billingAddress = col(row, 'Billing Address', 'billingAddress');
+  const billingCity = col(row, 'Billing City', 'billingCity');
+  const billingZip = col(row, 'Billing ZIP', 'billingZip');
+  const billingCountry = col(row, 'Billing Country', 'billingCountry');
 
   if (company) fields.push(['Company', company]);
+  if (country) fields.push(['Country', country]);
   if (address) fields.push(['Ship To', address]);
   if (freight) fields.push(['Shipping Method', freight]);
   if (freightCo) fields.push(['Carrier', freightCo]);
   if (hotel) fields.push(['Hotel', hotel]);
   if (phone) fields.push(['Phone', phone]);
+  if (billingName) fields.push(['Billing Name', billingName]);
+  const billingParts = [billingAddress, billingCity, billingZip, billingCountry].filter(Boolean);
+  if (billingParts.length) fields.push(['Billing Address', billingParts.join(', ')]);
   if (notes) fields.push(['Notes', notes]);
 
   if (!fields.length) return '';
@@ -431,6 +441,8 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   if (customerEmail) contactRows.push(['Email', `<a href="mailto:${esc(customerEmail)}" style="color:${primaryColor};text-decoration:none;">${esc(customerEmail)}</a>`]);
   if (phone) contactRows.push(['Phone', `<a href="tel:${esc(phone)}" style="color:${primaryColor};text-decoration:none;">${esc(phone)}</a>`]);
   if (company) contactRows.push(['Company', company]);
+  const country2 = col(orderData, 'Country', 'country');
+  if (country2) contactRows.push(['Country', country2]);
   if (orderDate) contactRows.push(['Date', formatDate(orderDate)]);
 
   const contactCard = `
@@ -453,6 +465,15 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   if (freight) shipFields.push(['Shipping Method', freight]);
   if (freightCo) shipFields.push(['Carrier', freightCo]);
   if (hotel) shipFields.push(['Hotel', hotel]);
+  const adminBillingName = col(orderData, 'Billing Name', 'billingName');
+  const adminBillingParts = [
+    col(orderData, 'Billing Address', 'billingAddress'),
+    col(orderData, 'Billing City', 'billingCity'),
+    col(orderData, 'Billing ZIP', 'billingZip'),
+    col(orderData, 'Billing Country', 'billingCountry'),
+  ].filter(Boolean);
+  if (adminBillingName) shipFields.push(['Billing Name', adminBillingName]);
+  if (adminBillingParts.length) shipFields.push(['Billing Address', adminBillingParts.join(', ')]);
 
   const shippingCard = shipFields.length > 0 ? `
     <div style="margin:16px 0;padding:16px;background:#fafafa;border-radius:8px;border:1px solid #eee;">
