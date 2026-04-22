@@ -21,6 +21,7 @@ export interface Colors {
 export interface Descriptions {
   tagline: string;
   about: string;
+  aboutParagraphs: string[];
   footer: string;
 }
 
@@ -133,6 +134,7 @@ export function getDescriptions(): Descriptions {
     return {
       tagline: parsed.tagline || 'Quality products for your business',
       about: aboutText,
+      aboutParagraphs: aboutText.split('\n\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0),
       footer: parsed.footer || '© 2026 All rights reserved.',
     };
   } catch (error) {
@@ -140,6 +142,7 @@ export function getDescriptions(): Descriptions {
     return {
       tagline: 'Quality products for your business',
       about: 'We provide quality products for businesses.',
+      aboutParagraphs: ['We provide quality products for businesses.'],
       footer: '© 2026 All rights reserved.',
     };
   }
