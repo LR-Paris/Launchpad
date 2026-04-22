@@ -152,6 +152,27 @@ export default function OrderTable({ orders, slug }) {
       );
     }
 
+    // Custom Fields column: parse JSON and render as key:value list
+    if (col === 'Custom Fields' && value?.trim()) {
+      const parsed = tryParseJson(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const entries = Object.entries(parsed).filter(([, v]) => v !== '' && v !== false && v != null);
+        if (entries.length) {
+          return (
+            <div className="space-y-0.5">
+              {entries.map(([k, v]) => (
+                <div key={k} className="text-xs">
+                  <span className="text-muted-foreground font-mono">{k}: </span>
+                  <span>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        }
+      }
+      return null;
+    }
+
     // PO File column: render as a link
     if (col === 'PO File' && value?.trim() && slug) {
       return (

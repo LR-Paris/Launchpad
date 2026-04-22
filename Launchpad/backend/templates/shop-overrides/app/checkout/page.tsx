@@ -158,6 +158,14 @@ export default function CheckoutPage() {
     const isBillingField = section?.id === 'billing' && field.id !== 'billingSameAsShipping';
     const disabled = isBillingField && isBillingSame;
 
+    if (field.type === 'description') {
+      return (
+        <div key={field.id} className={field.width === 'full' ? 'col-span-2' : ''}>
+          <p className="text-sm py-1 whitespace-pre-wrap" style={{ color: design.colors.textLight, fontFamily: design.fonts.bodyFont }}>{field.label}</p>
+        </div>
+      );
+    }
+
     if (field.type === 'checkbox') {
       return (
         <div key={field.id} className={field.width === 'full' ? 'col-span-2' : ''}>
