@@ -88,21 +88,14 @@ export default function AboutPage() {
         </h1>
         <div className="max-w-3xl space-y-5">
           {design.descriptions.about
-            .split('\n')
-            .reduce((acc: string[][], line: string) => {
-              // Group consecutive non-empty lines into paragraphs
-              if (line.trim() === '') { acc.push([]); } 
-              else { if (!acc.length) acc.push([]); acc[acc.length - 1].push(line); }
-              return acc;
-            }, [[]])
-            .filter((g: string[]) => g.length > 0)
-            .map((group: string[], i: number) => (
+            .split(/\n\n+/)
+            .map((para: string, i: number) => (
               <p
                 key={i}
-                className="text-lg leading-relaxed"
+                className="text-lg leading-relaxed whitespace-pre-line"
                 style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
               >
-                {group.map((line: string, j: number) => (<span key={j}>{line}{j < group.length - 1 && <br />}</span>))}
+                {para.trim()}
               </p>
             ))
           }
