@@ -102,7 +102,7 @@ export default function AboutPage() {
                 className="text-lg leading-relaxed"
                 style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
               >
-                {group.join(' ')}
+                {group.map((line: string, j: number) => (<span key={j}>{line}{j < group.length - 1 && <br />}</span>))}
               </p>
             ))
           }
