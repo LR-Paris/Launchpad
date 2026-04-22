@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Vertical tail fin (drawn first, behind body) -->
+  <path d="M48 10 L44 44 L56 44 L52 10 Z" fill="#2BB5AC" opacity="0.85"/>
+
+  <!-- Left delta wing — sweeps from near nose all the way to base -->
+  <path d="M43 30 L4 80 L43 74 Z" fill="#2BB5AC"/>
+  <!-- Right delta wing -->
+  <path d="M57 30 L96 80 L57 74 Z" fill="#2BB5AC"/>
+
+  <!-- Wing leading edge highlight -->
+  <path d="M43 30 L4 80" stroke="#39C5BB" stroke-width="1.2" opacity="0.5" fill="none"/>
+  <path d="M57 30 L96 80" stroke="#39C5BB" stroke-width="1.2" opacity="0.5" fill="none"/>
+
+  <!-- Main fuselage — blunter nose than a rocket, more cylindrical body -->
+  <path d="M43 16 Q43 6 50 3 Q57 6 57 16 L57 74 L43 74 Z" fill="#39C5BB"/>
+
+  <!-- Fuselage edge shading -->
+  <path d="M43 16 Q43 6 50 3 L50 74 L43 74 Z" fill="#33B8AF" opacity="0.35"/>
+
+  <!-- Cockpit windows — two rows, more shuttle-like -->
+  <rect x="45" y="16" width="10" height="5.5" rx="2" fill="white" opacity="0.92"/>
+  <rect x="46" y="23.5" width="8" height="3" rx="1.5" fill="white" opacity="0.55"/>
+
+  <!-- Payload bay panel lines -->
+  <line x1="50" y1="30" x2="50" y2="68" stroke="#2BB5AC" stroke-width="1" opacity="0.4"/>
+  <line x1="44" y1="30" x2="56" y2="30" stroke="#2BB5AC" stroke-width="0.8" opacity="0.3"/>
+  <line x1="44" y1="50" x2="56" y2="50" stroke="#2BB5AC" stroke-width="0.8" opacity="0.3"/>
+
+  <!-- OMS pods — rear shoulder bulges (orbital maneuvering system) -->
+  <ellipse cx="42" cy="59" rx="3.5" ry="6" fill="#1FA89F"/>
+  <ellipse cx="58" cy="59" rx="3.5" ry="6" fill="#1FA89F"/>
+
+  <!-- Engine section base plate -->
+  <rect x="43" y="72" width="14" height="5" rx="1" fill="#1A9890"/>
+
+  <!-- 3 SSME engines — classic triangle: left, right, center-bottom -->
+  <!-- Left engine -->
+  <ellipse cx="45.5" cy="80" rx="3.2" ry="3.8" fill="#14766F"/>
+  <ellipse cx="45.5" cy="83.8" rx="1.6" ry="1.6" fill="#39C5BB" opacity="0.6"/>
+  <!-- Right engine -->
+  <ellipse cx="54.5" cy="80" rx="3.2" ry="3.8" fill="#14766F"/>
+  <ellipse cx="54.5" cy="83.8" rx="1.6" ry="1.6" fill="#39C5BB" opacity="0.6"/>
+  <!-- Center-bottom engine -->
+  <ellipse cx="50" cy="85.5" rx="3.2" ry="3.8" fill="#14766F"/>
+  <ellipse cx="50" cy="89.3" rx="1.6" ry="1.6" fill="#39C5BB" opacity="0.6"/>
+</svg>

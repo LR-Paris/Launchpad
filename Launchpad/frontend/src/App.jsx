@@ -1,0 +1,255 @@
+import { useState, useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getMe, checkHealth } from './lib/api';
+import { PermissionsProvider, usePermissions } from './lib/permissions';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import NewShop from './pages/NewShop';
+import Orders from './pages/Orders';
+import Catalog from './pages/Catalog';
+import Settings from './pages/Settings';
+import GlobalSettings from './pages/GlobalSettings';
+import MissionControl from './pages/MissionControl';
+import Analytics from './pages/Analytics';
+import AdminUsers from './pages/AdminUsers';
+import CheckoutEditor from './pages/CheckoutEditor';
+import Header from './components/Header';
+import { ShieldX } from 'lucide-react';
+
+function ProtectedRoute({ children, user }) {
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+
+// Route-level permission gate — blocks access even if user navigates via URL
+function RequireAdmin({ children }) {
+  const { isAdminOrAbove } = usePermissions();
+  if (!isAdminOrAbove) return <AccessDenied message="Admin access required" />;
+  return children;
+}
+
+function RequireSuperAdmin({ children }) {
+  const { canManageUsers } = usePermissions();
+  if (!canManageUsers) return <AccessDenied message="Super Admin access required" />;
+  return children;
+}
+
+function RequireShopPerm({ permission, children }) {
+  const { slug } = useParams();
+  const { canShop, isAdminOrAbove } = usePermissions();
+  if (!isAdminOrAbove && !canShop(slug, permission)) {
+    return <AccessDenied message="You don't have permission to access this page" />;
+  }
+  return children;
+}
+
+function AccessDenied({ message }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 lp-fadein">
+      <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-4"
+           style={{ background: 'hsl(0 70% 50% / 0.1)' }}>
+        <ShieldX className="h-7 w-7 text-destructive" />
+      </div>
+      <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>Access Denied</h2>
+      <p className="text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function ConnectionBanner({ visible }) {
+  if (!visible) return null;
+  return (
+    <div className="fixed top-0 left-0 right-0 z-[100] bg-red-600 text-white text-center py-2 px-4 text-sm font-medium shadow-lg lp-fadein">
+      Unable to connect to the server. Some features may not work.
+    </div>
+  );
+}
+
+function AppContent({ user, theme, toggleTheme }) {
+  const location = useLocation();
+  const isCatalog = /^\/shops\/[^/]+\/catalog/.test(location.pathname);
+  const isMissionControl = location.pathname === '/mission-control';
+  const [backendDown, setBackendDown] = useState(false);
+  const failCount = useRef(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const poll = async () => {
+      const ok = await checkHealth();
+      if (!mounted) return;
+      if (ok) {
+        failCount.current = 0;
+        setBackendDown(false);
+      } else {
+        failCount.current += 1;
+        if (failCount.current >= 2) setBackendDown(true);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { mounted = false; clearInterval(id); };
+  }, []);
+
+  // Mission Control is a full-screen immersive layout — no header/footer/padding
+  if (isMissionControl) {
+    return (
+      <div className="h-screen bg-background overflow-auto">
+        <ConnectionBanner visible={backendDown} />
+        <Routes>
+          <Route
+            path="/mission-control"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireAdmin>
+                  <MissionControl />
+                </RequireAdmin>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <ConnectionBanner visible={backendDown} />
+      {user && <Header user={user} theme={theme} toggleTheme={toggleTheme} />}
+      <main className={`px-4 py-8 flex-1 w-full ${isCatalog ? 'max-w-full' : 'max-w-6xl mx-auto'}`}>
+        <Routes>
+          <Route
+            path="/login"
+            element={user ? <Navigate to="/" replace /> : <Login />}
+          />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute user={user}>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/new"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireAdmin>
+                  <NewShop />
+                </RequireAdmin>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/orders"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireShopPerm permission="can_view_orders">
+                  <Orders />
+                </RequireShopPerm>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/catalog"
+            element={
+              <ProtectedRoute user={user}>
+                <Catalog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/analytics"
+            element={
+              <ProtectedRoute user={user}>
+                <Analytics />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/checkout-editor"
+            element={
+              <ProtectedRoute user={user}>
+                <CheckoutEditor />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/shops/:slug/settings"
+            element={
+              <ProtectedRoute user={user}>
+                <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireAdmin>
+                  <GlobalSettings theme={theme} toggleTheme={toggleTheme} />
+                </RequireAdmin>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute user={user}>
+                <RequireSuperAdmin>
+                  <AdminUsers />
+                </RequireSuperAdmin>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/mission-control"
+            element={<Navigate to="/mission-control" replace />}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+      <footer className="border-t border-border/40 py-3 text-center">
+        <span className="text-xs font-mono text-muted-foreground/60">
+          Launchpad{' '}
+          <span className="text-[hsl(188,100%,42%)/70]">{`LC-${__APP_VERSION__}`}</span>
+        </span>
+      </footer>
+    </div>
+  );
+}
+
+export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('lp-theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('lp-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['auth'],
+    queryFn: getMe,
+    retry: false,
+  });
+
+  const user = data?.user || null;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen gap-2">
+        <span className="term-cursor" />
+        <p className="text-muted-foreground text-sm font-mono">Initializing...</p>
+      </div>
+    );
+  }
+
+  return (
+    <PermissionsProvider user={user}>
+      <AppContent user={user} theme={theme} toggleTheme={toggleTheme} />
+    </PermissionsProvider>
+  );
+}

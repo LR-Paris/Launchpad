@@ -1,16 +1,14 @@
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const NGINX_CONF_DIR = path.join(__dirname, '..', 'nginx', 'conf.d');
 const SHOPS_LOCATIONS_FILE = path.join(NGINX_CONF_DIR, 'shops-locations.inc');
-// Trigger file on the shared volume — host systemd path unit (nginx-reload.path)
-// watches this and runs `nginx -t && systemctl reload nginx` when it changes.
-const RELOAD_TRIGGER = path.join(__dirname, '..', '.nginx-reload-trigger');
 
-// Generate a path-based location block for a shop and append to shops-locations.inc.
-// Uses trailing-slash pattern so nginx strips the /<slug> prefix before proxying,
-// consistent with the existing demo/michael-kors shop configs on this server.
-// Next.js basePath handles client-side routing; the shop container receives bare paths.
+// Generate a path-based location block for a shop and append it to the
+// shared shops-locations.inc file.  Shops are reachable at domain.com/<slug>.
+// Next.js is built with basePath=/<slug> so it expects to receive the full
+// /<slug>/... path — no rewrite rules needed.
 function generateShopConfig(slug, port) {
   const block = `
 # Shop: ${slug}
@@ -31,6 +29,7 @@ location /${slug}/ {
     fs.mkdirSync(NGINX_CONF_DIR, { recursive: true });
   }
 
+  // Append to the shared locations file (created if missing)
   fs.appendFileSync(SHOPS_LOCATIONS_FILE, block);
 }
 
@@ -50,11 +49,10 @@ function removeShopConfig(slug) {
 
 function reloadNginx() {
   try {
-    // Touching this file triggers the host systemd path unit which reloads nginx.
-    fs.writeFileSync(RELOAD_TRIGGER, Date.now().toString());
+    execSync('nginx -t && systemctl reload nginx', { stdio: 'pipe' });
     return true;
   } catch (err) {
-    console.error('Failed to trigger nginx reload:', err.message);
+    console.error('Failed to reload nginx:', err.message);
     return false;
   }
 }
