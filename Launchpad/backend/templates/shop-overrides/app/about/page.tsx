@@ -87,18 +87,12 @@ export default function AboutPage() {
           About {design.companyName}
         </h1>
         <div className="max-w-3xl space-y-5">
-          {design.descriptions.about
-            .split(/\n\n+/)
-            .map((para: string, i: number) => (
-              <p
-                key={i}
-                className="text-lg leading-relaxed whitespace-pre-line"
-                style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
-              >
-                {para.trim()}
-              </p>
-            ))
-          }
+          <p
+            className="text-lg leading-relaxed whitespace-pre-wrap"
+            style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
+          >
+            {design.descriptions.about}
+          </p>
         </div>
       </section>
 
