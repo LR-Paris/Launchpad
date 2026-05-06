@@ -204,3 +204,29 @@ html.light .lp-card:hover {
   border-color: hsl(188 100% 32% / 0.35);
   box-shadow: 0 0 0 1px hsl(188 100% 32% / 0.1), 0 4px 24px hsl(188 100% 32% / 0.08);
 }
+
+/* ── Print mode (Analytics PDF export, etc.) ──────────────── */
+@media print {
+  /* Plain white background for printing */
+  body { background: white !important; color: black !important; }
+  body::before, body::after { display: none !important; }
+
+  /* Hide app chrome — header nav, sidebars, controls */
+  header, nav, .no-print { display: none !important; }
+
+  /* Cards lose backdrops + glow */
+  .lp-card {
+    background: white !important;
+    border: 1px solid #ddd !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Force text to read as black */
+  .text-muted-foreground, .text-foreground, .text-primary {
+    color: #1a1a1a !important;
+  }
+
+  /* Allow charts to expand naturally */
+  .recharts-wrapper { page-break-inside: avoid; }
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getInventory, seedInventory, updateInventoryBulk } from '../lib/api';
+import { getInventory, seedInventory, updateInventoryBulk, getShop } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import CollectionsEditor from '../components/CollectionsEditor';
 import {
@@ -53,6 +53,16 @@ export default function Catalog() {
     queryFn: () => getInventory(slug),
     refetchInterval: 30000,
   });
+
+  // Lock + status come from the shop record so we can disable mutations and
+  // show a banner while a launch/build is in progress.
+  const { data: shopData } = useQuery({
+    queryKey: ['shop', slug],
+    queryFn: () => getShop(slug),
+    refetchInterval: 10000,
+  });
+  const shop = shopData?.shop;
+  const locked = !!shop?.locked || shop?.status === 'building';
 
   const inventory = inventoryData?.inventory || [];
 
@@ -194,6 +204,16 @@ export default function Catalog() {
           Settings
         </Link>
       </div>
+
+      {/* Locked / building banner */}
+      {locked && (
+        <div className="mb-4 rounded-md border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 flex items-center gap-2 text-xs text-amber-300 lp-fadein">
+          <Lock className="h-3.5 w-3.5" />
+          <span className="font-mono">
+            This shuttle is launching. Catalog edits are disabled until the build completes (~2-5 minutes).
+          </span>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 mb-6 border-b border-border/40 pb-px">
@@ -490,7 +510,7 @@ export default function Catalog() {
 
       {/* Catalog Tab */}
       {activeTab === 'catalog' && (
-        <CollectionsEditor slug={slug} />
+        <CollectionsEditor slug={slug} locked={locked} />
       )}
     </div>
   );

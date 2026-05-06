@@ -5,9 +5,27 @@ const multer = require('multer');
 const AdmZip = require('adm-zip');
 
 const { checkShopPermission } = require('./users');
+const { requireUnlocked } = require('./lock');
+const { renameCollectionInCsv, renameItemInCsv } = require('./inventory');
 
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
+
+// Parse a path under DATABASE/ShopCollections to figure out whether a rename
+// affects the inventory.csv (collection rename, item rename, or item move).
+// Returns one of:
+//   { type: 'collection', name }
+//   { type: 'item', collection, item }
+//   { type: 'photo' | 'other' }
+function classifyCollectionPath(relPath) {
+  const parts = relPath.split('/').filter(Boolean);
+  if (parts[0] !== 'DATABASE' || parts[1] !== 'ShopCollections') {
+    return { type: 'other' };
+  }
+  if (parts.length === 3) return { type: 'collection', name: parts[2] };
+  if (parts.length === 4) return { type: 'item', collection: parts[2], item: parts[3] };
+  return { type: 'photo' };
+}
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
 
@@ -148,7 +166,7 @@ router.get('/:slug/files/image', (req, res) => {
 });
 
 // PUT /api/shops/:slug/files/write?path=file.txt (requires can_edit_ui)
-router.put('/:slug/files/write', (req, res) => {
+router.put('/:slug/files/write', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -170,7 +188,7 @@ router.put('/:slug/files/write', (req, res) => {
 });
 
 // DELETE /api/shops/:slug/files?path=file.txt (requires can_delete)
-router.delete('/:slug/files', (req, res) => {
+router.delete('/:slug/files', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_delete')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -212,7 +230,7 @@ const uploadZip = multer({
 
 const MAX_ZIP_EXTRACTED_SIZE = 500 * 1024 * 1024; // 500MB max uncompressed
 
-router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
+router.post('/:slug/files/upload-zip', requireUnlocked, uploadZip.single('file'), (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -306,7 +324,7 @@ router.post('/:slug/files/upload-zip', uploadZip.single('file'), (req, res) => {
 
 // POST /api/shops/:slug/files/replace?path=DATABASE/Design/Details/Logo.png
 // Replaces a single file at the exact path specified (used for image replacement, requires can_edit_ui)
-router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
+router.post('/:slug/files/replace', requireUnlocked, upload.single('file'), (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -326,7 +344,7 @@ router.post('/:slug/files/replace', upload.single('file'), (req, res) => {
 });
 
 // POST /api/shops/:slug/files/upload?path=subdir (requires can_edit_ui)
-router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
+router.post('/:slug/files/upload', requireUnlocked, upload.array('files', 20), (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -351,6 +369,146 @@ router.post('/:slug/files/upload', upload.array('files', 20), (req, res) => {
 
   req.app.locals.auditLog?.('files_uploaded', { req, details: { slug, path: relPath, files: saved } });
   res.json({ message: `Uploaded ${saved.length} file(s)`, files: saved });
+});
+
+// POST /api/shops/:slug/files/rename — rename a file or directory in place
+// Body: { from, to } — both paths relative to the shop directory.
+// Used for: collection rename, item rename, photo rename.
+router.post('/:slug/files/rename', requireUnlocked, (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug } = req.params;
+  const { from, to } = req.body || {};
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  if (from === to) return res.status(400).json({ error: 'from and to must differ' });
+
+  const fromAbs = safeShopPath(slug, from);
+  const toAbs = safeShopPath(slug, to);
+  if (!fromAbs || !toAbs) return res.status(400).json({ error: 'Invalid path' });
+  if (!fs.existsSync(fromAbs)) return res.status(404).json({ error: 'Source not found' });
+  if (fs.existsSync(toAbs)) return res.status(409).json({ error: 'Destination already exists' });
+
+  fs.mkdirSync(path.dirname(toAbs), { recursive: true });
+  fs.renameSync(fromAbs, toAbs);
+
+  // Sync inventory.csv if a collection or item was renamed within the same parent
+  const fromInfo = classifyCollectionPath(from);
+  const toInfo = classifyCollectionPath(to);
+  let inventoryUpdated = 0;
+  try {
+    if (fromInfo.type === 'collection' && toInfo.type === 'collection') {
+      inventoryUpdated = renameCollectionInCsv(slug, fromInfo.name, toInfo.name);
+    } else if (fromInfo.type === 'item' && toInfo.type === 'item') {
+      inventoryUpdated = renameItemInCsv(
+        slug, fromInfo.collection, fromInfo.item, toInfo.collection, toInfo.item
+      );
+    }
+  } catch (err) {
+    console.error(`[files] rename inventory sync failed for ${slug}:`, err.message);
+  }
+
+  req.app.locals.auditLog?.('file_renamed', { req, details: { slug, from, to, inventoryUpdated } });
+  res.json({ message: 'Renamed', from, to, inventoryUpdated });
+});
+
+// POST /api/shops/:slug/files/move — move a file or directory across parents
+// Body: { from, to }. Same semantics as rename, but `to` may have a different
+// parent. Used for: moving items between collections.
+router.post('/:slug/files/move', requireUnlocked, (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug } = req.params;
+  const { from, to } = req.body || {};
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  if (from === to) return res.status(400).json({ error: 'from and to must differ' });
+
+  const fromAbs = safeShopPath(slug, from);
+  const toAbs = safeShopPath(slug, to);
+  if (!fromAbs || !toAbs) return res.status(400).json({ error: 'Invalid path' });
+  if (!fs.existsSync(fromAbs)) return res.status(404).json({ error: 'Source not found' });
+  if (fs.existsSync(toAbs)) return res.status(409).json({ error: 'Destination already exists' });
+
+  fs.mkdirSync(path.dirname(toAbs), { recursive: true });
+  fs.renameSync(fromAbs, toAbs);
+
+  const fromInfo = classifyCollectionPath(from);
+  const toInfo = classifyCollectionPath(to);
+  let inventoryUpdated = 0;
+  try {
+    if (fromInfo.type === 'item' && toInfo.type === 'item') {
+      inventoryUpdated = renameItemInCsv(
+        slug, fromInfo.collection, fromInfo.item, toInfo.collection, toInfo.item
+      );
+    }
+  } catch (err) {
+    console.error(`[files] move inventory sync failed for ${slug}:`, err.message);
+  }
+
+  req.app.locals.auditLog?.('file_moved', { req, details: { slug, from, to, inventoryUpdated } });
+  res.json({ message: 'Moved', from, to, inventoryUpdated });
+});
+
+// POST /api/shops/:slug/files/copy — recursively copy a file or directory
+// Body: { from, to }. Used for: duplicate item.
+router.post('/:slug/files/copy', requireUnlocked, (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug } = req.params;
+  const { from, to } = req.body || {};
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  if (from === to) return res.status(400).json({ error: 'from and to must differ' });
+
+  const fromAbs = safeShopPath(slug, from);
+  const toAbs = safeShopPath(slug, to);
+  if (!fromAbs || !toAbs) return res.status(400).json({ error: 'Invalid path' });
+  if (!fs.existsSync(fromAbs)) return res.status(404).json({ error: 'Source not found' });
+  if (fs.existsSync(toAbs)) return res.status(409).json({ error: 'Destination already exists' });
+
+  fs.mkdirSync(path.dirname(toAbs), { recursive: true });
+  fs.cpSync(fromAbs, toAbs, { recursive: true });
+
+  req.app.locals.auditLog?.('file_copied', { req, details: { slug, from, to } });
+  res.json({ message: 'Copied', from, to });
+});
+
+// GET /api/shops/:slug/database/export — stream the shop's DATABASE/ as a zip
+router.get('/:slug/database/export', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug } = req.params;
+  const dbDir = path.join(SHOPS_DIR, slug, 'DATABASE');
+  if (!fs.existsSync(dbDir)) return res.status(404).json({ error: 'DATABASE folder not found' });
+
+  const zip = new AdmZip();
+  function walk(dir, base) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      // Skip launch lock and tempfiles to keep the export clean
+      if (e.name === '.db.lock' || e.name.endsWith('.tmp')) continue;
+      const full = path.join(dir, e.name);
+      const rel = base ? `${base}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        walk(full, rel);
+      } else {
+        zip.addFile(rel, fs.readFileSync(full));
+      }
+    }
+  }
+  walk(dbDir, '');
+
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = `${slug}-database-${today}.zip`;
+  const buffer = zip.toBuffer();
+
+  req.app.locals.auditLog?.('database_exported', { req, details: { slug, bytes: buffer.length } });
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', buffer.length);
+  res.end(buffer);
 });
 
 module.exports = router;

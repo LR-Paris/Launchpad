@@ -86,8 +86,10 @@ export const updateShop = (slug, data) =>
 export const deleteShop = (slug, deleteFiles = false) =>
   api.delete(`/shops/${slug}?deleteFiles=${deleteFiles}`).then(r => r.data);
 
-export const shopAction = (slug, action) =>
-  api.post(`/shops/${slug}/${action}`).then(r => r.data);
+export const shopAction = (slug, action, opts = {}) => {
+  const qs = opts.force ? '?force=true' : '';
+  return api.post(`/shops/${slug}/${action}${qs}`).then(r => r.data);
+};
 
 export const deployShop = (slug) =>
   api.post(`/shops/${slug}/deploy`).then(r => r.data);
@@ -156,6 +158,19 @@ export const replaceShopFile = (slug, filePath, file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 };
+
+// 4.0 catalog ops
+export const renameShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/rename`, { from, to }).then(r => r.data);
+
+export const moveShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/move`, { from, to }).then(r => r.data);
+
+export const copyShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/copy`, { from, to }).then(r => r.data);
+
+export const getDatabaseExportUrl = (slug) =>
+  `/api/shops/${slug}/database/export`;
 
 export const uploadDatabaseZip = (slug, dirPath, file) => {
   const formData = new FormData();

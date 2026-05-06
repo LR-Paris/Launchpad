@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { execSync } = require('child_process');
 const Database = require('better-sqlite3');
@@ -7,6 +8,15 @@ const slugify = require('slugify');
 const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx');
 
 const { checkShopPermission, isAdminOrAbove } = require('./users');
+const { acquire: lockAcquire, release: lockRelease, isLocked } = require('./lock');
+
+// Shop-to-launchpad gateway IP — same value the shop containers use to reach
+// the launchpad in their generated .env file. Docker default bridge gateway.
+const HOST_GATEWAY = '172.17.0.1';
+
+// Shops where is_building=1 stay flagged until either an HTTP probe succeeds
+// or this many ms elapse since build_started_at (defensive timeout).
+const BUILD_TIMEOUT_MS = 15 * 60 * 1000;
 
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
@@ -111,6 +121,16 @@ function getDb() {
   if (!cols.includes('lifecycle_status')) {
     db.exec("ALTER TABLE shops ADD COLUMN lifecycle_status TEXT DEFAULT 'none'");
   }
+  // 4.0 additions — backwards compatible: existing rows default to 0/'en'
+  if (!cols.includes('is_building')) {
+    db.exec('ALTER TABLE shops ADD COLUMN is_building INTEGER DEFAULT 0');
+  }
+  if (!cols.includes('build_started_at')) {
+    db.exec('ALTER TABLE shops ADD COLUMN build_started_at INTEGER DEFAULT 0');
+  }
+  if (!cols.includes('language')) {
+    db.exec("ALTER TABLE shops ADD COLUMN language TEXT DEFAULT 'en'");
+  }
 
   return db;
 }
@@ -139,6 +159,78 @@ function getContainerStatus(slug) {
   } catch {
     return 'stopped';
   }
+}
+
+// Async TCP probe — resolves true if the shop's port accepts connections.
+// Used by the background poller to clear is_building once Next.js is ready.
+function probeShopPort(port, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const sock = net.createConnection({ host: HOST_GATEWAY, port });
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; sock.destroy(); resolve(ok); };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => finish(true));
+    sock.once('timeout', () => finish(false));
+    sock.once('error', () => finish(false));
+  });
+}
+
+// Resolve a shop's effective live status, taking is_building into account.
+// Backwards-compatible: shops with NULL/0 is_building get the legacy behavior.
+function resolveLiveStatus(shop) {
+  const containerStatus = getContainerStatus(shop.slug);
+  if (containerStatus !== 'running') return containerStatus; // stopped or error
+
+  const buildingFlag = Number(shop.is_building) || 0;
+  if (!buildingFlag) return 'running';
+
+  const startedAt = Number(shop.build_started_at) || 0;
+  if (startedAt && Date.now() - startedAt > BUILD_TIMEOUT_MS) {
+    // Timed out — defensively clear and treat as running
+    try {
+      const db = getDb();
+      try {
+        db.prepare('UPDATE shops SET is_building = 0 WHERE slug = ?').run(shop.slug);
+      } finally { db.close(); }
+    } catch { /* ignore */ }
+    return 'running';
+  }
+  return 'building';
+}
+
+// Background poller: every 10s, sweep all shops with is_building=1 and clear
+// the flag when their port accepts connections. Runs once on module init.
+let _builderPollerStarted = false;
+function startBuildingPoller() {
+  if (_builderPollerStarted) return;
+  _builderPollerStarted = true;
+
+  const tick = async () => {
+    try {
+      const db = getDb();
+      let buildingShops;
+      try {
+        buildingShops = db.prepare(
+          'SELECT slug, port, build_started_at FROM shops WHERE is_building = 1'
+        ).all();
+      } finally { db.close(); }
+
+      for (const s of buildingShops) {
+        const ready = await probeShopPort(s.port);
+        if (ready) {
+          const db2 = getDb();
+          try {
+            db2.prepare('UPDATE shops SET is_building = 0 WHERE slug = ?').run(s.slug);
+          } finally { db2.close(); }
+          lockRelease(s.slug);
+          console.log(`[shops] ${s.slug} is now reachable — cleared is_building flag`);
+        }
+      }
+    } catch (err) {
+      console.error('[shops] building poller error:', err.message);
+    }
+  };
+  setInterval(tick, 10 * 1000);
 }
 
 function copyDirSync(src, dest) {
@@ -725,10 +817,11 @@ router.get('/', (req, res) => {
   try {
     const shops = db.prepare('SELECT * FROM shops ORDER BY created_at DESC').all();
 
-    // Update live status
+    // Update live status (honors is_building flag with HTTP-port probe via poller)
     const updatedShops = shops.map(shop => ({
       ...shop,
-      status: getContainerStatus(shop.slug),
+      status: resolveLiveStatus(shop),
+      locked: isLocked(shop.slug),
     }));
 
     res.json({ shops: updatedShops });
@@ -747,7 +840,7 @@ router.get('/:slug', (req, res) => {
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
-    res.json({ shop: { ...shop, status: getContainerStatus(slug) } });
+    res.json({ shop: { ...shop, status: resolveLiveStatus(shop), locked: isLocked(slug) } });
   } catch (err) {
     console.error(`[shops] get ${slug} error:`, err.message);
     res.status(500).json({ error: 'Failed to get shop details.' });
@@ -768,7 +861,7 @@ router.patch('/:slug', (req, res) => {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
-  const { name, description, lifecycle_status } = req.body;
+  const { name, description, lifecycle_status, language } = req.body;
   let { slug: newSlugRaw } = req.body;
   const db = getDb();
   try {
@@ -783,6 +876,15 @@ router.patch('/:slug', (req, res) => {
     const newName = name !== undefined ? String(name).trim() : shop.name;
     const newDescription = description !== undefined ? String(description).trim() : (shop.description || '');
     const newLifecycle = lifecycle_status !== undefined ? lifecycle_status : (shop.lifecycle_status || 'none');
+
+    // Language: only 'en' or 'fr' allowed for now (Shuttle storefront support)
+    let newLanguage = shop.language || 'en';
+    if (language !== undefined) {
+      if (!['en', 'fr'].includes(language)) {
+        return res.status(400).json({ error: "Language must be 'en' or 'fr'" });
+      }
+      newLanguage = language;
+    }
 
     if (!newName) return res.status(400).json({ error: 'Name cannot be empty' });
 
@@ -847,11 +949,30 @@ router.patch('/:slug', (req, res) => {
     }
 
     db.prepare(
-      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ?, lifecycle_status = ? WHERE slug = ?'
-    ).run(newSlug, newName, newDescription, newSlug, newLifecycle, slug);
+      'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ?, lifecycle_status = ?, language = ? WHERE slug = ?'
+    ).run(newSlug, newName, newDescription, newSlug, newLifecycle, newLanguage, slug);
+
+    // If language changed and the docker-compose.yml exists, regenerate the
+    // SHUTTLE_LANG env line so the running shop picks it up on next restart.
+    if (newLanguage !== (shop.language || 'en')) {
+      const composeInShop = path.join(SHOPS_DIR, newSlug, 'docker-compose.yml');
+      if (fs.existsSync(composeInShop)) {
+        let compose = fs.readFileSync(composeInShop, 'utf8');
+        if (compose.includes('SHUTTLE_LANG=')) {
+          compose = compose.replace(/SHUTTLE_LANG=\w+/g, `SHUTTLE_LANG=${newLanguage}`);
+        } else {
+          // Inject SHUTTLE_LANG after BASE_PATH= line within the environment block
+          compose = compose.replace(
+            /(- BASE_PATH=[^\n]*\n)/,
+            `$1      - SHUTTLE_LANG=${newLanguage}\n`
+          );
+        }
+        fs.writeFileSync(composeInShop, compose);
+      }
+    }
 
     const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
-    req.app.locals.auditLog?.('shop_updated', { req, details: { slug, newSlug, name: newName, lifecycle_status: newLifecycle } });
+    req.app.locals.auditLog?.('shop_updated', { req, details: { slug, newSlug, name: newName, lifecycle_status: newLifecycle, language: newLanguage } });
     res.json({ shop: updated });
   } catch (err) {
     console.error(`[shops] patch ${slug} error:`, err.message);
@@ -944,20 +1065,37 @@ router.delete('/:slug', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/start (requires can_edit_ui)
+// POST /api/shops/:slug/start?force=true (requires can_edit_ui)
+//
+// Production protection: shops with lifecycle_status='active' do NOT clear
+// the build cache or pick up template changes on launch unless the caller
+// explicitly passes ?force=true. This prevents an idle "Launch" click from
+// silently rolling out unreviewed updates to a live shop.
 router.post('/:slug/start', (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
+  const force = req.query.force === 'true';
   const db = getDb();
 
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    // Clear stale build cache so container rebuilds with current source
-    clearBuildCache(path.join(SHOPS_DIR, slug), slug);
+    const isActive = (shop.lifecycle_status || 'none') === 'active';
+    const skipUpdate = isActive && !force;
+
+    if (!skipUpdate) {
+      // Clear stale build cache so container rebuilds with current source
+      clearBuildCache(path.join(SHOPS_DIR, slug), slug);
+    }
+
+    // Lock catalog mutations + flag building until the port is reachable
+    lockAcquire(slug, req.session?.user?.id);
+    db.prepare(
+      'UPDATE shops SET is_building = 1, build_started_at = ? WHERE slug = ?'
+    ).run(Date.now(), slug);
 
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
@@ -969,14 +1107,25 @@ router.post('/:slug/start', (req, res) => {
     } catch (err) {
       const msg = err.stdout?.toString() || err.stderr?.toString() || err.message;
       console.error(`[shops] start ${slug} failed:`, msg);
-      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      lockRelease(slug);
+      db.prepare(
+        'UPDATE shops SET status = ?, is_building = 0 WHERE slug = ?'
+      ).run('error', slug);
       return res.status(500).json({ error: 'Failed to start shop container.' });
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    req.app.locals.auditLog?.('shop_started', { req, details: { slug } });
-    res.json({ message: `Shop "${slug}" started`, log: out });
+    req.app.locals.auditLog?.('shop_started', {
+      req, details: { slug, force, skippedUpdate: skipUpdate },
+    });
+    res.json({
+      message: `Shop "${slug}" started`,
+      log: out,
+      skippedUpdate: skipUpdate,
+      building: !skipUpdate,
+    });
   } catch (err) {
     console.error(`[shops] start ${slug} error:`, err.message);
+    lockRelease(slug);
     res.status(500).json({ error: 'Failed to start shop.' });
   } finally {
     db.close();
@@ -1007,7 +1156,10 @@ router.post('/:slug/stop', (req, res) => {
       console.error(`[shops] stop ${slug} failed:`, msg);
       return res.status(500).json({ error: 'Failed to stop shop container.' });
     }
-    db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('stopped', slug);
+    lockRelease(slug);
+    db.prepare(
+      'UPDATE shops SET status = ?, is_building = 0 WHERE slug = ?'
+    ).run('stopped', slug);
     req.app.locals.auditLog?.('shop_stopped', { req, details: { slug } });
     res.json({ message: `Shop "${slug}" stopped`, log: out });
   } catch (err) {
@@ -1018,20 +1170,32 @@ router.post('/:slug/stop', (req, res) => {
   }
 });
 
-// POST /api/shops/:slug/restart (requires can_edit_ui)
+// POST /api/shops/:slug/restart?force=true (requires can_edit_ui)
+// Same production protection as /start: active shops do not clear the build
+// cache unless ?force=true is passed.
 router.post('/:slug/restart', (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
+  const force = req.query.force === 'true';
   const db = getDb();
 
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
 
-    // Clear stale build cache so container rebuilds with current source
-    clearBuildCache(path.join(SHOPS_DIR, slug), slug);
+    const isActive = (shop.lifecycle_status || 'none') === 'active';
+    const skipUpdate = isActive && !force;
+
+    if (!skipUpdate) {
+      clearBuildCache(path.join(SHOPS_DIR, slug), slug);
+    }
+
+    lockAcquire(slug, req.session?.user?.id);
+    db.prepare(
+      'UPDATE shops SET is_building = 1, build_started_at = ? WHERE slug = ?'
+    ).run(Date.now(), slug);
 
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
@@ -1050,15 +1214,26 @@ router.post('/:slug/restart', (req, res) => {
       } catch (upErr) {
         const msg = upErr.stdout?.toString() || upErr.stderr?.toString() || upErr.message;
         console.error(`[shops] restart ${slug} failed:`, msg);
-        db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+        lockRelease(slug);
+        db.prepare(
+          'UPDATE shops SET status = ?, is_building = 0 WHERE slug = ?'
+        ).run('error', slug);
         return res.status(500).json({ error: 'Failed to restart shop container.' });
       }
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    req.app.locals.auditLog?.('shop_restarted', { req, details: { slug } });
-    res.json({ message: `Shop "${slug}" restarted`, log: out });
+    req.app.locals.auditLog?.('shop_restarted', {
+      req, details: { slug, force, skippedUpdate: skipUpdate },
+    });
+    res.json({
+      message: `Shop "${slug}" restarted`,
+      log: out,
+      skippedUpdate: skipUpdate,
+      building: !skipUpdate,
+    });
   } catch (err) {
     console.error(`[shops] restart ${slug} error:`, err.message);
+    lockRelease(slug);
     res.status(500).json({ error: 'Failed to restart shop.' });
   } finally {
     db.close();
@@ -1110,7 +1285,13 @@ router.post('/:slug/deploy', (req, res) => {
     }
 
     // Clear stale build cache so container rebuilds with current source
+    // (Deploy is always an explicit update — no production-protection skip here.)
     clearBuildCache(shopDir, slug);
+
+    lockAcquire(slug, req.session?.user?.id);
+    db.prepare(
+      'UPDATE shops SET is_building = 1, build_started_at = ? WHERE slug = ?'
+    ).run(Date.now(), slug);
 
     // Rebuild container
     try {
@@ -1124,7 +1305,10 @@ router.post('/:slug/deploy', (req, res) => {
       const msg = buildErr.stdout?.toString() || buildErr.stderr?.toString() || buildErr.message;
       console.error(`[shops] deploy ${slug} build failed:`, msg);
       log.push('Build error: container rebuild failed.');
-      db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
+      lockRelease(slug);
+      db.prepare(
+        'UPDATE shops SET status = ?, is_building = 0 WHERE slug = ?'
+      ).run('error', slug);
       return res.status(500).json({ error: 'Container rebuild failed.', log: log.join('\n') });
     }
 
@@ -1531,6 +1715,7 @@ router.post('/:slug/upgrade', (req, res) => {
 function initDb() {
   const db = getDb();
   db.close();
+  startBuildingPoller();
 }
 
 module.exports = router;

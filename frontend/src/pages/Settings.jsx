@@ -5,7 +5,7 @@ import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
   getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
-  getShopVersion, upgradeShop,
+  getShopVersion, upgradeShop, getDatabaseExportUrl,
 } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import {
@@ -733,6 +733,46 @@ export default function Settings() {
             );
           })}
         </div>
+      </div>
+
+      {/* Storefront language + Database export */}
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <span className="text-xs font-semibold text-muted-foreground" style={{ fontFamily: 'Syne, sans-serif' }}>Language</span>
+        <div className="flex items-center gap-1">
+          {[
+            ['en', 'English'],
+            ['fr', 'Français'],
+          ].map(([value, label]) => {
+            const isSelected = (currentShop?.language || 'en') === value;
+            return (
+              <button
+                key={value}
+                disabled={!canEditUI}
+                onClick={() => updateMutation.mutate({ targetSlug: slug, data: { language: value } })}
+                className={`text-[11px] font-mono font-medium px-2 py-1 rounded border transition-all ${
+                  isSelected
+                    ? 'bg-primary/15 text-primary border-primary/40 ring-1 ring-primary/40'
+                    : 'bg-secondary/30 text-muted-foreground/50 border-border/30 hover:bg-secondary/60 hover:text-muted-foreground'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[10px] text-muted-foreground/60 font-mono ml-1">Storefront only — restart shop to apply</span>
+
+        <div className="flex-1" />
+
+        <a
+          href={getDatabaseExportUrl(slug)}
+          download
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
+          title="Download a .zip of this shop's DATABASE folder"
+        >
+          <Download className="h-3 w-3" />
+          Download DATABASE (.zip)
+        </a>
       </div>
 
       <div className="space-y-5">

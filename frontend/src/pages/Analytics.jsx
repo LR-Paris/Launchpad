@@ -4,7 +4,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, BarChart3, Eye, Users, Globe, Monitor, Smartphone, Tablet,
-  TrendingUp, Package, ExternalLink, RefreshCw, MousePointerClick
+  TrendingUp, Package, ExternalLink, RefreshCw, MousePointerClick, Download, Lock,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -174,6 +174,14 @@ export default function Analytics() {
               </button>
             ))}
           </div>
+          <button
+            onClick={() => window.print()}
+            className="no-print inline-flex items-center gap-1.5 text-[11px] font-mono font-bold tracking-wider px-3 py-1.5 rounded-lg border border-border/50 text-muted-foreground hover:text-primary hover:border-primary/30 transition-colors"
+            title="Open print dialog — choose 'Save as PDF' to download"
+          >
+            <Download className="h-3.5 w-3.5" />
+            PDF
+          </button>
         </div>
       </div>
 

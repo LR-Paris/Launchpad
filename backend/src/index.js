@@ -69,7 +69,7 @@ class BetterSqlite3Store extends Store {
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
-const inventoryRouter = require('./inventory');
+const { router: inventoryRouter } = require('./inventory');
 const updateRouter = require('./update');
 const ordersWebhookRouter = require('./orders-webhook');
 const missionControlRouter = require('./mission-control');
