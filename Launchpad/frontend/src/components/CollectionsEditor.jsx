@@ -458,6 +458,7 @@ function CollectionsEditorInner({ slug, locked = false }) {
   const autoSaveSeq = useRef(0);
   const loadGenRef = useRef(0);
   const loadAbortRef = useRef(null);
+  const loadSeqRef = useRef(0);
   const currentColRef = useRef(null);
   const collectionsRef = useRef([]);
 
@@ -536,18 +537,20 @@ function CollectionsEditorInner({ slug, locked = false }) {
   // Uses AbortController to cancel in-flight requests when switching collections,
   // and collectionsRef to always read the latest collections without recreating.
   const loadItems = useCallback(async (colName) => {
-    const prevCol = currentColRef.current;
     currentColRef.current = colName;
 
-    // Only abort if switching to a DIFFERENT collection.
-    // Same-collection re-triggers (e.g. when collections dep updates) should NOT abort
-    // mid-flight loads — that's what was causing partial item loading.
-    if (loadAbortRef.current && prevCol !== colName) {
-      loadAbortRef.current.abort();
-    }
+    // ALWAYS cancel any in-flight load — a new load fully supersedes it.
+    // (Previously same-collection re-triggers replaced the controller
+    // without aborting, orphaning loads that could never be cancelled;
+    // rapid collection switching stacked them into a request/render storm
+    // that froze the UI.) The seq token guarantees a superseded load can
+    // never write state, even if its abort signal is somehow missed.
+    if (loadAbortRef.current) loadAbortRef.current.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
+    const seq = ++loadSeqRef.current;
     const { signal } = controller;
+    const isStale = () => signal.aborted || seq !== loadSeqRef.current;
 
     if (!colName) { setItems([]); return; }
     setItemsLoading(true);
@@ -562,7 +565,7 @@ function CollectionsEditorInner({ slug, locked = false }) {
         if (collections.length === 0) { setItems([]); return; }
         const all = [];
         for (const col of collections) {
-          if (signal.aborted) return;
+          if (isStale()) return;
           const colItems = await loadSingleCollection(col.name, signal);
           all.push(...colItems);
         }
@@ -570,18 +573,26 @@ function CollectionsEditorInner({ slug, locked = false }) {
       } else {
         itemsData = await loadSingleCollection(colName, signal);
       }
-      if (signal.aborted) return;
+      if (isStale()) return;
       setItems(itemsData);
     } catch (err) {
       // Ignore abort errors — they're expected when switching collections
-      if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED' || signal.aborted) return;
+      if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED' || isStale()) return;
       setItems([]);
     } finally {
-      if (!signal.aborted) setItemsLoading(false);
+      if (!isStale()) setItemsLoading(false);
     }
   }, [slug, collections, loadSingleCollection]);
 
-  useEffect(() => { loadItems(selectedCollection); }, [selectedCollection, loadItems]);
+  // Debounced: rapid collection jumping only loads the finally-selected
+  // collection (the spinner still appears instantly via selectCollection).
+  useEffect(() => {
+    const t = setTimeout(() => { loadItems(selectedCollection); }, 150);
+    return () => clearTimeout(t);
+  }, [selectedCollection, loadItems]);
+
+  // Cancel any in-flight load on unmount
+  useEffect(() => () => { loadAbortRef.current?.abort(); }, []);
 
   // Wrapper so itemsLoading=true fires in the same render as the collection change,
   // preventing the "(0 items) / No items" flash before loadItems runs.
