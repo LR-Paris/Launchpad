@@ -584,12 +584,11 @@ function CollectionsEditorInner({ slug, locked = false }) {
     }
   }, [slug, collections, loadSingleCollection]);
 
-  // Debounced: rapid collection jumping only loads the finally-selected
-  // collection (the spinner still appears instantly via selectCollection).
-  useEffect(() => {
-    const t = setTimeout(() => { loadItems(selectedCollection); }, 150);
-    return () => clearTimeout(t);
-  }, [selectedCollection, loadItems]);
+  // Load immediately — superseded loads are genuinely cancelled (abort
+  // signal reaches axios) and the seq token blocks stale state writes, so
+  // rapid collection jumping stays bounded without a debounce timer
+  // (timers are throttled/frozen in background tabs and would delay loads).
+  useEffect(() => { loadItems(selectedCollection); }, [selectedCollection, loadItems]);
 
   // Cancel any in-flight load on unmount
   useEffect(() => () => { loadAbortRef.current?.abort(); }, []);
