@@ -230,7 +230,12 @@ router.post('/:slug/orders/wipe', (req, res) => {
 
   try {
     const content = fs.readFileSync(csvPath, 'utf8');
-    const firstLine = content.split('\n')[0];
+    // Find the actual header row (skip leading blank lines so we never wipe
+    // the CSV down to an empty file with no columns)
+    const firstLine = content.split('\n').find(line => line.trim());
+    if (!firstLine) {
+      return res.status(400).json({ error: 'Orders CSV has no header row' });
+    }
     // Write back just the header row
     fs.writeFileSync(csvPath, firstLine + '\n');
     req.app.locals.auditLog?.('orders_wiped', { req, details: { slug } });

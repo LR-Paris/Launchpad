@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Component } from 'react';
 import {
   Folder, Plus, Trash2, Save, Upload, ImageIcon, X, Check, Lock,
   Package, FolderPlus, Pencil, Star, Copy, MoveRight, Search,
@@ -364,7 +364,47 @@ function KeyboardOverlay({ onClose }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Main editor
 // ════════════════════════════════════════════════════════════════════════════
-export default function CollectionsEditor({ slug, locked = false }) {
+// Catches any unexpected render/runtime error inside the catalog editor so a
+// bug here degrades to an inline message instead of white-screening the SPA.
+class CollectionsEditorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('CollectionsEditor crashed:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="lp-card rounded-xl p-6 text-center">
+          <p className="text-sm font-semibold mb-1">The catalog editor hit an error.</p>
+          <p className="text-xs text-muted-foreground font-mono mb-3">{String(this.state.error?.message || this.state.error)}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium bg-primary/15 text-primary hover:bg-primary/25 transition-all"
+          >
+            Reload editor
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function CollectionsEditor(props) {
+  return (
+    <CollectionsEditorBoundary key={props.slug}>
+      <CollectionsEditorInner {...props} />
+    </CollectionsEditorBoundary>
+  );
+}
+
+function CollectionsEditorInner({ slug, locked = false }) {
   // Collections list
   const [collections, setCollections] = useState([]);
   const [collectionsLoading, setCollectionsLoading] = useState(true);
