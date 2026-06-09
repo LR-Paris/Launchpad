@@ -443,26 +443,53 @@ export default function OrderCards({ orders, slug }) {
 
                   {/* Other detail fields */}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2">
-                    {details.map(d => (
-                      <div key={d.label}>
-                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-mono">
-                          {d.label}
-                        </span>
-                        <p className="text-xs font-mono mt-0.5 break-words">
-                          {d.type === 'po' && slug ? (
-                            <button
-                              onClick={(e) => handlePoClick(e, d.value)}
-                              className="text-primary hover:underline inline-flex items-center gap-1"
-                            >
-                              <FileText className="h-3 w-3" />
-                              {d.value}
-                            </button>
-                          ) : (
-                            escapeHtml(d.value)
-                          )}
-                        </p>
-                      </div>
-                    ))}
+                    {details.map(d => {
+                      // Parse Custom Fields JSON into readable key/value pairs
+                      if (d.label === 'Custom Fields' && d.value?.trim()) {
+                        const parsed = tryParseJson(d.value);
+                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                          const entries = Object.entries(parsed).filter(([, v]) => v !== '' && v != null);
+                          if (entries.length) {
+                            return (
+                              <div key={d.label} className="col-span-2 md:col-span-3">
+                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-mono">
+                                  {d.label}
+                                </span>
+                                <div className="mt-1 flex flex-wrap gap-x-6 gap-y-1">
+                                  {entries.map(([k, v]) => (
+                                    <div key={k}>
+                                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-mono">{k}: </span>
+                                      <span className="text-xs font-mono">{String(v)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+                        }
+                        return null;
+                      }
+                      return (
+                        <div key={d.label}>
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-mono">
+                            {d.label}
+                          </span>
+                          <p className="text-xs font-mono mt-0.5 break-words whitespace-pre-line">
+                            {d.type === 'po' && slug ? (
+                              <button
+                                onClick={(e) => handlePoClick(e, d.value)}
+                                className="text-primary hover:underline inline-flex items-center gap-1"
+                              >
+                                <FileText className="h-3 w-3" />
+                                {d.value}
+                              </button>
+                            ) : (
+                              d.value
+                            )}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {/* Actions — ship (pending only) + cancel (pending only, not after shipped) */}

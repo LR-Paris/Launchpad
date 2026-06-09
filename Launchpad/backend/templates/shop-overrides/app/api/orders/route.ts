@@ -29,7 +29,7 @@ interface OrderData {
 }
 
 // Matches original column order — new fields appended after Total for backward compat
-const CSV_HEADER = 'Order ID,Date,Customer Name,Email,Phone,Company,Shipping Address,Freight Option,Freight Company,Freight Account,Freight Contact,Order Notes,Items,Total,Country,Billing Name,Billing Address,Billing City,Billing ZIP,Billing Country,Custom Fields';
+const CSV_HEADER = 'Order ID,Date,Customer Name,Email,Phone,Company,Shipping Address,Freight Option,Freight Company,Freight Account,Freight Contact,Order Notes,Items,Total,Country,Billing Name,Billing Address,Billing City,Billing ZIP,Billing Country,Custom Fields,Status,Tracking Number';
 
 function generateOrderId(): string {
   const timestamp = Date.now();
@@ -93,6 +93,8 @@ export async function POST(request: NextRequest) {
       escapeCSVField(String(cf.billingZip || '')),
       escapeCSVField(String(cf.billingCountry || '')),
       escapeCSVField(customFieldsJson),
+      escapeCSVField(''),
+      escapeCSVField(''),
     ].join(',');
 
     const ordersPath = path.join(process.cwd(), 'DATABASE', 'Orders', 'orders.csv');

@@ -69,12 +69,12 @@ class BetterSqlite3Store extends Store {
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
-const inventoryRouter = require('./inventory');
+const { router: inventoryRouter } = require('./inventory');
 const updateRouter = require('./update');
 const ordersWebhookRouter = require('./orders-webhook');
 const missionControlRouter = require('./mission-control');
-const checkoutRouter = require('./checkout');
 const { trackRouter: analyticsTrackRouter, queryRouter: analyticsQueryRouter } = require('./analytics');
+const checkoutRouter = require('./checkout');
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -273,7 +273,7 @@ app.use('/api/shops', requireAuth, csrfProtection, shopsRouter);
 app.use('/api/shops', requireAuth, csrfProtection, ordersRouter);
 app.use('/api/shops', requireAuth, csrfProtection, filesRouter);
 app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
-app.use('/api', requireAuth, csrfProtection, checkoutRouter);
+app.use('/api/shops', requireAuth, csrfProtection, checkoutRouter);
 
 // Analytics query routes (protected, read-only so no CSRF needed)
 app.use('/api/shops', requireAuth, analyticsQueryRouter);

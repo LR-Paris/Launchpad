@@ -166,11 +166,11 @@ function DraggableItemCard({
         <img
           src={imgUrl}
           alt={item.name}
-          className="w-full aspect-square object-cover rounded-md mb-2 border border-border/30"
+          className="w-full h-24 object-cover rounded-md mb-2 border border-border/30"
           draggable={false}
         />
       ) : (
-        <div className="w-full aspect-square rounded-md mb-2 bg-muted/50 flex items-center justify-center border border-border/30">
+        <div className="w-full h-24 rounded-md mb-2 bg-muted/50 flex items-center justify-center border border-border/30">
           <ImageIcon className="h-8 w-8 text-muted-foreground/30" />
         </div>
       )}
@@ -416,12 +416,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
   const searchInputRef = useRef(null);
   const autoSaveTimer = useRef(null);
   const autoSaveSeq = useRef(0);
-  const loadGenRef = useRef(0);
-  const loadAbortRef = useRef(null);
-  const currentColRef = useRef(null);
-  const collectionsRef = useRef([]);
 
-  const ALL_COL = '__all__';
   const disabled = locked;
 
   const flashSuccess = useCallback((msg) => {
@@ -455,28 +450,28 @@ export default function CollectionsEditor({ slug, locked = false }) {
 
   useEffect(() => { loadCollections(); }, [loadCollections]);
 
-  // Keep a ref so loadItems always reads the latest collections without being
-  // recreated every time collections changes (avoids double-load race on ALL_COL).
-  useEffect(() => { collectionsRef.current = collections; }, [collections]);
-
-  // ── Items: load one collection (batched 5 at a time, abort-aware) ──────────
-  const loadSingleCollection = useCallback(async (colName, signal) => {
+  // ── Items: load when collection selected ────────────────────────────────
+  const loadItems = useCallback(async (colName) => {
+    if (!colName) { setItems([]); return; }
+    setItemsLoading(true);
+    setEditingItem(null);
+    setSelectedIds(new Set());
     const colPath = `DATABASE/ShopCollections/${colName}`;
-    const data = await listShopFiles(slug, colPath, { signal });
-    const itemDirs = (data.entries || []).filter(e => e.isDirectory);
-    const BATCH = 5;
-    const results = [];
-    for (let i = 0; i < itemDirs.length; i += BATCH) {
-      if (signal?.aborted) return results;
-      const batch = itemDirs.slice(i, i + BATCH);
-      const batchResults = await Promise.all(batch.map(async (dir) => {
+    try {
+      const data = await listShopFiles(slug, colPath);
+      const itemDirs = (data.entries || []).filter(e => e.isDirectory);
+      const itemsData = await Promise.all(itemDirs.map(async (dir) => {
         const basePath = `${colPath}/${dir.name}`;
+
+        // Read all text details + photos in parallel — avoids sequential latency
+        // that could cause photos to fail silently under concurrent load.
         const [nameRes, priceRes, descRes, photosRes] = await Promise.allSettled([
-          readShopFile(slug, `${basePath}/Details/Name.txt`, { signal }),
-          readShopFile(slug, `${basePath}/Details/ItemCost.txt`, { signal }),
-          readShopFile(slug, `${basePath}/Details/Description.txt`, { signal }),
-          listShopFiles(slug, `${basePath}/Photos`, { signal }),
+          readShopFile(slug, `${basePath}/Details/Name.txt`),
+          readShopFile(slug, `${basePath}/Details/ItemCost.txt`),
+          readShopFile(slug, `${basePath}/Details/Description.txt`),
+          listShopFiles(slug, `${basePath}/Photos`),
         ]);
+
         const name = (nameRes.status === 'fulfilled' ? nameRes.value.content.trim() : '') || dir.name;
         const price = priceRes.status === 'fulfilled' ? priceRes.value.content.trim() : '';
         const description = descRes.status === 'fulfilled' ? descRes.value.content.trim() : '';
@@ -485,61 +480,16 @@ export default function CollectionsEditor({ slug, locked = false }) {
           const sorted = sortPhotos((photosRes.value.entries || []).filter(e => e.isImage));
           if (sorted.length) thumbnailFile = `${basePath}/Photos/${sorted[0].name}`;
         }
-        return { dirName: dir.name, name, price, description, thumbnailFile, basePath, collectionName: colName };
+
+        return { dirName: dir.name, name, price, description, thumbnailFile, basePath };
       }));
-      results.push(...batchResults);
-    }
-    return results;
-  }, [slug]);
-
-  // ── Items: load when collection selected (handles ALL_COL too) ───────────
-  // Uses AbortController to cancel in-flight requests when switching collections,
-  // and collectionsRef to always read the latest collections without recreating.
-  const loadItems = useCallback(async (colName) => {
-    const prevCol = currentColRef.current;
-    currentColRef.current = colName;
-
-    // Only abort if switching to a DIFFERENT collection.
-    // Same-collection re-triggers (e.g. when collections dep updates) should NOT abort
-    // mid-flight loads — that's what was causing partial item loading.
-    if (loadAbortRef.current && prevCol !== colName) {
-      loadAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    loadAbortRef.current = controller;
-    const { signal } = controller;
-
-    if (!colName) { setItems([]); return; }
-    setItemsLoading(true);
-    setEditingItem(null);
-    setSelectedIds(new Set());
-    try {
-      let itemsData;
-      if (colName === ALL_COL) {
-        // Use collections directly from closure (it's in deps) so this always
-        // has the latest list — fixes "All Collections showing 0 items" when
-        // collections hadn't loaded yet on the first trigger.
-        if (collections.length === 0) { setItems([]); return; }
-        const all = [];
-        for (const col of collections) {
-          if (signal.aborted) return;
-          const colItems = await loadSingleCollection(col.name, signal);
-          all.push(...colItems);
-        }
-        itemsData = all;
-      } else {
-        itemsData = await loadSingleCollection(colName, signal);
-      }
-      if (signal.aborted) return;
       setItems(itemsData);
-    } catch (err) {
-      // Ignore abort errors — they're expected when switching collections
-      if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED' || signal.aborted) return;
+    } catch {
       setItems([]);
     } finally {
-      if (!signal.aborted) setItemsLoading(false);
+      setItemsLoading(false);
     }
-  }, [slug, collections, loadSingleCollection]);
+  }, [slug]);
 
   useEffect(() => { loadItems(selectedCollection); }, [selectedCollection, loadItems]);
 
@@ -553,7 +503,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
 
   // ── Item details: load on expand ────────────────────────────────────────
   const loadItemDetails = useCallback(async (item) => {
-    setEditingItem(item.basePath);
+    setEditingItem(item.dirName);
     setItemDetails({});
     setItemOriginal({});
     setItemPhotos([]);
@@ -604,7 +554,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
     setAutoSaveStatus('saving');
     const seq = ++autoSaveSeq.current;
     autoSaveTimer.current = setTimeout(async () => {
-      const item = items.find(i => i.basePath === editingItem);
+      const item = items.find(i => i.dirName === editingItem);
       if (!item) return;
       try {
         await Promise.all(dirty.map(f =>
@@ -613,7 +563,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
         if (seq !== autoSaveSeq.current) return; // a newer save started
         setItemOriginal(prev => ({ ...prev, ...Object.fromEntries(dirty.map(f => [f, itemDetails[f]])) }));
         setItems(prev => prev.map(i => {
-          if (i.basePath !== editingItem) return i;
+          if (i.dirName !== editingItem) return i;
           return {
             ...i,
             name: itemDetails['Name.txt']?.trim() || i.name,
@@ -637,8 +587,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
     const q = search.trim().toLowerCase();
     return items.filter(i =>
       i.name.toLowerCase().includes(q) ||
-      i.dirName.toLowerCase().includes(q) ||
-      (i.collectionName && i.collectionName.toLowerCase().includes(q))
+      i.dirName.toLowerCase().includes(q)
     );
   }, [items, search]);
 
@@ -700,7 +649,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
     try {
       await deleteShopFile(slug, item.basePath);
       setItems(prev => prev.filter(i => i.dirName !== item.dirName));
-      if (editingItem === item.basePath) setEditingItem(null);
+      if (editingItem === item.dirName) setEditingItem(null);
       flashSuccess(`Item "${item.name}" deleted.`);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to delete item');
@@ -759,7 +708,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
           ? { ...i, dirName: trimmed, name: trimmed, basePath: newBasePath, thumbnailFile: i.thumbnailFile?.replace(item.basePath, newBasePath) || null }
           : i
       ));
-      if (editingItem === item.basePath) setEditingItem(newBasePath);
+      if (editingItem === oldDir) setEditingItem(trimmed);
       setRenaming(null);
       flashSuccess(`Renamed to "${trimmed}". Inventory updated.`);
     } catch (err) {
@@ -806,7 +755,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
         .map(e => ({ name: e.name, path: `${dir}/${e.name}`, size: e.size }));
       setItemPhotos(sortPhotos(fresh));
       // Bust thumbnail cache for the affected item
-      const affected = items.find(i => editingItem === i.basePath);
+      const affected = items.find(i => editingItem === i.dirName);
       if (affected) {
         const newThumb = `${dir}/${targetMain}`;
         setItems(prev => prev.map(i => i.dirName === affected.dirName
@@ -859,7 +808,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
     }
     if (movedCount > 0) {
       setItems(prev => prev.filter(i => !ids.includes(i.dirName)));
-      if (editingItem && items.some(i => i.basePath === editingItem && ids.includes(i.dirName))) setEditingItem(null);
+      if (editingItem && ids.includes(editingItem)) setEditingItem(null);
       setSelectedIds(new Set());
       setBulkMode(false);
       setMoveTarget(null);
@@ -888,7 +837,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
     }
     if (deletedCount > 0) {
       setItems(prev => prev.filter(i => !ids.includes(i.dirName)));
-      if (editingItem && items.some(i => i.basePath === editingItem && ids.includes(i.dirName))) setEditingItem(null);
+      if (editingItem && ids.includes(editingItem)) setEditingItem(null);
       setSelectedIds(new Set());
       setBulkMode(false);
       flashSuccess(`Deleted ${deletedCount} item${deletedCount === 1 ? '' : 's'}.`);
@@ -897,7 +846,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
 
   const uploadPhotosFromList = async (fileList) => {
     if (!fileList || fileList.length === 0) return;
-    const item = items.find(i => i.basePath === editingItem);
+    const item = items.find(i => i.dirName === editingItem);
     if (!item) return;
     const photosPath = `${item.basePath}/Photos`;
     const formData = new FormData();
@@ -947,7 +896,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
 
   // Photo reorder: rewrite filenames as 01_, 02_, etc.
   const handlePhotoReorder = async (newOrder) => {
-    const item = items.find(i => i.basePath === editingItem);
+    const item = items.find(i => i.dirName === editingItem);
     if (!item) return;
     setError('');
     setItemPhotos(newOrder); // optimistic
@@ -1064,7 +1013,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
         return;
       }
       if (!visibleItems.length) return;
-      const idx = visibleItems.findIndex(i => i.basePath === editingItem);
+      const idx = visibleItems.findIndex(i => i.dirName === editingItem);
       if (e.key === 'j') {
         const next = visibleItems[Math.min(visibleItems.length - 1, (idx < 0 ? 0 : idx + 1))];
         if (next) loadItemDetails(next);
@@ -1077,12 +1026,12 @@ export default function CollectionsEditor({ slug, locked = false }) {
         const target = visibleItems[idx >= 0 ? idx : 0];
         if (target) loadItemDetails(target);
       } else if (e.key === 'd' && editingItem) {
-        const target = items.find(i => i.basePath === editingItem);
+        const target = items.find(i => i.dirName === editingItem);
         if (target && !disabled) handleDuplicateItem(target);
       } else if (e.key === 'm' && editingItem) {
-        { const __eit = items.find(i => i.basePath === editingItem); if (__eit && !disabled) setMoveTarget({ ids: [__eit.dirName] }); }
+        if (!disabled) setMoveTarget({ ids: [editingItem] });
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && editingItem) {
-        const target = items.find(i => i.basePath === editingItem);
+        const target = items.find(i => i.dirName === editingItem);
         if (target && !disabled) handleDeleteItem(target);
       }
     };
@@ -1146,7 +1095,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
         </div>
 
         {/* Bulk-mode toggle */}
-        {!disabled && selectedCollection !== ALL_COL && (
+        {!disabled && (
           <button
             onClick={() => { setBulkMode(b => !b); setSelectedIds(new Set()); }}
             className={`text-xs px-2 py-1 rounded-md border transition-all ${
@@ -1165,7 +1114,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
           <Keyboard className="h-3.5 w-3.5" />
         </button>
 
-        {!disabled && selectedCollection !== ALL_COL && (
+        {!disabled && (
           showAddCollection ? (
             <div className="flex items-center gap-1.5">
               <input
@@ -1254,17 +1203,6 @@ export default function CollectionsEditor({ slug, locked = false }) {
           <div className="flex" style={{ minHeight: '400px' }}>
             {/* Collections sidebar (sortable + drop targets) */}
             <div className="w-56 border-r border-border/40 overflow-y-auto flex-shrink-0 bg-card">
-              {/* All Collections shortcut */}
-              <button
-                onClick={() => selectCollection(ALL_COL)}
-                className={`w-full text-left px-3 py-2 text-xs font-medium transition-colors flex items-center gap-2 border-b border-border/30 ${
-                  selectedCollection === ALL_COL
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                }`}
-              >
-                <span className="font-mono">☰</span> All Collections
-              </button>
               <SortableContext
                 items={collections.map(c => `col:${c.name}`)}
                 strategy={verticalListSortingStrategy}
@@ -1306,7 +1244,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
             <div className="flex-1 overflow-y-auto">
               {!selectedCollection ? (
                 <div className="flex-1 flex items-center justify-center h-full text-xs text-muted-foreground font-mono py-12">
-                  Select a collection to view items, or use All Collections
+                  Select a collection to view items
                 </div>
               ) : itemsLoading ? (
                 <div className="px-5 py-8 text-center">
@@ -1331,8 +1269,8 @@ export default function CollectionsEditor({ slug, locked = false }) {
                         />
                       ) : (
                         <>
-                          <h3 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{selectedCollection === ALL_COL ? 'All Collections' : selectedCollection}</h3>
-                          {!disabled && selectedCollection !== ALL_COL && (
+                          <h3 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>{selectedCollection}</h3>
+                          {!disabled && (
                             <button
                               onClick={() => setRenaming({ kind: 'collection-header', original: selectedCollection, value: selectedCollection })}
                               className="text-muted-foreground hover:text-primary transition-colors"
@@ -1345,7 +1283,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
                       )}
                       <span className="text-xs text-muted-foreground font-mono">({visibleItems.length}{search.trim() ? ` of ${items.length}` : ''} items)</span>
                     </div>
-                    {!disabled && selectedCollection !== ALL_COL && (
+                    {!disabled && (
                       showAddItem ? (
                         <div className="flex items-center gap-1.5">
                           <input
@@ -1386,65 +1324,8 @@ export default function CollectionsEditor({ slug, locked = false }) {
                         {search.trim() ? 'No items match your search.' : 'No items in this collection.'}
                       </p>
                     </div>
-                  ) : selectedCollection === ALL_COL ? (
-                    /* All Collections grouped view */
-                    (() => {
-                      const seen = new Map();
-                      for (const item of visibleItems) {
-                        const col = item.collectionName || '';
-                        if (!seen.has(col)) seen.set(col, []);
-                        seen.get(col).push(item);
-                      }
-                      const groups = [...seen.entries()].sort((a, b) => {
-                        const ai = collections.findIndex(c => c.name === a[0]);
-                        const bi = collections.findIndex(c => c.name === b[0]);
-                        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-                      });
-                      return (
-                        <div className="space-y-6 mb-4">
-                          {groups.map(([col, groupItems]) => (
-                            <div key={col}>
-                              <div className="flex items-center gap-2 mb-3">
-                                <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground/70" style={{ fontFamily: 'Syne, sans-serif' }}>{col}</h4>
-                                <span className="text-[10px] text-muted-foreground/50 font-mono">({groupItems.length})</span>
-                                <div className="flex-1 border-t border-border/30" />
-                              </div>
-                              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 group">
-                                {groupItems.map(item => {
-                                  const issues = validateItem({
-                                    details: { 'Name.txt': item.name, 'ItemCost.txt': item.price, 'Description.txt': item.description || '' },
-                                    photos: item.thumbnailFile ? [{ name: item.thumbnailFile.split('/').pop() }] : [],
-                                  });
-                                  return (
-                                    <DraggableItemCard
-                                      key={item.basePath}
-                                      item={item}
-                                      slug={slug}
-                                      photoTimestamps={photoTimestamps}
-                                      isExpanded={editingItem === item.basePath}
-                                      isSelected={false}
-                                      bulkMode={false}
-                                      disabled={disabled}
-                                      validationIssues={issues}
-                                      onClick={() => editingItem === item.basePath ? setEditingItem(null) : loadItemDetails(item)}
-                                      onToggleSelect={() => {}}
-                                      onKebab={(e) => {
-                                        e.stopPropagation();
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        setKebabPos({ x: rect.right, y: rect.bottom });
-                                        setKebabFor(kebabFor === item.dirName ? null : item.dirName);
-                                      }}
-                                    />
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-4 group">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4 group">
                       {visibleItems.map(item => {
                         const issues = validateItem({
                           details: { 'Name.txt': item.name, 'ItemCost.txt': item.price, 'Description.txt': item.description || '' },
@@ -1452,16 +1333,16 @@ export default function CollectionsEditor({ slug, locked = false }) {
                         });
                         return (
                           <DraggableItemCard
-                            key={item.basePath}
+                            key={item.dirName}
                             item={item}
                             slug={slug}
                             photoTimestamps={photoTimestamps}
-                            isExpanded={editingItem === item.basePath}
+                            isExpanded={editingItem === item.dirName}
                             isSelected={selectedIds.has(item.dirName)}
                             bulkMode={bulkMode}
                             disabled={disabled}
                             validationIssues={issues}
-                            onClick={() => editingItem === item.basePath ? setEditingItem(null) : loadItemDetails(item)}
+                            onClick={() => editingItem === item.dirName ? setEditingItem(null) : loadItemDetails(item)}
                             onToggleSelect={() => {
                               setSelectedIds(prev => {
                                 const next = new Set(prev);
@@ -1516,7 +1397,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
                     <div className="border-t border-border/40 pt-5 mt-2">
                       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                         <div className="flex items-center gap-2">
-                          {renaming?.kind === 'item' && renaming.original === items.find(i=>i.basePath===editingItem)?.dirName ? (
+                          {renaming?.kind === 'item' && renaming.original === editingItem ? (
                             <input
                               autoFocus
                               value={renaming.value}
@@ -1568,7 +1449,7 @@ export default function CollectionsEditor({ slug, locked = false }) {
                           )}
                           {!disabled && (
                             <button
-                              onClick={() => handleDeleteItem(items.find(i => i.basePath === editingItem))}
+                              onClick={() => handleDeleteItem(items.find(i => i.dirName === editingItem))}
                               className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-all"
                             >
                               <Trash2 className="h-3 w-3" /> Delete

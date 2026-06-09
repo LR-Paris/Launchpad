@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getInventory, seedInventory, updateInventoryBulk } from '../lib/api';
+import { getInventory, seedInventory, updateInventoryBulk, getShop } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import CollectionsEditor from '../components/CollectionsEditor';
 import {
@@ -25,7 +25,8 @@ const STATUS_CONFIG = {
 export default function Catalog() {
   const { slug } = useParams();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState('inventory');
+  const [activeTab, setActiveTab] = useState('catalog');
+  const autoSwitchedTab = useRef(false);
   const { canShop } = usePermissions();
   const canEdit = canShop(slug, 'can_edit_items');
 
@@ -54,7 +55,25 @@ export default function Catalog() {
     refetchInterval: 30000,
   });
 
+  // Lock + status come from the shop record so we can disable mutations and
+  // show a banner while a launch/build is in progress.
+  const { data: shopData } = useQuery({
+    queryKey: ['shop', slug],
+    queryFn: () => getShop(slug),
+    refetchInterval: 10000,
+  });
+  const shop = shopData?.shop;
+  const locked = !!shop?.locked || shop?.status === 'building';
+
   const inventory = inventoryData?.inventory || [];
+
+  // Auto-switch to inventory tab on first load if inventory data exists
+  useEffect(() => {
+    if (!inventoryLoading && !autoSwitchedTab.current) {
+      autoSwitchedTab.current = true;
+      if (inventory.length > 0) setActiveTab('inventory');
+    }
+  }, [inventoryLoading, inventory.length]);
 
   const seedMutation = useMutation({
     mutationFn: () => seedInventory(slug),
@@ -188,12 +207,28 @@ export default function Catalog() {
           Orders
         </Link>
         <Link
+          to={`/shops/${slug}/checkout-editor`}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
+        >
+          Checkout
+        </Link>
+        <Link
           to={`/shops/${slug}/settings`}
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
         >
           Settings
         </Link>
       </div>
+
+      {/* Locked / building banner */}
+      {locked && (
+        <div className="mb-4 rounded-md border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 flex items-center gap-2 text-xs text-amber-300 lp-fadein">
+          <Lock className="h-3.5 w-3.5" />
+          <span className="font-mono">
+            This shuttle is launching. Catalog edits are disabled until the build completes (~2-5 minutes).
+          </span>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 mb-6 border-b border-border/40 pb-px">
@@ -490,7 +525,7 @@ export default function Catalog() {
 
       {/* Catalog Tab */}
       {activeTab === 'catalog' && (
-        <CollectionsEditor slug={slug} />
+        <CollectionsEditor slug={slug} locked={locked} />
       )}
     </div>
   );

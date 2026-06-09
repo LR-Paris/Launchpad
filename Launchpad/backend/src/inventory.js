@@ -4,6 +4,7 @@ const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const { checkShopPermission } = require('./users');
+const { requireUnlocked } = require('./lock');
 
 const router = express.Router();
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
@@ -128,6 +129,57 @@ function migrateInventoryIds(slug) {
   console.log(`[inventory] Migrated productIds for shop "${slug}"`);
 }
 
+// Rebuild productId for every row whose collection matches `oldCollectionName`,
+// using the new collection name. Mirrors the slugify rules used everywhere else.
+// Updates Collection column too. No-op if inventory.csv doesn't exist.
+function renameCollectionInCsv(slug, oldCollectionName, newCollectionName) {
+  const csvPath = inventoryCsvPath(slug);
+  if (!fs.existsSync(csvPath)) return 0;
+  const records = readInventory(slug);
+  const oldSlug = slugify(oldCollectionName);
+  const newSlug = slugify(newCollectionName);
+  if (oldSlug === newSlug && oldCollectionName === newCollectionName) return 0;
+  const now = new Date().toISOString();
+  let count = 0;
+  for (const r of records) {
+    const pid = r['Product ID'] || '';
+    if (pid.startsWith(`${oldSlug}-`)) {
+      r['Product ID'] = newSlug + pid.slice(oldSlug.length);
+      r['Collection'] = newCollectionName;
+      r['Last Updated'] = now;
+      count++;
+    } else if ((r['Collection'] || '') === oldCollectionName) {
+      // Defensive: row's productId didn't follow the slug pattern but
+      // its Collection column matches — still update it.
+      r['Collection'] = newCollectionName;
+      r['Last Updated'] = now;
+      count++;
+    }
+  }
+  if (count > 0) writeInventory(slug, records);
+  return count;
+}
+
+// Update the productId / Product Name / Collection for a single item rename
+// or cross-collection move. Identifies the row by the OLD slugified productId.
+function renameItemInCsv(slug, oldCollection, oldItem, newCollection, newItem) {
+  const csvPath = inventoryCsvPath(slug);
+  if (!fs.existsSync(csvPath)) return 0;
+  const records = readInventory(slug);
+  const oldId = `${slugify(oldCollection)}-${slugify(oldItem)}`;
+  const newId = `${slugify(newCollection)}-${slugify(newItem)}`;
+  if (oldId === newId) return 0;
+  const now = new Date().toISOString();
+  const row = records.find(r => r['Product ID'] === oldId);
+  if (!row) return 0;
+  row['Product ID'] = newId;
+  if (oldItem !== newItem) row['Product Name'] = newItem;
+  if (oldCollection !== newCollection) row['Collection'] = newCollection;
+  row['Last Updated'] = now;
+  writeInventory(slug, records);
+  return 1;
+}
+
 // GET /api/shops/:slug/inventory
 router.get('/:slug/inventory', (req, res) => {
   const { slug } = req.params;
@@ -169,7 +221,7 @@ router.get('/:slug/inventory/summary', (req, res) => {
 });
 
 // POST /api/shops/:slug/inventory/seed — Seed inventory from catalog (requires can_edit_items)
-router.post('/:slug/inventory/seed', (req, res) => {
+router.post('/:slug/inventory/seed', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_edit_items')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -206,7 +258,7 @@ router.post('/:slug/inventory/seed', (req, res) => {
 });
 
 // PATCH /api/shops/:slug/inventory/bulk — Bulk update stock (requires can_edit_items)
-router.patch('/:slug/inventory/bulk', (req, res) => {
+router.patch('/:slug/inventory/bulk', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_edit_items')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -241,7 +293,7 @@ router.patch('/:slug/inventory/bulk', (req, res) => {
 });
 
 // PATCH /api/shops/:slug/inventory/:productId — Update single item (requires can_edit_items)
-router.patch('/:slug/inventory/:productId(*)', (req, res) => {
+router.patch('/:slug/inventory/:productId(*)', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_edit_items')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -268,4 +320,4 @@ router.patch('/:slug/inventory/:productId(*)', (req, res) => {
   res.json({ success: true, item: record });
 });
 
-module.exports = router;
+module.exports = { router, renameCollectionInCsv, renameItemInCsv };

@@ -5,14 +5,14 @@ import {
   deployShop, deleteShop, getShops, updateShop, getShopLogs, shopAction,
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
   getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
-  getShopVersion, upgradeShop,
+  getShopVersion, upgradeShop, getDatabaseExportUrl,
 } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import {
   ArrowLeft, ChevronDown, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
-  ArrowUpCircle, Settings2, Package, Lock, ClipboardList,
+  ArrowUpCircle, Settings2, Package, Lock,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 
@@ -79,10 +79,6 @@ export default function Settings() {
   // DATABASE/Design/Details info
   const [shopTitle, setShopTitle] = useState('');
   const [shopDescription, setShopDescription] = useState('');
-  const [shopAbout, setShopAbout] = useState('');
-  const [aboutSaving, setAboutSaving] = useState(false);
-  const [aboutDirty, setAboutDirty] = useState(false);
-  const [aboutSaved, setAboutSaved] = useState(false);
 
   // Template update state
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -182,9 +178,6 @@ export default function Settings() {
         setShopDescription(aboutMatch ? aboutMatch[1].trim() : raw);
       })
       .catch(() => setShopDescription(''));
-    readShopFile(slug, 'DATABASE/Design/Details/About.txt')
-      .then((d) => { setShopAbout(d.content.trimEnd()); setAboutDirty(false); })
-      .catch(() => setAboutDirty(false));
   }, [slug]);
 
   // Load DATABASE/Design/Details/Password.txt
@@ -742,6 +735,46 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Storefront language + Database export */}
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <span className="text-xs font-semibold text-muted-foreground" style={{ fontFamily: 'Syne, sans-serif' }}>Language</span>
+        <div className="flex items-center gap-1">
+          {[
+            ['en', 'English'],
+            ['fr', 'Français'],
+          ].map(([value, label]) => {
+            const isSelected = (currentShop?.language || 'en') === value;
+            return (
+              <button
+                key={value}
+                disabled={!canEditUI}
+                onClick={() => updateMutation.mutate({ targetSlug: slug, data: { language: value } })}
+                className={`text-[11px] font-mono font-medium px-2 py-1 rounded border transition-all ${
+                  isSelected
+                    ? 'bg-primary/15 text-primary border-primary/40 ring-1 ring-primary/40'
+                    : 'bg-secondary/30 text-muted-foreground/50 border-border/30 hover:bg-secondary/60 hover:text-muted-foreground'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[10px] text-muted-foreground/60 font-mono ml-1">Storefront only — restart shop to apply</span>
+
+        <div className="flex-1" />
+
+        <a
+          href={getDatabaseExportUrl(slug)}
+          download
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary border border-border/40 hover:border-primary/30 rounded-md px-3 py-1.5 transition-all"
+          title="Download a .zip of this shop's DATABASE folder"
+        >
+          <Download className="h-3 w-3" />
+          Download DATABASE (.zip)
+        </a>
+      </div>
+
       <div className="space-y-5">
 
         {/* Shop Settings — DATABASE/Design/Details */}
@@ -802,49 +835,6 @@ export default function Settings() {
           )}
         </div>
 
-        {/* About Page Editor */}
-        <div className="lp-card rounded-xl overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-3 border-b border-border/40">
-            <FileText className="h-4 w-4 text-primary/70" />
-            <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>About Page</h2>
-            <span className="text-xs text-muted-foreground font-mono ml-1">DATABASE/Design/Details/About.txt</span>
-          </div>
-          <div className="p-5 space-y-3">
-            <textarea
-              className="w-full text-sm border border-border/50 rounded-lg px-3 py-2.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary/50 resize-y font-mono leading-relaxed"
-              rows={8}
-              placeholder="Write your about page content here...&#10;&#10;Use blank lines to separate paragraphs."
-              value={shopAbout}
-              onChange={e => { setShopAbout(e.target.value); setAboutDirty(true); setAboutSaved(false); }}
-            />
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">Blank lines create new paragraphs on the About page.</p>
-              <button
-                onClick={async () => {
-                  if (!canEditUI) return;
-                  setAboutSaving(true);
-                  try {
-                    await writeShopFile(slug, 'DATABASE/Design/Details/About.txt', shopAbout);
-                    setAboutDirty(false);
-                    setAboutSaved(true);
-                    setTimeout(() => setAboutSaved(false), 3000);
-                  } catch (err) {
-                    console.error('Failed to save About.txt', err);
-                  } finally {
-                    setAboutSaving(false);
-                  }
-                }}
-                disabled={!aboutDirty || aboutSaving || !canEditUI}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
-                style={{ background: (aboutDirty && !aboutSaving) ? 'hsl(var(--primary))' : undefined, color: (aboutDirty && !aboutSaving) ? 'hsl(var(--primary-foreground))' : 'hsl(var(--muted-foreground))', border: (aboutDirty && !aboutSaving) ? 'none' : '1px solid hsl(var(--border))' }}
-              >
-                <Save className="h-3 w-3" />
-                {aboutSaving ? 'Saving...' : aboutSaved ? 'Saved!' : 'Save About'}
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Product catalog & inventory — /shops/:slug/catalog */}
         <Link
           to={`/shops/${slug}/catalog`}
@@ -856,21 +846,6 @@ export default function Settings() {
           <div>
             <p className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Catalog</p>
             <p className="text-xs text-muted-foreground font-mono">Manage product catalog & inventory</p>
-          </div>
-          <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
-        </Link>
-
-        {/* Checkout Editor */}
-        <Link
-          to={`/shops/${slug}/checkout-editor`}
-          className="lp-card rounded-xl p-5 flex items-center gap-3 hover:border-primary/30 border border-border/40 transition-all"
-        >
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-primary/10">
-            <ClipboardList className="h-5 w-5 lp-glow" />
-          </div>
-          <div>
-            <p className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Checkout Editor</p>
-            <p className="text-xs text-muted-foreground font-mono">Customize checkout form fields & sections</p>
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
         </Link>

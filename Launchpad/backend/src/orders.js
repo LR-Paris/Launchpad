@@ -54,19 +54,46 @@ function escapeCSVField(value) {
 function backfillStatusColumns(csvPath) {
   if (!csvPath || !fs.existsSync(csvPath)) return;
   const content = fs.readFileSync(csvPath, 'utf8');
-  const lines = content.split('\n');
-  if (lines.length === 0) return;
 
-  const header = lines[0];
-  if (/,Status(,|$)/.test(header)) return; // already has Status column
+  // Use proper CSV parsing to avoid corrupting multi-line quoted fields
+  let records;
+  try {
+    records = parse(content, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+  } catch (e) {
+    console.error(`[orders] backfill parse error on ${csvPath}:`, e.message);
+    return;
+  }
+  if (records.length === 0) return;
 
-  const newLines = lines.map((line, i) => {
-    if (!line.trim()) return line;
-    if (i === 0) return line + ',Status,Tracking Number';
-    return line + ',Pending,'; // backfill existing orders as Pending
-  });
+  const cols = Object.keys(records[0]);
+  const hasStatus = cols.includes('Status');
+  const hasTracking = cols.includes('Tracking Number');
+  if (hasStatus && hasTracking) {
+    // Still check if any rows are missing these columns (new orders appended without them)
+    const needsFix = records.some(r => !('Status' in r) || !('Tracking Number' in r));
+    if (!needsFix) return;
+  }
 
-  fs.writeFileSync(csvPath, newLines.join('\n'));
+  // Ensure canonical columns include Status and Tracking Number
+  const canonicalCols = [...new Set([...cols, 'Status', 'Tracking Number'])];
+
+  // Fill missing fields on every row
+  for (const row of records) {
+    if (!('Status' in row) || row['Status'] === undefined) row['Status'] = '';
+    if (!('Tracking Number' in row) || row['Tracking Number'] === undefined) row['Tracking Number'] = '';
+  }
+
+  // Rebuild with proper CSV serialization
+  const escape = (v) => {
+    const s = String(v ?? '');
+    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+  const headerLine = canonicalCols.map(escape).join(',');
+  const dataLines = records.map(r => canonicalCols.map(c => escape(r[c] ?? '')).join(','));
+  fs.writeFileSync(csvPath, [headerLine, ...dataLines].join('\n') + '\n');
   console.log(`[orders] Backfilled Status/Tracking columns: ${csvPath}`);
 }
 

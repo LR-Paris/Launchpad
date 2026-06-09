@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock } from 'lucide-react';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock, Loader2, ChevronDown, Zap } from 'lucide-react';
 
 const STATUS_COLORS = {
-  running: 'text-[hsl(142,70%,50%)]',
-  error:   'text-destructive',
-  stopped: 'text-muted-foreground',
+  running:  'text-[hsl(142,70%,50%)]',
+  building: 'text-amber-400',
+  error:    'text-destructive',
+  stopped:  'text-muted-foreground',
 };
 
 const LIFECYCLE_BADGE = {
@@ -67,8 +68,10 @@ export default function ShopCard({ shop }) {
   const { getShopPerms } = usePermissions();
   const perms = getShopPerms(shop.slug);
 
+  const [forceMenuOpen, setForceMenuOpen] = useState(false);
+
   const actionMutation = useMutation({
-    mutationFn: ({ slug, action }) => shopAction(slug, action),
+    mutationFn: ({ slug, action, force }) => shopAction(slug, action, { force }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['shops'] }),
   });
 
@@ -138,11 +141,13 @@ export default function ShopCard({ shop }) {
           <div className="flex items-center gap-1.5">
             {shop.status === 'running' ? (
               <span className="w-2 h-2 status-dot-running" />
+            ) : shop.status === 'building' ? (
+              <Loader2 className="h-3 w-3 text-amber-400 animate-spin" />
             ) : (
               <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
             )}
             <span className={`text-xs font-mono font-medium ${statusColor}`}>
-              {shop.status}
+              {shop.status === 'building' ? 'building...' : shop.status}
             </span>
           </div>
         </div>
@@ -202,15 +207,53 @@ export default function ShopCard({ shop }) {
 
       {/* Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {shop.status !== 'running' && (
-          <PermButton
-            allowed={perms.can_edit_ui}
-            disabled={busy}
-            onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'start' })}
-            className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
-          >
-            <Play className="h-3 w-3" /> Start
-          </PermButton>
+        {shop.status === 'building' && (
+          <span className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium bg-amber-400/10 border border-amber-400/30 text-amber-400">
+            <Loader2 className="h-3 w-3 animate-spin" /> Building...
+          </span>
+        )}
+        {shop.status !== 'running' && shop.status !== 'building' && (
+          <div className="relative inline-flex items-center">
+            <PermButton
+              allowed={perms.can_edit_ui}
+              disabled={busy}
+              onClick={() => actionMutation.mutate({ slug: shop.slug, action: 'start' })}
+              className="inline-flex items-center gap-1 rounded-md rounded-r-none px-2.5 py-1.5 text-xs font-medium bg-secondary hover:bg-accent border border-border/60 hover:border-primary/30 transition-all disabled:opacity-50"
+            >
+              <Play className="h-3 w-3" /> Start
+            </PermButton>
+            {shop.lifecycle_status === 'active' && perms.can_edit_ui && (
+              <>
+                <button
+                  onClick={() => setForceMenuOpen(o => !o)}
+                  disabled={busy}
+                  className="inline-flex items-center rounded-md rounded-l-none px-1 py-1.5 text-xs bg-secondary hover:bg-accent border border-border/60 border-l-0 hover:border-primary/30 transition-all disabled:opacity-50"
+                  title="More launch options"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                {forceMenuOpen && (
+                  <div className="absolute top-full left-0 mt-1 lp-card rounded-md w-52 py-1 z-30 lp-fadein">
+                    <button
+                      onClick={() => {
+                        setForceMenuOpen(false);
+                        if (window.confirm('Force update will rebuild this active shop with the latest template. Continue?')) {
+                          actionMutation.mutate({ slug: shop.slug, action: 'start', force: true });
+                        }
+                      }}
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-accent flex items-center gap-2"
+                    >
+                      <Zap className="h-3 w-3 text-amber-400" />
+                      <span>Force update &amp; relaunch</span>
+                    </button>
+                    <div className="px-3 py-1 text-[10px] text-muted-foreground font-mono">
+                      Active shops skip updates by default to protect production.
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
 

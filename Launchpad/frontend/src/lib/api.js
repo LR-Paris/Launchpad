@@ -86,8 +86,10 @@ export const updateShop = (slug, data) =>
 export const deleteShop = (slug, deleteFiles = false) =>
   api.delete(`/shops/${slug}?deleteFiles=${deleteFiles}`).then(r => r.data);
 
-export const shopAction = (slug, action) =>
-  api.post(`/shops/${slug}/${action}`).then(r => r.data);
+export const shopAction = (slug, action, opts = {}) => {
+  const qs = opts.force ? '?force=true' : '';
+  return api.post(`/shops/${slug}/${action}${qs}`).then(r => r.data);
+};
 
 export const deployShop = (slug) =>
   api.post(`/shops/${slug}/deploy`).then(r => r.data);
@@ -127,11 +129,11 @@ export const cancelOrder = (slug, orderId, reason) =>
   api.post(`/shops/${slug}/orders/${encodeURIComponent(orderId)}/cancel`, { reason }).then(r => r.data);
 
 // Shop Files
-export const listShopFiles = (slug, dirPath = '.') =>
-  api.get(`/shops/${slug}/files`, { params: { path: dirPath } }).then(r => r.data);
+export const listShopFiles = (slug, dirPath = '.', options = {}) =>
+  api.get(`/shops/${slug}/files`, { params: { path: dirPath }, signal: options.signal }).then(r => r.data);
 
-export const readShopFile = (slug, filePath) =>
-  api.get(`/shops/${slug}/files/read`, { params: { path: filePath } }).then(r => r.data);
+export const readShopFile = (slug, filePath, options = {}) =>
+  api.get(`/shops/${slug}/files/read`, { params: { path: filePath }, signal: options.signal }).then(r => r.data);
 
 export const writeShopFile = (slug, filePath, content) =>
   api.put(`/shops/${slug}/files/write`, { content }, { params: { path: filePath } }).then(r => r.data);
@@ -156,6 +158,19 @@ export const replaceShopFile = (slug, filePath, file) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data);
 };
+
+// 4.0 catalog ops
+export const renameShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/rename`, { from, to }).then(r => r.data);
+
+export const moveShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/move`, { from, to }).then(r => r.data);
+
+export const copyShopFile = (slug, from, to) =>
+  api.post(`/shops/${slug}/files/copy`, { from, to }).then(r => r.data);
+
+export const getDatabaseExportUrl = (slug) =>
+  `/api/shops/${slug}/database/export`;
 
 export const uploadDatabaseZip = (slug, dirPath, file) => {
   const formData = new FormData();
@@ -244,10 +259,7 @@ export const getAnalyticsProducts = (slug, range = '7d') =>
 export const checkHealth = () =>
   api.get('/health', { timeout: 5000 }).then(() => true).catch(() => false);
 
+export const getCheckoutSchema = (slug) => api.get(`/shops/${slug}/checkout/schema`).then(r => r.data);
+export const saveCheckoutSchema = (slug, schema) => api.put(`/shops/${slug}/checkout/schema`, schema).then(r => r.data);
+
 export default api;
-
-export const getCheckoutSchema = (slug) =>
-  api.get(`/shops/${slug}/checkout/schema`).then(r => r.data);
-
-export const saveCheckoutSchema = (slug, schema) =>
-  api.put(`/shops/${slug}/checkout/schema`, schema).then(r => r.data);
