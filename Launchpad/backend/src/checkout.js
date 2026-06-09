@@ -1,7 +1,10 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { checkShopPermission } = require('./users');
 const router = express.Router();
+
+const VALID_SLUG = /^[a-zA-Z0-9_-]+$/;
 
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
@@ -66,6 +69,7 @@ const DEFAULT_SCHEMA = {
 // GET /api/shops/:slug/checkout/schema
 router.get('/shops/:slug/checkout/schema', (req, res) => {
   const { slug } = req.params;
+  if (!VALID_SLUG.test(slug)) return res.status(400).json({ error: 'Invalid slug' });
   const schemaPath = getSchemaPath(slug);
   try {
     if (fs.existsSync(schemaPath)) {
@@ -82,6 +86,10 @@ router.get('/shops/:slug/checkout/schema', (req, res) => {
 // PUT /api/shops/:slug/checkout/schema
 router.put('/shops/:slug/checkout/schema', (req, res) => {
   const { slug } = req.params;
+  if (!VALID_SLUG.test(slug)) return res.status(400).json({ error: 'Invalid slug' });
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
   const schema = req.body;
   if (!schema || !Array.isArray(schema.sections)) {
     return res.status(400).json({ error: 'Invalid schema: must have sections array' });

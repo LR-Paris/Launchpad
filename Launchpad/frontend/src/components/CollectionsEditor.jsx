@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Folder, Plus, Trash2, Save, Upload, ImageIcon, X, ChevronRight,
-  Package, FolderPlus, Check,
+  Package, FolderPlus, Check, Pencil, FolderInput,
 } from 'lucide-react';
 import {
   listShopFiles, readShopFile, writeShopFile, deleteShopFile,
-  uploadShopFiles, replaceShopFile, getShopImageUrl,
+  uploadShopFiles, replaceShopFile, getShopImageUrl, renameShopFile,
 } from '../lib/api';
 
 const DETAIL_FIELDS = {
@@ -53,6 +53,12 @@ export default function CollectionsEditor({ slug }) {
   const [newItemName, setNewItemName] = useState('');
   const [addingCollection, setAddingCollection] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
+
+  // Rename / move state
+  const [renamingCollection, setRenamingCollection] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renamingPhoto, setRenamingPhoto] = useState(null);
+  const [photoRenameValue, setPhotoRenameValue] = useState('');
 
   // Messages
   const [success, setSuccess] = useState('');
@@ -264,6 +270,76 @@ export default function CollectionsEditor({ slug }) {
     }
   };
 
+  const sanitizeName = (name) => name.replace(/[\/\\:*?"<>|]/g, '').trim();
+
+  // #37 — rename a collection folder
+  const handleRenameCollection = async () => {
+    const oldName = renamingCollection;
+    const newName = sanitizeName(renameValue);
+    if (!oldName) return;
+    if (!newName || newName === oldName) { setRenamingCollection(null); return; }
+    setError('');
+    try {
+      await renameShopFile(
+        slug,
+        `DATABASE/ShopCollections/${oldName}`,
+        `DATABASE/ShopCollections/${newName}`
+      );
+      setCollections(prev => prev.map(c => c.name === oldName ? { ...c, name: newName } : c));
+      if (selectedCollection === oldName) setSelectedCollection(newName);
+      setSuccess(`Collection renamed to "${newName}".`);
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to rename collection');
+    } finally {
+      setRenamingCollection(null);
+      setRenameValue('');
+    }
+  };
+
+  // #36 — move an item folder to another collection
+  const handleMoveItem = async (item, targetCollection) => {
+    if (!item || !targetCollection || targetCollection === selectedCollection) return;
+    setError('');
+    try {
+      await renameShopFile(
+        slug,
+        item.basePath,
+        `DATABASE/ShopCollections/${targetCollection}/${item.dirName}`
+      );
+      setItems(prev => prev.filter(i => i.dirName !== item.dirName));
+      if (editingItem === item.dirName) setEditingItem(null);
+      setSuccess(`Moved "${item.name}" to "${targetCollection}".`);
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to move item');
+    }
+  };
+
+  // #35 — rename a photo file (extension is preserved)
+  const handlePhotoRename = async (photo) => {
+    let newName = sanitizeName(photoRenameValue);
+    if (!newName) { setRenamingPhoto(null); return; }
+    const ext = (photo.name.match(/\.[^.]+$/) || [''])[0];
+    if (ext && !newName.toLowerCase().endsWith(ext.toLowerCase())) newName += ext;
+    if (newName === photo.name) { setRenamingPhoto(null); return; }
+    const item = items.find(i => i.dirName === editingItem);
+    if (!item) return;
+    const newPath = `${item.basePath}/Photos/${newName}`;
+    setError('');
+    try {
+      await renameShopFile(slug, photo.path, newPath);
+      setItemPhotos(prev => prev.map(p => p.path === photo.path ? { ...p, name: newName, path: newPath } : p));
+      setSuccess(`Photo renamed to "${newName}".`);
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to rename photo');
+    } finally {
+      setRenamingPhoto(null);
+      setPhotoRenameValue('');
+    }
+  };
+
   const handleDeleteItem = async (item) => {
     if (!window.confirm(`Delete item "${item.name}"? This removes all its files and photos.`)) return;
     setError('');
@@ -424,24 +500,55 @@ export default function CollectionsEditor({ slug }) {
             <ul className="py-1">
               {collections.map(col => (
                 <li key={col.name} className="group relative">
-                  <button
-                    onClick={() => setSelectedCollection(col.name)}
-                    className={`w-full flex items-center gap-2 px-4 py-2 text-xs transition-colors pr-8 ${
-                      selectedCollection === col.name
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'hover:bg-foreground/5 text-foreground'
-                    }`}
-                  >
-                    <Folder className="h-3 w-3 flex-shrink-0 text-yellow-400/80" />
-                    <span className="truncate">{col.name}</span>
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteCollection(col.name); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
-                    title="Delete collection"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                  {renamingCollection === col.name ? (
+                    <div className="flex items-center gap-1 px-3 py-1.5">
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleRenameCollection();
+                          if (e.key === 'Escape') { setRenamingCollection(null); setRenameValue(''); }
+                        }}
+                        className="min-w-0 flex-1 rounded-md border border-border/60 bg-input px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60"
+                      />
+                      <button onClick={handleRenameCollection} className="text-primary hover:text-primary/80 transition-colors" title="Rename">
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => { setRenamingCollection(null); setRenameValue(''); }}
+                        className="text-muted-foreground hover:text-foreground transition-colors">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setSelectedCollection(col.name)}
+                        className={`w-full flex items-center gap-2 px-4 py-2 text-xs transition-colors pr-12 ${
+                          selectedCollection === col.name
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'hover:bg-foreground/5 text-foreground'
+                        }`}
+                      >
+                        <Folder className="h-3 w-3 flex-shrink-0 text-yellow-400/80" />
+                        <span className="truncate">{col.name}</span>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setRenamingCollection(col.name); setRenameValue(col.name); }}
+                        className="absolute right-7 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all"
+                        title="Rename collection"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCollection(col.name); }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
+                        title="Delete collection"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -554,6 +661,25 @@ export default function CollectionsEditor({ slug }) {
                           >
                             <Save className="h-3 w-3" /> Save All
                           </button>
+                        )}
+                        {collections.length > 1 && (
+                          <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <FolderInput className="h-3 w-3" />
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                const target = e.target.value;
+                                if (target) handleMoveItem(items.find(i => i.dirName === editingItem), target);
+                              }}
+                              className="rounded-md border border-border/60 bg-input px-1.5 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60 cursor-pointer"
+                              title="Move item to another collection"
+                            >
+                              <option value="">Move to...</option>
+                              {collections
+                                .filter(c => c.name !== selectedCollection)
+                                .map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                            </select>
+                          </div>
                         )}
                         <button
                           onClick={() => handleDeleteItem(items.find(i => i.dirName === editingItem))}
@@ -668,6 +794,12 @@ export default function CollectionsEditor({ slug }) {
                                   />
                                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                     <button
+                                      onClick={() => { setRenamingPhoto(photo.path); setPhotoRenameValue(photo.name.replace(/\.[^.]+$/, '')); }}
+                                      className="rounded-md bg-white/20 backdrop-blur-sm px-2 py-1 text-[10px] text-white hover:bg-white/30 transition-colors"
+                                    >
+                                      Rename
+                                    </button>
+                                    <button
                                       onClick={() => photoReplaceRefs.current[photo.path]?.click()}
                                       className="rounded-md bg-white/20 backdrop-blur-sm px-2 py-1 text-[10px] text-white hover:bg-white/30 transition-colors"
                                     >
@@ -691,7 +823,29 @@ export default function CollectionsEditor({ slug }) {
                                     />
                                   </div>
                                   <div className="px-2 py-1 bg-card">
-                                    <p className="text-[10px] font-mono text-muted-foreground truncate">{photo.name}</p>
+                                    {renamingPhoto === photo.path ? (
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          autoFocus
+                                          value={photoRenameValue}
+                                          onChange={(e) => setPhotoRenameValue(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handlePhotoRename(photo);
+                                            if (e.key === 'Escape') { setRenamingPhoto(null); setPhotoRenameValue(''); }
+                                          }}
+                                          className="min-w-0 flex-1 rounded border border-border/60 bg-input px-1 py-0.5 text-[10px] font-mono outline-none focus:ring-1 focus:ring-primary/60"
+                                        />
+                                        <button onClick={() => handlePhotoRename(photo)} className="text-primary hover:text-primary/80" title="Rename">
+                                          <Check className="h-3 w-3" />
+                                        </button>
+                                        <button onClick={() => { setRenamingPhoto(null); setPhotoRenameValue(''); }}
+                                          className="text-muted-foreground hover:text-foreground">
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <p className="text-[10px] font-mono text-muted-foreground truncate">{photo.name}</p>
+                                    )}
                                   </div>
                                 </div>
                               );

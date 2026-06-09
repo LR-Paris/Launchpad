@@ -541,8 +541,8 @@ function OrderToast({ notifications, onDismiss }) {
 // ---------------------------------------------------------------------------
 function StatusDot({ status, size = 'sm' }) {
   const s = size === 'lg' ? 'w-2.5 h-2.5' : 'w-1.5 h-1.5';
-  const color = status === 'running' ? 'bg-emerald-400' : 'bg-red-400';
-  const pulse = status === 'running' ? 'animate-pulse' : '';
+  const color = status === 'running' ? 'bg-emerald-400' : status === 'building' ? 'bg-amber-400' : 'bg-red-400';
+  const pulse = (status === 'running' || status === 'building') ? 'animate-pulse' : '';
   return <span className={`inline-block ${s} rounded-full ${color} ${pulse}`} />;
 }
 

@@ -139,6 +139,9 @@ export const writeShopFile = (slug, filePath, content) =>
 export const deleteShopFile = (slug, filePath) =>
   api.delete(`/shops/${slug}/files`, { params: { path: filePath } }).then(r => r.data);
 
+export const renameShopFile = (slug, filePath, newPath) =>
+  api.post(`/shops/${slug}/files/rename`, { path: filePath, newPath }).then(r => r.data);
+
 export const getShopImageUrl = (slug, filePath) =>
   `/api/shops/${slug}/files/image?path=${encodeURIComponent(filePath)}`;
 
