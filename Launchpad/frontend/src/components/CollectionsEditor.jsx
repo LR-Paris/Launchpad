@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Component } from 'react';
 import {
   Folder, Plus, Trash2, Save, Upload, ImageIcon, X, ChevronRight,
   Package, FolderPlus, Check, Pencil, FolderInput,
@@ -28,7 +28,47 @@ function friendlyLabel(filename) {
     .trim();
 }
 
+// Catches any unexpected render/runtime error inside the catalog editor so a
+// bug here degrades to an inline message instead of white-screening the SPA.
+class CollectionsEditorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('CollectionsEditor crashed:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="lp-card rounded-xl p-6 text-center">
+          <p className="text-sm font-semibold mb-1">The catalog editor hit an error.</p>
+          <p className="text-xs text-muted-foreground font-mono mb-3">{String(this.state.error?.message || this.state.error)}</p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-medium bg-primary/15 text-primary hover:bg-primary/25 transition-all"
+          >
+            Reload editor
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function CollectionsEditor({ slug }) {
+  return (
+    <CollectionsEditorBoundary key={slug}>
+      <CollectionsEditorInner slug={slug} />
+    </CollectionsEditorBoundary>
+  );
+}
+
+function CollectionsEditorInner({ slug }) {
   // Collections list
   const [collections, setCollections] = useState([]);
   const [collectionsLoading, setCollectionsLoading] = useState(true);
@@ -67,6 +107,11 @@ export default function CollectionsEditor({ slug }) {
   const photoUploadRef = useRef(null);
   const photoReplaceRefs = useRef({});
 
+  // Monotonic id for item-list loads. Responses from a previous collection
+  // (or a previous slug) are discarded so fast collection switching can't
+  // leave the editor pointing at items that no longer exist.
+  const itemsRequestId = useRef(0);
+
   // Load collections
   useEffect(() => {
     setCollectionsLoading(true);
@@ -84,9 +129,22 @@ export default function CollectionsEditor({ slug }) {
 
   // Load items when collection selected
   useEffect(() => {
-    if (!selectedCollection) { setItems([]); return; }
-    setItemsLoading(true);
+    const reqId = ++itemsRequestId.current;
+
+    // Fully reset all item-editor state on every collection change so no
+    // stale editingItem / details / photos survive the switch.
     setEditingItem(null);
+    setItemDetails({});
+    setItemOriginal({});
+    setItemPhotos([]);
+    setItemSaving({});
+    setRenamingPhoto(null);
+    setPhotoRenameValue('');
+    setShowAddItem(false);
+    setNewItemName('');
+
+    if (!selectedCollection) { setItems([]); setItemsLoading(false); return; }
+    setItemsLoading(true);
     const colPath = `DATABASE/ShopCollections/${selectedCollection}`;
     listShopFiles(slug, colPath)
       .then(async (data) => {
@@ -98,11 +156,11 @@ export default function CollectionsEditor({ slug }) {
           let thumbnailFile = null;
           try {
             const d = await readShopFile(slug, `${basePath}/Details/Name.txt`);
-            name = d.content.trim() || dir.name;
+            name = (d.content || '').trim() || dir.name;
           } catch {}
           try {
             const d = await readShopFile(slug, `${basePath}/Details/ItemCost.txt`);
-            price = d.content.trim();
+            price = (d.content || '').trim();
           } catch {}
           try {
             const photos = await listShopFiles(slug, `${basePath}/Photos`);
@@ -111,10 +169,12 @@ export default function CollectionsEditor({ slug }) {
           } catch {}
           return { dirName: dir.name, name, price, thumbnailFile, basePath };
         }));
+        if (reqId !== itemsRequestId.current) return; // stale response — collection changed since
         setItems(itemsData);
         setItemsLoading(false);
       })
       .catch(() => {
+        if (reqId !== itemsRequestId.current) return;
         setItems([]);
         setItemsLoading(false);
       });
@@ -122,6 +182,7 @@ export default function CollectionsEditor({ slug }) {
 
   // Load full item details
   const loadItemDetails = async (item) => {
+    const reqId = itemsRequestId.current; // bound to the current collection load
     setEditingItem(item.dirName);
     setItemSaving({});
     const detailsPath = `${item.basePath}/Details`;
@@ -142,21 +203,25 @@ export default function CollectionsEditor({ slug }) {
           original[entry.name] = '';
         }
       }));
+      if (reqId !== itemsRequestId.current) return; // collection changed mid-load
       setItemDetails(details);
       setItemOriginal(original);
     } catch {
+      if (reqId !== itemsRequestId.current) return;
       setItemDetails({});
       setItemOriginal({});
     }
 
     try {
       const photoListing = await listShopFiles(slug, photosPath);
+      if (reqId !== itemsRequestId.current) return;
       setItemPhotos(
         (photoListing.entries || [])
           .filter(e => e.isImage)
           .map(e => ({ name: e.name, path: `${photosPath}/${e.name}`, size: e.size }))
       );
     } catch {
+      if (reqId !== itemsRequestId.current) return;
       setItemPhotos([]);
     }
   };
@@ -341,6 +406,7 @@ export default function CollectionsEditor({ slug }) {
   };
 
   const handleDeleteItem = async (item) => {
+    if (!item) return;
     if (!window.confirm(`Delete item "${item.name}"? This removes all its files and photos.`)) return;
     setError('');
     try {
@@ -424,7 +490,12 @@ export default function CollectionsEditor({ slug }) {
     }
   };
 
-  const hasDirtyFields = editingItem && Object.keys(itemDetails).some(f => itemDetails[f] !== itemOriginal[f]);
+  // Resolve the item being edited against the CURRENT items array. If a
+  // collection switch (or move/delete) removed it, this is null and the
+  // editor simply doesn't render — instead of crashing on a missing item.
+  const editingItemObj = editingItem ? items.find(i => i.dirName === editingItem) || null : null;
+
+  const hasDirtyFields = editingItemObj && Object.keys(itemDetails).some(f => itemDetails[f] !== itemOriginal[f]);
 
   // Ordered detail fields: known fields first, then unknown
   const orderedDetailFiles = () => {
@@ -647,7 +718,7 @@ export default function CollectionsEditor({ slug }) {
                 )}
 
                 {/* Expanded item editor */}
-                {editingItem && (
+                {editingItemObj && (
                   <div className="border-t border-border/40 pt-5 mt-2">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>
@@ -669,7 +740,7 @@ export default function CollectionsEditor({ slug }) {
                               value=""
                               onChange={(e) => {
                                 const target = e.target.value;
-                                if (target) handleMoveItem(items.find(i => i.dirName === editingItem), target);
+                                if (target) handleMoveItem(editingItemObj, target);
                               }}
                               className="rounded-md border border-border/60 bg-input px-1.5 py-1 text-xs outline-none focus:ring-1 focus:ring-primary/60 cursor-pointer"
                               title="Move item to another collection"
@@ -682,7 +753,7 @@ export default function CollectionsEditor({ slug }) {
                           </div>
                         )}
                         <button
-                          onClick={() => handleDeleteItem(items.find(i => i.dirName === editingItem))}
+                          onClick={() => handleDeleteItem(editingItemObj)}
                           className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-all"
                         >
                           <Trash2 className="h-3 w-3" /> Delete Item
