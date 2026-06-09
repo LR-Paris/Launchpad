@@ -29,17 +29,6 @@ export default function Catalog() {
   const { canShop } = usePermissions();
   const canEdit = canShop(slug, 'can_edit_items');
 
-  // No permission = block access entirely
-  if (!canEdit) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-center lp-fadein">
-        <Lock className="h-8 w-8 text-muted-foreground mb-3" />
-        <p className="text-sm font-semibold mb-1">Access Restricted</p>
-        <p className="text-xs text-muted-foreground">You need Catalog permission to access this shop's catalog.</p>
-      </div>
-    );
-  }
-
   // Inventory state
   const [editedRows, setEditedRows] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -164,6 +153,20 @@ export default function Catalog() {
     }));
     saveMutation.mutate(updates);
   };
+
+  // No permission = block access entirely.
+  // NOTE: this early return must stay BELOW every hook call above — returning
+  // between hooks changes the hook count across renders and crashes React
+  // ("Rendered more/fewer hooks than during the previous render").
+  if (!canEdit) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center lp-fadein">
+        <Lock className="h-8 w-8 text-muted-foreground mb-3" />
+        <p className="text-sm font-semibold mb-1">Access Restricted</p>
+        <p className="text-xs text-muted-foreground">You need Catalog permission to access this shop's catalog.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="lp-fadein" style={{ maxWidth: '100%' }}>

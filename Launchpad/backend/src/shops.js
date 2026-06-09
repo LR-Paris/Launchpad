@@ -132,7 +132,13 @@ function getContainerStatus(slug) {
         try { return JSON.parse(line); } catch { return null; }
       }).filter(Boolean);
       if (containers.length > 0 && containers[0].State === 'running') {
-        return 'running';
+        // Container is up, but the shop may still be installing/building.
+        // The container startup is: npm install -> npm run build -> npm start,
+        // so until node_modules and .next/BUILD_ID exist it is still building.
+        const shopDir = path.join(SHOPS_DIR, slug);
+        const isBuilt = fs.existsSync(path.join(shopDir, 'node_modules')) &&
+                        fs.existsSync(path.join(shopDir, '.next', 'BUILD_ID'));
+        return isBuilt ? 'running' : 'building';
       }
     }
     return 'stopped';
