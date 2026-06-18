@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
-import { createShop, getShopLogs, uploadDatabaseZip } from '../lib/api';
+import { createShop, getShop, getShopLogs, uploadDatabaseZip } from '../lib/api';
 import { ArrowLeft, Terminal, Rocket, Database, FileArchive, Zap } from 'lucide-react';
 
 const SHOP_PRESETS = [
@@ -53,6 +53,16 @@ export default function NewShop() {
     hotel_list: false,
   });
   const [hotelList, setHotelList] = useState('');
+
+  // #12 — poll the new shop until it finishes installing/building
+  const { data: newShopData } = useQuery({
+    queryKey: ['new-shop-status', createdSlug],
+    queryFn: () => getShop(createdSlug),
+    enabled: !!createdSlug,
+    refetchInterval: (query) =>
+      query.state.data?.shop?.status === 'running' ? false : 4000,
+  });
+  const newShopStatus = newShopData?.shop?.status;
 
   const mutation = useMutation({
     mutationFn: createShop,
@@ -368,11 +378,40 @@ export default function NewShop() {
             className="mx-auto rounded-lg mb-4 max-h-48"
           />
           <h2 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>
-            Launching Site Now!
+            {newShopStatus === 'running' ? 'Shop is Ready!' : 'Launching Site Now!'}
           </h2>
           <p className="text-sm text-muted-foreground">
             Your shop <code className="text-primary font-mono">/{createdSlug}</code> has been created.
           </p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            {newShopStatus === 'running' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-[hsl(142,70%,50%)]" />
+                <span className="text-xs font-mono font-medium text-[hsl(142,70%,50%)]">Running</span>
+                <a
+                  href={`/${createdSlug}/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 text-xs font-mono text-primary underline hover:opacity-80 transition-opacity"
+                >
+                  open shop →
+                </a>
+              </>
+            ) : newShopStatus === 'error' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-destructive" />
+                <span className="text-xs font-mono font-medium text-destructive">Error — check logs below</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-xs font-mono font-medium text-amber-400">Building...</span>
+                <span className="text-xs text-muted-foreground">
+                  installing &amp; compiling — usually 2–3 minutes, the shop is not ready yet
+                </span>
+              </>
+            )}
+          </div>
         </div>
       )}
 

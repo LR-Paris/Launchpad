@@ -195,6 +195,46 @@ router.delete('/:slug/files', (req, res) => {
   res.json({ message: 'Deleted', path: relPath });
 });
 
+// POST /api/shops/:slug/files/rename  body: { path, newPath }
+// Renames or moves a file/directory within the shop. Covers:
+// renaming collections, moving items between collections, renaming photos.
+router.post('/:slug/files/rename', (req, res) => {
+  if (!checkShopPermission(req, 'can_edit_ui')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug } = req.params;
+  const { path: relPath, newPath } = req.body || {};
+  if (!relPath || !newPath) {
+    return res.status(400).json({ error: 'path and newPath are required' });
+  }
+  if (relPath === '.' || newPath === '.') {
+    return res.status(400).json({ error: 'Cannot rename root directory' });
+  }
+
+  const resolvedSrc = safeShopPath(slug, relPath);
+  const resolvedDest = safeShopPath(slug, newPath);
+  if (!resolvedSrc || !resolvedDest) return res.status(400).json({ error: 'Invalid path' });
+  if (resolvedSrc === resolvedDest) return res.status(400).json({ error: 'Source and destination are the same' });
+
+  if (!fs.existsSync(resolvedSrc)) return res.status(404).json({ error: 'Source not found' });
+  if (fs.existsSync(resolvedDest)) return res.status(409).json({ error: 'Destination already exists' });
+
+  // Prevent moving a directory into itself
+  if (fs.statSync(resolvedSrc).isDirectory() && (resolvedDest + path.sep).startsWith(resolvedSrc + path.sep)) {
+    return res.status(400).json({ error: 'Cannot move a directory into itself' });
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(resolvedDest), { recursive: true });
+    fs.renameSync(resolvedSrc, resolvedDest);
+  } catch (err) {
+    return res.status(500).json({ error: `Rename failed: ${err.message}` });
+  }
+
+  req.app.locals.auditLog?.('file_renamed', { req, details: { slug, path: relPath, newPath } });
+  res.json({ message: 'Renamed', path: relPath, newPath });
+});
+
 // POST /api/shops/:slug/files/upload-zip?path=DATABASE
 const uploadZip = multer({
   storage: multer.diskStorage({

@@ -6,9 +6,10 @@ import { usePermissions } from '../lib/permissions';
 import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock } from 'lucide-react';
 
 const STATUS_COLORS = {
-  running: 'text-[hsl(142,70%,50%)]',
-  error:   'text-destructive',
-  stopped: 'text-muted-foreground',
+  running:  'text-[hsl(142,70%,50%)]',
+  building: 'text-amber-400',
+  error:    'text-destructive',
+  stopped:  'text-muted-foreground',
 };
 
 const LIFECYCLE_BADGE = {
@@ -138,11 +139,13 @@ export default function ShopCard({ shop }) {
           <div className="flex items-center gap-1.5">
             {shop.status === 'running' ? (
               <span className="w-2 h-2 status-dot-running" />
+            ) : shop.status === 'building' ? (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             ) : (
               <span className={`w-2 h-2 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
             )}
             <span className={`text-xs font-mono font-medium ${statusColor}`}>
-              {shop.status}
+              {shop.status === 'building' ? 'Building...' : shop.status}
             </span>
           </div>
         </div>
@@ -202,7 +205,7 @@ export default function ShopCard({ shop }) {
 
       {/* Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {shop.status !== 'running' && (
+        {shop.status !== 'running' && shop.status !== 'building' && (
           <PermButton
             allowed={perms.can_edit_ui}
             disabled={busy}

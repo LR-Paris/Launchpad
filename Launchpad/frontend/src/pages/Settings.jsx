@@ -1008,21 +1008,24 @@ export default function Settings() {
             <div className="flex items-center gap-1.5">
               {currentStatus === 'running' ? (
                 <span className="w-2 h-2 status-dot-running" />
+              ) : currentStatus === 'building' ? (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
               ) : (
                 <span className={`w-2 h-2 rounded-full ${currentStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
               )}
               <span className={`text-xs font-mono font-medium ${
                 currentStatus === 'running' ? 'text-[hsl(142,70%,50%)]'
+                : currentStatus === 'building' ? 'text-amber-400'
                 : currentStatus === 'error' ? 'text-destructive'
                 : 'text-muted-foreground'
-              }`}>{currentStatus}</span>
+              }`}>{currentStatus === 'building' ? 'Building...' : currentStatus}</span>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {!canEditUI && (
               <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-mono"><Lock className="h-3 w-3" /> Read-only</span>
             )}
-            {currentStatus !== 'running' && (
+            {currentStatus !== 'running' && currentStatus !== 'building' && (
               <button
                 onClick={() => actionMutation.mutate('start')}
                 disabled={actionMutation.isPending || !canEditUI}
@@ -1456,14 +1459,17 @@ export default function Settings() {
                           <div className="flex items-center gap-1.5">
                             {shop.status === 'running' ? (
                               <span className="w-1.5 h-1.5 status-dot-running" />
+                            ) : shop.status === 'building' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                             ) : (
                               <span className={`w-1.5 h-1.5 rounded-full ${shop.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
                             )}
                             <span className={`text-xs font-mono ${
                               shop.status === 'running' ? 'text-[hsl(142,70%,50%)]'
+                              : shop.status === 'building' ? 'text-amber-400'
                               : shop.status === 'error' ? 'text-destructive'
                               : 'text-muted-foreground'
-                            }`}>{shop.status}</span>
+                            }`}>{shop.status === 'building' ? 'Building...' : shop.status}</span>
                           </div>
                         </td>
                         <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
