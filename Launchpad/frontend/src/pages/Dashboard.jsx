@@ -31,7 +31,7 @@ const INV = {
   'nominal':     { label: 'Nominal',      color: 'hsl(142 70% 55%)', bg: 'hsl(142 70% 50% / 0.1)' },
   'low-fuel':    { label: 'Low stock',    color: 'hsl(40 90% 60%)',  bg: 'hsl(40 90% 55% / 0.1)' },
   'depleted':    { label: 'Sold out',     color: 'hsl(0 80% 62%)',   bg: 'hsl(0 80% 58% / 0.1)' },
-  'no-manifest': { label: 'No inventory', color: 'hsl(215 16% 50%)', bg: 'hsl(222 22% 14% / 0.7)' },
+  'no-manifest': { label: 'No inventory', color: 'hsl(var(--muted-foreground))', bg: 'hsl(var(--muted) / 0.7)' },
 };
 
 const STATUS_RANK = { running: 0, building: 1, error: 2, stopped: 3 };
@@ -257,7 +257,7 @@ function HomeShopCard({ shop, orders, fav, onFav, delay }) {
         </span>
         <Link
           to={`/shops/${shop.slug}/catalog`}
-          className="inline-flex items-center gap-1 font-mono text-[10px] transition-opacity hover:opacity-80"
+          className="inline-flex items-center gap-1 whitespace-nowrap font-mono text-[10px] transition-opacity hover:opacity-80"
           style={{ padding: '3px 8px', borderRadius: 6, background: inv.bg, color: inv.color }}
         >
           <Package className="h-2.5 w-2.5" />
