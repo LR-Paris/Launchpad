@@ -211,9 +211,11 @@ function AppContent({ user, theme, toggleTheme }) {
         </Routes>
       </main>
       <footer className="border-t border-border/40 py-3 text-center">
-        <span className="text-xs font-mono text-muted-foreground/60">
+        <span className="text-xs font-mono text-muted-foreground/60 whitespace-nowrap">
           Launchpad{' '}
           <span className="text-[hsl(188,100%,42%)/70]">{`LC-${__APP_VERSION__}`}</span>
+          {__APP_CODENAME__ ? ` \u201C${__APP_CODENAME__}\u201D` : ''}{' \u00B7 made with '}
+          <span style={{ color: 'hsl(350 80% 60%)' }}>{'\u2665'}</span> in NYC
         </span>
       </footer>
     </div>

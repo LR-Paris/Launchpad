@@ -4,12 +4,13 @@ import path from 'path';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const { version } = require('./package.json');
+const { version, codename } = require('./package.json');
 
 export default defineConfig({
   define: {
     // Inject version from package.json at build time — never hardcode again
     __APP_VERSION__: JSON.stringify(version),
+    __APP_CODENAME__: JSON.stringify(codename || ''),
   },
   plugins: [react()],
   resolve: {

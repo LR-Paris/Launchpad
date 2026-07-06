@@ -250,7 +250,7 @@ function HomeShopCard({ shop, orders, fav, onFav, delay }) {
 
       {/* status strip */}
       <div className="mt-3 flex items-center gap-3.5">
-        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-medium" style={{ color: st.color }}>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-[11px] font-medium" style={{ color: st.color }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: st.dot, animation: st.anim }} />
           {shop.status === 'building' ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           {st.label}
@@ -264,12 +264,12 @@ function HomeShopCard({ shop, orders, fav, onFav, delay }) {
           {inv.label}
         </Link>
         <div className="flex-1" />
-        <div className="flex items-center gap-2" title="Orders, last 7 days">
+        <div className="flex flex-none items-center gap-2 whitespace-nowrap" title="Orders, last 7 days">
           <svg width="72" height="22" viewBox="0 0 72 22" style={{ overflow: 'visible' }}>
             <polyline points={spark.points} fill="none" stroke="hsl(188 100% 48%)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
             <circle cx={spark.x} cy={spark.y} r="2.2" fill="hsl(188 100% 55%)" />
           </svg>
-          <span className="font-mono text-[11px] text-foreground/80">
+          <span className="whitespace-nowrap font-mono text-[11px] text-foreground/80">
             {ordersToday}
             <span className="text-muted-foreground"> today</span>
           </span>
@@ -528,12 +528,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Footer ───────────────────────────────────────── */}
-      <footer className="mt-12 border-t border-border/50 pb-2 pt-4 text-center">
-        <p className="m-0 font-mono text-[11px] text-muted-foreground/80">
-          Launchpad LC-{__APP_VERSION__} “Ignition” · made with <span style={{ color: 'hsl(350 80% 60%)' }}>♥</span> in NYC
-        </p>
-      </footer>
     </div>
   );
 }
