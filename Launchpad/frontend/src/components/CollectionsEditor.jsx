@@ -29,8 +29,9 @@ const DETAIL_FIELDS = {
   'ItemCost.txt':    { type: 'number',   label: 'Item Cost',     step: '0.01', prefix: '$' },
   'BoxCost.txt':     { type: 'number',   label: 'Box Cost',      step: '0.01', prefix: '$' },
   'UnitsPerBox.txt': { type: 'number',   label: 'Units Per Box', step: '1' },
+  'Hidden.txt':      { type: 'toggle',   label: 'Visibility' },
 };
-const FIELD_ORDER = ['Name.txt', 'Description.txt', 'SKU.txt', 'ItemCost.txt', 'BoxCost.txt', 'UnitsPerBox.txt'];
+const FIELD_ORDER = ['Name.txt', 'Description.txt', 'SKU.txt', 'ItemCost.txt', 'BoxCost.txt', 'UnitsPerBox.txt', 'Hidden.txt'];
 const ORDER_MANIFEST_PATH = 'DATABASE/ShopCollections/.order.json';
 
 function friendlyLabel(filename) {
@@ -136,7 +137,7 @@ function DraggableItemCard({
         if (e.target.closest('[data-no-drag]')) return;
         onClick();
       }}
-      className={`relative rounded-lg border p-3 text-left transition-all ${
+      className={`relative rounded-lg border p-3 text-left transition-all ${item.hidden ? 'opacity-60 ' : ''}${
         isExpanded
           ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/20'
           : isSelected
@@ -179,6 +180,11 @@ function DraggableItemCard({
       </p>
       {item.price && (
         <p className="text-xs text-primary font-mono mt-0.5">${item.price}</p>
+      )}
+      {item.hidden && (
+        <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-500/15 text-zinc-400 border border-zinc-500/30 mt-1.5">
+          <EyeOff className="h-2.5 w-2.5" /> HIDDEN
+        </span>
       )}
       {validationIssues.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-1.5">
@@ -512,10 +518,11 @@ function CollectionsEditorInner({ slug, locked = false }) {
       const batch = itemDirs.slice(i, i + BATCH);
       const batchResults = await Promise.all(batch.map(async (dir) => {
         const basePath = `${colPath}/${dir.name}`;
-        const [nameRes, priceRes, descRes, photosRes] = await Promise.allSettled([
+        const [nameRes, priceRes, descRes, hiddenRes, photosRes] = await Promise.allSettled([
           readShopFile(slug, `${basePath}/Details/Name.txt`, { signal }),
           readShopFile(slug, `${basePath}/Details/ItemCost.txt`, { signal }),
           readShopFile(slug, `${basePath}/Details/Description.txt`, { signal }),
+          readShopFile(slug, `${basePath}/Details/Hidden.txt`, { signal }),
           listShopFiles(slug, `${basePath}/Photos`, { signal }),
         ]);
         const name = (nameRes.status === 'fulfilled' ? nameRes.value.content.trim() : '') || dir.name;
@@ -526,7 +533,8 @@ function CollectionsEditorInner({ slug, locked = false }) {
           const sorted = sortPhotos((photosRes.value.entries || []).filter(e => e.isImage));
           if (sorted.length) thumbnailFile = `${basePath}/Photos/${sorted[0].name}`;
         }
-        return { dirName: dir.name, name, price, description, thumbnailFile, basePath, collectionName: colName };
+        const hidden = hiddenRes.status === 'fulfilled' && hiddenRes.value.content.trim().toLowerCase() === 'true';
+        return { dirName: dir.name, name, price, description, hidden, thumbnailFile, basePath, collectionName: colName };
       }));
       results.push(...batchResults);
     }
@@ -627,6 +635,8 @@ function CollectionsEditorInner({ slug, locked = false }) {
           original[entry.name] = '';
         }
       }));
+      // Ensure the visibility toggle always exists (defaults to visible)
+      if (!('Hidden.txt' in details)) { details['Hidden.txt'] = 'false'; original['Hidden.txt'] = 'false'; }
       setItemDetails(details);
       setItemOriginal(original);
     } catch {
@@ -668,6 +678,7 @@ function CollectionsEditorInner({ slug, locked = false }) {
             ...i,
             name: itemDetails['Name.txt']?.trim() || i.name,
             price: itemDetails['ItemCost.txt']?.trim() || i.price,
+            hidden: (itemDetails['Hidden.txt'] || '').trim().toLowerCase() === 'true',
           };
         }));
         setAutoSaveStatus('saved');
@@ -731,6 +742,7 @@ function CollectionsEditorInner({ slug, locked = false }) {
         writeShopFile(slug, `${basePath}/Details/ItemCost.txt`, '0.00'),
         writeShopFile(slug, `${basePath}/Details/BoxCost.txt`, '0.00'),
         writeShopFile(slug, `${basePath}/Details/UnitsPerBox.txt`, '1'),
+        writeShopFile(slug, `${basePath}/Details/Hidden.txt`, 'false'),
       ]);
       await writeShopFile(slug, `${basePath}/Photos/.gitkeep`, '');
       const newItem = { dirName: name, name, price: '0.00', thumbnailFile: null, basePath };
@@ -1676,6 +1688,19 @@ function CollectionsEditorInner({ slug, locked = false }) {
                                         className="flex-1 rounded-md border border-border/60 bg-input px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60 transition-all resize-y leading-relaxed disabled:opacity-50"
                                         rows={field.rows || 2}
                                       />
+                                    ) : field.type === 'toggle' ? (
+                                      <button
+                                        type="button"
+                                        disabled={disabled}
+                                        onClick={() => setItemDetails(prev => ({ ...prev, [fileName]: ((prev[fileName] || '').trim().toLowerCase() === 'true') ? 'false' : 'true' }))}
+                                        className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-all disabled:opacity-50 ${((itemDetails[fileName] || '').trim().toLowerCase() === 'true') ? 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40' : 'bg-[hsl(142,70%,50%)]/10 text-[hsl(142,70%,50%)] border-[hsl(142,70%,50%)]/30'}`}
+                                      >
+                                        {((itemDetails[fileName] || '').trim().toLowerCase() === 'true') ? (
+                                          <><EyeOff className="h-3 w-3" /> Hidden — not shown in shop</>
+                                        ) : (
+                                          <><Eye className="h-3 w-3" /> Visible in shop</>
+                                        )}
+                                      </button>
                                     ) : (
                                       <input
                                         type="text"

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { shopAction, deleteShop, getInventorySummary } from '../lib/api';
+import { shopAction, deleteShop, getInventorySummary, readShopFile } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
-import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock, Loader2, ChevronDown, Zap } from 'lucide-react';
+import { Play, Square, RotateCcw, Trash2, ShoppingCart, Settings, ExternalLink, Package, BarChart3, Lock, Loader2, ChevronDown, Zap, KeyRound } from 'lucide-react';
 
 const STATUS_COLORS = {
   running:  'text-[hsl(142,70%,50%)]',
@@ -94,6 +94,23 @@ export default function ShopCard({ shop }) {
     refetchInterval: 30000,
   });
 
+  // Shop entry password (DATABASE/Design/Details/Password.txt)
+  const { data: shopPassword } = useQuery({
+    queryKey: ['shop-password', shop.slug],
+    queryFn: async () => {
+      try {
+        return (await readShopFile(shop.slug, 'DATABASE/Design/Details/Password.txt')).content.trim();
+      } catch {
+        try {
+          return (await readShopFile(shop.slug, 'DATABASE/design/details/Password.txt')).content.trim();
+        } catch {
+          return '';
+        }
+      }
+    },
+    staleTime: 60000,
+  });
+
   const busy = actionMutation.isPending || deleteMutation.isPending;
   const statusColor = STATUS_COLORS[shop.status] || STATUS_COLORS.stopped;
 
@@ -168,6 +185,18 @@ export default function ShopCard({ shop }) {
           )}
         </Link>
       )}
+
+      {/* Shop password */}
+      <div className="mb-3">
+        <span className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[10px] font-mono font-medium bg-muted/30 text-muted-foreground">
+          <KeyRound className="h-3 w-3" />
+          {shopPassword ? (
+            <>Password: <span className="text-foreground font-semibold select-all">{shopPassword}</span></>
+          ) : (
+            'No password'
+          )}
+        </span>
+      </div>
 
       {/* Spacer to push actions to bottom */}
       <div className="flex-1" />

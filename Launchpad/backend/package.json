@@ -1,6 +1,6 @@
 {
-  "name": "shuttle-platform-backend",
-  "version": "4.1.1",
+  "name": "launchpad-backend",
+  "version": "4.2.0",
   "private": true,
   "scripts": {
     "start": "node src/index.js",

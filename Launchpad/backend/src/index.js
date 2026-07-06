@@ -300,5 +300,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Shuttle Platform backend running on port ${PORT}`);
+  console.log(`Launchpad backend running on port ${PORT}`);
 });
