@@ -230,10 +230,16 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Global rate limiter for authenticated API endpoints
+// Global rate limiter for authenticated API endpoints.
+// GET reads are exempt: the catalog editor fans out many small reads per item
+// (Name/Cost/Description/Hidden + Photos listing + thumbnail) and the dashboard
+// polls inventory/password per shop card — browsing 2-3 collections blew past
+// 120 req/min and everything 429'd (items loaded, then images failed, then
+// nothing loaded until the window reset). Mutations remain rate limited.
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 120,
+  max: 240,
+  skip: (req) => req.method === 'GET',
   message: { error: 'Too many requests, please slow down' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -256,7 +262,12 @@ const notifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/shops', notifyLimiter, ordersWebhookRouter);
+// Scope the limiter to the webhook endpoint ONLY. Mounting it on '/api/shops'
+// throttled EVERY /api/shops request to 30/min — the catalog editor's fan-out
+// reads (details + photos + thumbnails per item) blew through that after one
+// collection, causing the items/images-then-nothing loading failures.
+app.use('/api/shops/:slug/orders/notify', notifyLimiter);
+app.use('/api/shops', ordersWebhookRouter);
 
 // Unauthenticated analytics tracking beacon (must come BEFORE requireAuth)
 const analyticsLimiter = rateLimit({
@@ -266,7 +277,9 @@ const analyticsLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/shops', analyticsLimiter, analyticsTrackRouter);
+// Same scoping fix: limit only the tracking beacon, not all of /api/shops.
+app.use('/api/shops/:slug/analytics/track', analyticsLimiter);
+app.use('/api/shops', analyticsTrackRouter);
 
 // Protected routes — CSRF enforced on state-changing requests
 app.use('/api/shops', requireAuth, csrfProtection, shopsRouter);
