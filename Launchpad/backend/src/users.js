@@ -128,7 +128,11 @@ function getUserByEmail(email) {
 }
 
 function getUserByUsernameOrEmail(identifier) {
-  return db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(identifier, identifier);
+  // Case-insensitive: auto-capitalized emails ("G.lupo@...") were silently
+  // failing lookup, so no OTP was ever sent while the UI claimed it was.
+  return db
+    .prepare('SELECT * FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)')
+    .get(identifier, identifier);
 }
 
 function createUser({ username, email, name, role, created_by }) {
