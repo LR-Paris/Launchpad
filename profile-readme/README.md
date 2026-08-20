@@ -1,6 +1,6 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/header-dark.svg">
-  <img src="assets/header-light.svg" alt="gi-os. Giovanni Lupo. Apps for phones that do less." width="100%">
+  <img src="assets/header-light.svg" alt="gi-os. Giovanni Lupo. Small software, mostly for small screens." width="100%">
 </picture>
 
 ```
@@ -12,40 +12,43 @@ shipping since 2015
 
 ### About
 
-I write small apps for phones that do less. The Light Phone III has a black and
-white screen, no app store, and a home screen that is a list of words. I built
-about twenty apps for it and a store to keep them in.
+I build small software. Some of it sells things, some runs on phones with no app
+store, and some is an operating system that only ever existed in a browser tab. The through line is subtraction. I keep cutting an interface until
+what is left does one job.
 
-The day job is LR Paris. I work on Shuttle and Launchpad, the shop platform
-behind lrparisstore.com, where every client shop runs in its own container.
-Bigger screens, same instinct: cut the interface until only the useful part is
-left.
+Kotlin, JavaScript, and more Docker than I planned on.
 
-Before any of that there was Gi-OS, a desktop in a browser tab I started in
-2015 and rebuilt six more times.
+### Shops
 
-### Bright
+[Shuttle](https://github.com/LR-Paris/Shuttle) is a storefront platform for
+brand shops. [Launchpad](https://github.com/LR-Paris/Launchpad) is the dashboard
+that creates them, stocks them, and deploys them: one container per shop, path
+based routing, orders and inventory as CSV, updates pushed from a browser tab.
+Both run at LR Paris, a branded product agency, and both keep real client shops
+online.
 
-The Light Phone ships with a short list of tools. [BrightMarket](https://github.com/gi-os/BrightMarket)
-is where the rest live, and [brightmarket-index](https://github.com/gi-os/brightmarket-index)
-is how they get in.
+### Phones
 
-| App | What it does |
+The Light Phone III has a black and white screen and a home screen that is a
+list of words. I wrote the apps it does not ship with, and the store they live in.
+
+| | |
 | --- | --- |
+| [BrightMarket](https://github.com/gi-os/BrightMarket) | The app store, plus an [index](https://github.com/gi-os/brightmarket-index) to submit to it |
 | [Roll](https://github.com/gi-os/Roll) | Camera with filters |
-| [BrightImport](https://github.com/gi-os/BrightImport) | Gets the photos back off the phone |
-| [BrightControl](https://github.com/gi-os/BrightControl) | Brightness wheel and a camera button |
 | [BrightNotebook](https://github.com/gi-os/BrightNotebook) | Notes, folders, calendar |
 | [BrightMusic](https://github.com/gi-os/BrightMusic) | Spotify client |
-| [BrightLibrary](https://github.com/gi-os/BrightLibrary) | E-reader with manga and Calibre support |
 | [BrightTransit](https://github.com/gi-os/BrightTransit) | NYC subway arrival times |
-| [BrightWay](https://github.com/gi-os/BrightWay) | Walking and subway directions |
-| [BrightSports](https://github.com/gi-os/BrightSports) | Scores and standings |
-| [BrightAuthenticator](https://github.com/gi-os/BrightAuthenticator) | Two-factor codes |
-| [brightthumb](https://github.com/gi-os/brightthumb) | Thumb-Key keyboard, ported |
-| [BrightCommon](https://github.com/gi-os/BrightCommon) | The library every app above imports |
+| [BrightLibrary](https://github.com/gi-os/BrightLibrary) | E-reader with manga and Calibre support |
 
-The rest of the shelf:
+Fifteen more sit behind those:
+[Control](https://github.com/gi-os/BrightControl) ·
+[Import](https://github.com/gi-os/BrightImport) ·
+[Way](https://github.com/gi-os/BrightWay) ·
+[Sports](https://github.com/gi-os/BrightSports) ·
+[Authenticator](https://github.com/gi-os/BrightAuthenticator) ·
+[thumb](https://github.com/gi-os/brightthumb) ·
+[Common](https://github.com/gi-os/BrightCommon) ·
 [Solitaire](https://github.com/gi-os/BrightSolitaire) ·
 [Sudoku](https://github.com/gi-os/BrightSudoku) ·
 [Nonogram](https://github.com/gi-os/BrightNonogram) ·
@@ -53,26 +56,25 @@ The rest of the shelf:
 [Recorder](https://github.com/gi-os/BrightRecorder) ·
 [Noise](https://github.com/gi-os/BrightNoise) ·
 [Passes](https://github.com/gi-os/BrightPasses) ·
-[Sync](https://github.com/gi-os/BrightSync) ·
-[Tip](https://github.com/gi-os/BrightTip) ·
-[Remote](https://github.com/gi-os/BrightRemote) ·
-[Chat](https://github.com/gi-os/BrightChat)
+[Sync](https://github.com/gi-os/BrightSync)
 
-### Pickle
+Kyocera still sells flip phones, so those get a
+[launcher](https://github.com/gi-os/PickleLauncher) and a
+[solitaire](https://github.com/gi-os/PickleSolitaire) too.
 
-Kyocera still sells flip phones. Someone has to write a launcher for them.
-
-[PickleLauncher](https://github.com/gi-os/PickleLauncher) ·
-[PickleSolitaire](https://github.com/gi-os/PickleSolitaire)
-
-### The archive
+### Systems
 
 ```
-Gi-OS 5, 6, 7    a desktop in a browser tab, 2015 onward
+Gi-OS            a desktop in a browser tab. started 2015, now on version 7
 PassportOS       C, for the Passport device
-June4 / June7    a virtual secretary, built before the assistants arrived
-TeslaHUD         a heads-up display for a car that already has one
+June4 / June7    a virtual secretary, written before the assistants arrived
+```
+
+### Odds and ends
+
+```
 zip              PWA clone of the LinkedIn Zip puzzle
+TeslaHUD         a heads-up display for a car that already has one
 basilnethome     the front door to my home server
 ```
 
@@ -81,7 +83,7 @@ basilnethome     the front door to my home server
 ```
 kotlin           light phone III, kyocera flips
 node + react     shuttle, launchpad
-docker           one container per shop, one droplet, no kubernetes
+docker + nginx   one container per shop, one droplet, no kubernetes
 bash             more of it than I plan on
 ```
 

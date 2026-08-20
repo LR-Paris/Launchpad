@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os — Giovanni Lupo, apps for phones that do less">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os. Giovanni Lupo. Small software, mostly for small screens.">
   <defs>
     <pattern id="dither" width="4" height="4" patternUnits="userSpaceOnUse">
       <rect width="4" height="4" fill="none"/>
@@ -24,19 +24,19 @@
   <rect x="184" y="55" width="11" height="5" fill="#8B8A85"/>
   <rect x="203" y="55.5" width="2" height="4" rx="1" fill="#8B8A85"/>
   <line x1="88" y1="70" x2="208" y2="70" stroke="#2E2E2B" stroke-width="1"/>
-  <text class="m" x="92" y="92" font-size="11" fill="#F2F1EC">› roll</text>
-  <text class="m" x="92" y="114" font-size="11" fill="#8B8A85">  market</text>
-  <text class="m" x="92" y="136" font-size="11" fill="#8B8A85">  notebook</text>
-  <text class="m" x="92" y="158" font-size="11" fill="#8B8A85">  transit</text>
-  <text class="m" x="92" y="180" font-size="11" fill="#8B8A85">  library</text>
-  <text class="m" x="92" y="202" font-size="11" fill="#8B8A85">  sudoku</text>
+  <text class="m" x="92" y="92" font-size="11" fill="#F2F1EC">› about</text>
+  <text class="m" x="92" y="114" font-size="11" fill="#8B8A85">  shops</text>
+  <text class="m" x="92" y="136" font-size="11" fill="#8B8A85">  phones</text>
+  <text class="m" x="92" y="158" font-size="11" fill="#8B8A85">  systems</text>
+  <text class="m" x="92" y="180" font-size="11" fill="#8B8A85">  stack</text>
+  <text class="m" x="92" y="202" font-size="11" fill="#8B8A85">  elsewhere</text>
   <rect x="88" y="212" width="120" height="18" fill="none" stroke="#2E2E2B" stroke-width="1" stroke-dasharray="2 3"/>
-  <text class="m" x="98" y="224" font-size="9" fill="#8B8A85">+ brightmarket</text>
+  <text class="m" x="98" y="224" font-size="9" fill="#8B8A85">more ›</text>
 
   <!-- wordmark -->
   <text class="m" x="286" y="130" font-size="86" font-weight="700" letter-spacing="-3" fill="#F2F1EC">gi-os</text>
   <text class="m" x="290" y="164" font-size="17" letter-spacing="4" fill="#8B8A85">GIOVANNI LUPO</text>
   <line x1="290" y1="188" x2="936" y2="188" stroke="#2E2E2B" stroke-width="2"/>
-  <text class="m" x="290" y="218" font-size="20" fill="#F2F1EC">apps for phones that do less</text>
-  <text class="m" x="290" y="248" font-size="13" fill="#8B8A85">kotlin  ·  black + white  ·  new york  ·  gzl.dev</text>
+  <text class="m" x="290" y="218" font-size="20" fill="#F2F1EC">small software, mostly for small screens</text>
+  <text class="m" x="290" y="248" font-size="13" fill="#8B8A85">kotlin  ·  javascript  ·  docker  ·  new york  ·  gzl.dev</text>
 </svg>

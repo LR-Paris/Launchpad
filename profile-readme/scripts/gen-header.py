@@ -5,9 +5,9 @@ THEMES = {
                   case="#1C1C1A", line="#2E2E2B", dot="#F2F1EC"),
 }
 
-MENU = ["roll", "market", "notebook", "transit", "library", "sudoku"]
+MENU = ["about", "shops", "phones", "systems", "stack", "elsewhere"]
 
-TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os — Giovanni Lupo, apps for phones that do less">
+TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os. Giovanni Lupo. Small software, mostly for small screens.">
   <defs>
     <pattern id="dither" width="4" height="4" patternUnits="userSpaceOnUse">
       <rect width="4" height="4" fill="none"/>
@@ -38,8 +38,8 @@ TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1
   <text class="m" x="286" y="130" font-size="86" font-weight="700" letter-spacing="-3" fill="{ink}">gi-os</text>
   <text class="m" x="290" y="164" font-size="17" letter-spacing="4" fill="{muted}">GIOVANNI LUPO</text>
   <line x1="290" y1="188" x2="936" y2="188" stroke="{line}" stroke-width="2"/>
-  <text class="m" x="290" y="218" font-size="20" fill="{ink}">apps for phones that do less</text>
-  <text class="m" x="290" y="248" font-size="13" fill="{muted}">kotlin  ·  black + white  ·  new york  ·  gzl.dev</text>
+  <text class="m" x="290" y="218" font-size="20" fill="{ink}">small software, mostly for small screens</text>
+  <text class="m" x="290" y="248" font-size="13" fill="{muted}">kotlin  ·  javascript  ·  docker  ·  new york  ·  gzl.dev</text>
 </svg>
 """
 
@@ -54,6 +54,6 @@ for theme, c in THEMES.items():
     rows += ('  <rect x="88" y="{y}" width="120" height="18" fill="none" stroke="{line}" '
              'stroke-width="1" stroke-dasharray="2 3"/>\n').format(y=92 + len(MENU) * 22 - 12, line=c["line"])
     rows += ('  <text class="m" x="98" y="{y}" font-size="9" fill="{muted}">'
-             '+ brightmarket</text>\n').format(y=92 + len(MENU) * 22, muted=c["muted"])
+             'more ›</text>\n').format(y=92 + len(MENU) * 22, muted=c["muted"])
     open("assets/header-%s.svg" % theme, "w").write(TPL.format(menu=rows, **c))
     print("wrote", theme)
