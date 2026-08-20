@@ -7,7 +7,7 @@ THEMES = {
 
 MENU = ["about", "shops", "phones", "systems", "stack", "elsewhere"]
 
-TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os. Giovanni Lupo. Small software, mostly for small screens.">
+TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1000" height="300" role="img" aria-label="gi-os. Giovanni Lupo. Shops, phones, and one browser desktop.">
   <defs>
     <pattern id="dither" width="4" height="4" patternUnits="userSpaceOnUse">
       <rect width="4" height="4" fill="none"/>
@@ -38,7 +38,7 @@ TPL = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" width="1
   <text class="m" x="286" y="130" font-size="86" font-weight="700" letter-spacing="-3" fill="{ink}">gi-os</text>
   <text class="m" x="290" y="164" font-size="17" letter-spacing="4" fill="{muted}">GIOVANNI LUPO</text>
   <line x1="290" y1="188" x2="936" y2="188" stroke="{line}" stroke-width="2"/>
-  <text class="m" x="290" y="218" font-size="20" fill="{ink}">small software, mostly for small screens</text>
+  <text class="m" x="290" y="218" font-size="20" fill="{ink}">shops, phones, and one browser desktop</text>
   <text class="m" x="290" y="248" font-size="13" fill="{muted}">kotlin  ·  javascript  ·  docker  ·  new york  ·  gzl.dev</text>
 </svg>
 """
