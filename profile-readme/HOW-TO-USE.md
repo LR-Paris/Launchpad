@@ -23,17 +23,19 @@ git add . && git commit -m "Profile README" && git push
 ## The header art
 
 `scripts/art-source.txt` holds the portrait from gzl.dev, 120 columns wide.
-`scripts/make-header.py` resamples it to any width. It also corrects for the
-shape of a monospace cell, which is taller than it is wide.
+`scripts/make-header.py` puts the portrait on the left and the text block on the
+right, in one code fence. It resamples the art to the width you ask for. It also
+corrects for the shape of a monospace cell, which is taller than it is wide.
 
 ```bash
 cd profile-readme
-python3 scripts/make-header.py 100    # the width used in README.md
-python3 scripts/make-header.py 80     # smaller, for a shorter page
+python3 scripts/make-header.py        # 64 columns, the width used in README.md
+python3 scripts/make-header.py 80     # wider portrait, taller page
 ```
 
-Paste the output at the top of `README.md`, inside the first code fence, above
-the two caption lines.
+The whole header is 104 characters across, which fits the README column on a
+desktop browser. Edit the `TEXT` block at the top of the script to change the
+right column. Paste the output into the first code fence of `README.md`.
 
 ## Repository descriptions
 
