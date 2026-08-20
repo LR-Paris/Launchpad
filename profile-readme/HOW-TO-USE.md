@@ -3,8 +3,8 @@
 GitHub shows a profile README from a public repository named after the account.
 For this account, that repository is `gi-os/gi-os`.
 
-The README is one file. The header is ASCII art inside a code block, so there
-are no images to upload and nothing to break.
+The README is one file. The header is ASCII art inside a code block. No images
+to upload, nothing to break.
 
 ## Steps
 
@@ -23,8 +23,8 @@ git add . && git commit -m "Profile README" && git push
 ## The header art
 
 `scripts/art-source.txt` holds the portrait from gzl.dev, 120 columns wide.
-`scripts/make-header.py` resamples it to any width and corrects for the shape of
-a monospace character cell, which is taller than it is wide.
+`scripts/make-header.py` resamples it to any width. It also corrects for the
+shape of a monospace cell, which is taller than it is wide.
 
 ```bash
 cd profile-readme
