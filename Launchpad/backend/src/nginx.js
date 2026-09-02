@@ -47,12 +47,22 @@ function removeShopConfig(slug) {
   fs.writeFileSync(SHOPS_LOCATIONS_FILE, updated);
 }
 
+// The backend runs inside a container with no nginx binary and no systemd.
+// Reloads are done by writing the trigger file at the repo root: the
+// nginx-reload.path systemd unit on the host watches it and runs
+// `nginx -t && systemctl reload nginx`.
+// Inside the container the host repo root is mounted at /host/project;
+// when running directly on the host it is two levels up from backend/src.
+const RELOAD_TRIGGER = fs.existsSync('/host/project')
+  ? '/host/project/.nginx-reload-trigger'
+  : path.join(__dirname, '..', '..', '.nginx-reload-trigger');
+
 function reloadNginx() {
   try {
-    execSync('nginx -t && systemctl reload nginx', { stdio: 'pipe' });
+    fs.writeFileSync(RELOAD_TRIGGER, String(Date.now()));
     return true;
   } catch (err) {
-    console.error('Failed to reload nginx:', err.message);
+    console.error('Failed to write nginx reload trigger:', err.message);
     return false;
   }
 }
