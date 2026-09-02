@@ -746,7 +746,7 @@ router.post('/', (req, res) => {
 
     // Write .env for shop (includes base path vars for path-based routing)
     const launchpadPort = process.env.PORT || 3001;
-    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\nLAUNCHPAD_API_URL=http://172.17.0.1:${launchpadPort}\nNEXT_PUBLIC_LAUNCHPAD_API=http://172.17.0.1:${launchpadPort}\n`;
+    const envContent = `SHOP_NAME=${name}\nSHOP_SLUG=${slug}\nSHOP_PORT=${port}\nBASE_PATH=/${slug}\nPUBLIC_URL=/${slug}\nNEXT_PUBLIC_BASE_PATH=/${slug}\nLAUNCHPAD_API_URL=http://172.17.0.1:${launchpadPort}\nNEXT_PUBLIC_LAUNCHPAD_API=\n`;
     fs.writeFileSync(path.join(shopDir, '.env'), envContent);
     log.push('Wrote shop .env file.');
 
