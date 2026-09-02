@@ -87,7 +87,13 @@ function getLogoUrl(slug) {
  * contradicts the storefront and exposes rate card pricing over e-mail.
  */
 function shopHidesPrices(slug) {
-  const content = readShopFile(slug, 'Presets/Display.txt');
+  // Not readShopFile: that helper is hardcoded to DATABASE/Design/Details, and
+  // the display preset lives in DATABASE/Presets.
+  let content = '';
+  try {
+    content = fs.readFileSync(
+      path.join(SHOPS_DIR, slug, 'DATABASE', 'Presets', 'Display.txt'), 'utf8');
+  } catch { return false; }
   if (!content) return false;
   for (const line of String(content).split('\n')) {
     const t = line.trim();
@@ -467,6 +473,7 @@ async function sendOrderConfirmation(orderData, shopSlug) {
 // ---------------------------------------------------------------------------
 
 function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fromAddress, adminEmail) {
+  const hidePrices = shopHidesPrices(shopSlug);
   const customerName = getCustomerName(orderData);
   const customerEmail = getCustomerEmail(orderData);
   const orderId = getOrderId(orderData);
@@ -482,11 +489,20 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   const poFile = col(orderData, 'PO File', 'Purchase Order', 'PO', 'po_file');
 
   // Customer contact card
+  // Brand and budget belong at the top of the internal e-mail: they are the two
+  // things the team needs before anything else to route and quote a request.
+  const adminBrand = col(orderData, 'Brand', 'brand');
+  const adminBudget = col(orderData, 'Estimated Budget', 'estimated_budget');
+  const adminInHand = col(orderData, 'In Hand Date', 'in_hand_date');
+
   const contactRows = [];
   contactRows.push(['Customer', customerName]);
   if (customerEmail) contactRows.push(['Email', `<a href="mailto:${esc(customerEmail)}" style="color:${primaryColor};text-decoration:none;">${esc(customerEmail)}</a>`]);
   if (phone) contactRows.push(['Phone', `<a href="tel:${esc(phone)}" style="color:${primaryColor};text-decoration:none;">${esc(phone)}</a>`]);
   if (company) contactRows.push(['Company', company]);
+  if (adminBrand) contactRows.push(['Brand', adminBrand]);
+  if (adminBudget) contactRows.push(['Budget', adminBudget]);
+  if (adminInHand) contactRows.push(['In Hand', adminInHand]);
   if (orderDate) contactRows.push(['Date', formatDate(orderDate)]);
 
   const contactCard = `
