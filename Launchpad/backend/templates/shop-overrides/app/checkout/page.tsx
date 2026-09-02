@@ -83,6 +83,9 @@ export default function CheckoutPage() {
     }
   };
 
+  const freightEnabled = (schema?.sections || [])
+    .some(sec => sec.type === 'freight' && sec.enabled);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -107,7 +110,11 @@ export default function CheckoutPage() {
         company: values.company || '',
         country: values.country || '',
         shippingAddress,
-        freightOption,
+        // Only report a carrier when the shop actually offered the choice. The
+        // selector defaults to 'lr-paris' in state, so a shop with the freight
+        // section switched off was still submitting it, and the confirmation
+        // e-mail read it back to the client as their Shipping Method.
+        freightOption: freightEnabled ? freightOption : '',
         freightCompany: freightOption === 'own' ? values.freightCompany || '' : '',
         freightAccount: freightOption === 'own' ? values.freightAccount || '' : '',
         freightContact: freightOption === 'own' ? values.freightContact || '' : '',
