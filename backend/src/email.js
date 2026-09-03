@@ -79,6 +79,31 @@ function getLogoUrl(slug) {
   return `${getBaseUrl()}/api/shops/${slug}/orders/logo`;
 }
 
+/**
+ * Does this shop hide prices? Mirrors Shuttle's Presets/Display.txt.
+ *
+ * A price-hidden shop is an approvals portal: the requestor never sees a figure
+ * on the site, so putting unit prices and a total in the confirmation e-mail
+ * contradicts the storefront and exposes rate card pricing over e-mail.
+ */
+function shopHidesPrices(slug) {
+  // Not readShopFile: that helper is hardcoded to DATABASE/Design/Details, and
+  // the display preset lives in DATABASE/Presets.
+  let content = '';
+  try {
+    content = fs.readFileSync(
+      path.join(SHOPS_DIR, slug, 'DATABASE', 'Presets', 'Display.txt'), 'utf8');
+  } catch { return false; }
+  if (!content) return false;
+  for (const line of String(content).split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const [k, v] = t.split(':').map(s => (s || '').trim());
+    if (k === 'show_prices') return v === 'false';
+  }
+  return false;
+}
+
 function shopHasLogo(slug) {
   const detailsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details');
   try {
@@ -158,6 +183,7 @@ function formatDate(val) {
 // ---------------------------------------------------------------------------
 
 function buildReceipt(row, primaryColor, slug) {
+  const hidePrices = shopHidesPrices(slug);
   // Robust Items extraction — handles both string JSON and already-parsed arrays
   let items = [];
   const itemKeys = ['Items', 'items', 'Products', 'products'];
@@ -209,12 +235,13 @@ function buildReceipt(row, primaryColor, slug) {
           <span style="font-size:13px;color:#333;">${qty}</span>
           ${units}
         </td>
+        ${hidePrices ? '' : `
         <td style="padding:12px 8px;border-bottom:1px solid #f0f0f0;text-align:right;vertical-align:top;">
           <span style="font-size:13px;color:#555;">${unitPrice ? '$' + unitPrice.toFixed(2) : ''}</span>
         </td>
         <td style="padding:12px 12px 12px 8px;border-bottom:1px solid #f0f0f0;text-align:right;vertical-align:top;">
           <span style="font-size:13px;font-weight:600;color:#111;">${lineTotal ? '$' + lineTotal.toFixed(2) : ''}</span>
-        </td>
+        </td>`}
       </tr>`;
     }).join('');
 
@@ -225,14 +252,21 @@ function buildReceipt(row, primaryColor, slug) {
         <tr style="background:#fafafa;">
           <th style="padding:10px 12px;text-align:left;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;" colspan="2">Item</th>
           <th style="padding:10px 8px;text-align:center;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Qty</th>
+          ${hidePrices ? '' : `
           <th style="padding:10px 8px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Unit Price</th>
-          <th style="padding:10px 12px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Line Total</th>
+          <th style="padding:10px 12px;text-align:right;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Line Total</th>`}
         </tr>
         ${rows}
-        ${displayTotal ? `
+        ${(!hidePrices && displayTotal) ? `
         <tr style="background:#fafafa;">
           <td colspan="4" style="padding:14px 12px;text-align:right;font-weight:700;font-size:14px;color:#333;">Total Cost</td>
           <td style="padding:14px 12px;text-align:right;font-weight:700;font-size:18px;color:${primaryColor};">${esc(displayTotal)}</td>
+        </tr>
+        ` : ''}
+        ${hidePrices ? `
+        <tr style="background:#fafafa;">
+          <td colspan="2" style="padding:14px 12px;font-weight:700;font-size:13px;color:#333;">${items.length} item${items.length === 1 ? '' : 's'}</td>
+          <td style="padding:14px 8px;text-align:center;font-weight:700;font-size:13px;color:${primaryColor};">${items.reduce((s, i) => s + (i.quantity || 1), 0)}</td>
         </tr>
         ` : ''}
       </table>
@@ -245,7 +279,7 @@ function buildReceipt(row, primaryColor, slug) {
   if (itemName || total) {
     let html = '<div style="margin:16px 0;padding:16px;background:#fafafa;border-radius:8px;border:1px solid #eee;">';
     if (itemName) html += `<p style="margin:0 0 4px;font-size:13px;"><strong>Item:</strong> ${esc(itemName)}${qty ? ' &times; ' + esc(qty) : ''}</p>`;
-    if (total) html += `<p style="margin:4px 0 0;font-size:16px;font-weight:700;color:${primaryColor};">Total Cost: ${esc(formatMoney(total))}</p>`;
+    if (total && !hidePrices) html += `<p style="margin:4px 0 0;font-size:16px;font-weight:700;color:${primaryColor};">Total Cost: ${esc(formatMoney(total))}</p>`;
     html += '</div>';
     return html;
   }
@@ -260,18 +294,31 @@ function buildInfoBlock(row) {
   const fields = [];
   const company = col(row, 'Company', 'company', 'Company Name');
   const address = col(row, 'Shipping Address', 'Address', 'shipping_address');
+  const billing = col(row, 'Billing Address', 'billing_address');
   const phone = col(row, 'Phone', 'phone', 'Telephone', 'Mobile');
   const freight = col(row, 'Freight Option', 'freight_option', 'Shipping Method');
   const freightCo = col(row, 'Freight Company', 'freight_company');
   const notes = col(row, 'Order Notes', 'Notes', 'notes', 'Comments', 'Special Instructions');
   const hotel = col(row, 'Hotel', 'hotel', 'Hotel Name', 'Hotel Selection', 'Accommodation');
+  const inHand = col(row, 'In Hand Date', 'in_hand_date');
+  const artLink = col(row, 'Art Link', 'art_link');
+  const po = col(row, 'PO Number', 'po_number');
+
+  // A shop with the freight selector switched off never asked the requestor to
+  // choose a carrier, but the order row still carried a default. Showing it as
+  // "Shipping Method" told ELC they had picked something they never saw.
+  const freightWasChosen = freight && !/^(lr paris|none|n\/a)$/i.test(String(freight).trim());
 
   if (company) fields.push(['Company', company]);
   if (address) fields.push(['Ship To', address]);
-  if (freight) fields.push(['Shipping Method', freight]);
-  if (freightCo) fields.push(['Carrier', freightCo]);
+  if (billing && billing !== address) fields.push(['Bill To', billing]);
+  if (inHand) fields.push(['In Hand Date', inHand]);
+  if (po) fields.push(['PO Number', po]);
+  if (freightWasChosen) fields.push(['Freight', freight]);
+  if (freightWasChosen && freightCo) fields.push(['Carrier', freightCo]);
   if (hotel) fields.push(['Hotel', hotel]);
   if (phone) fields.push(['Phone', phone]);
+  if (artLink) fields.push(['Custom Artwork', artLink]);
   if (notes) fields.push(['Notes', notes]);
 
   if (!fields.length) return '';
@@ -285,7 +332,7 @@ function buildInfoBlock(row) {
 
   return `
     <div style="margin:20px 0;padding:16px;background:#fafafa;border-radius:8px;border:1px solid #eee;">
-      <p style="margin:0 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Shipping Details</p>
+      <p style="margin:0 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Details</p>
       <table style="width:100%;">${rows}</table>
     </div>
   `;
@@ -333,6 +380,9 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   const orderDate = getOrderDate(orderData);
   const total = getTotal(orderData);
   const email = getCustomerEmail(orderData);
+  const hidePrices = shopHidesPrices(shopSlug);
+  const brand = col(orderData, 'Brand', 'brand');
+  const budget = col(orderData, 'Estimated Budget', 'estimated_budget');
 
   // Generate cancel token
   const { generateCancelToken } = require('./orders-webhook');
@@ -361,7 +411,15 @@ async function sendOrderConfirmation(orderData, shopSlug) {
           <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Email</span></td>
           <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(email)}</span></td>
         </tr>` : ''}
-        ${prettyTotal ? `<tr>
+        ${brand ? `<tr>
+          <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Brand</span></td>
+          <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(brand)}</span></td>
+        </tr>` : ''}
+        ${budget ? `<tr>
+          <td style="padding:4px 0;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Estimated Budget</span></td>
+          <td style="padding:4px 0;text-align:right;"><span style="font-size:13px;color:#333;">${esc(budget)}</span></td>
+        </tr>` : ''}
+        ${(prettyTotal && !hidePrices) ? `<tr>
           <td style="padding:8px 0 0;border-top:1px solid #eee;"><span style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Total Cost</span></td>
           <td style="padding:8px 0 0;text-align:right;border-top:1px solid #eee;"><span style="font-size:18px;font-weight:700;color:${primaryColor};">${esc(prettyTotal)}</span></td>
         </tr>` : ''}
@@ -370,8 +428,10 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   `;
 
   const body = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">Order Confirmation${orderId ? ' — ' + esc(orderId) : ''}</h2>
-    <p style="color:#666;font-size:14px;line-height:1.5;">Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.</p>
+    <h2 style="margin-top:0;font-size:20px;color:#111;">${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + esc(orderId) : ''}</h2>
+    <p style="color:#666;font-size:14px;line-height:1.5;">${hidePrices
+      ? `Hi ${esc(customerName)}, thank you for your request${companyName ? ' to <strong>' + esc(companyName) + '</strong>' : ''}. We have it and are reviewing it now. This is not an order confirmation &mdash; nothing is produced or shipped until we confirm specifications, pricing and lead time in writing.`
+      : `Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.`}</p>
     ${orderHeader}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
     ${buildReceipt(orderData, primaryColor, shopSlug)}
@@ -389,11 +449,13 @@ async function sendOrderConfirmation(orderData, shopSlug) {
       </tr></table>
     </div>
     ` : ''}
-    <p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">You'll receive a shipping notification with tracking details when your order is on its way.</p>
+    <p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">${hidePrices
+      ? 'A member of the team will follow up with pricing and lead time.'
+      : "You'll receive a shipping notification with tracking details when your order is on its way."}</p>
   `;
 
   const html = emailShell({ companyName, primaryColor, body, slug: shopSlug });
-  const subject = `Order Confirmation${orderId ? ' — ' + orderId : ''} | ${companyName}`;
+  const subject = `${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
     sendMail({ to: customerEmail, from: fromAddress, subject, html }).catch(() => {});
@@ -411,6 +473,7 @@ async function sendOrderConfirmation(orderData, shopSlug) {
 // ---------------------------------------------------------------------------
 
 function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fromAddress, adminEmail) {
+  const hidePrices = shopHidesPrices(shopSlug);
   const customerName = getCustomerName(orderData);
   const customerEmail = getCustomerEmail(orderData);
   const orderId = getOrderId(orderData);
@@ -426,11 +489,20 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   const poFile = col(orderData, 'PO File', 'Purchase Order', 'PO', 'po_file');
 
   // Customer contact card
+  // Brand and budget belong at the top of the internal e-mail: they are the two
+  // things the team needs before anything else to route and quote a request.
+  const adminBrand = col(orderData, 'Brand', 'brand');
+  const adminBudget = col(orderData, 'Estimated Budget', 'estimated_budget');
+  const adminInHand = col(orderData, 'In Hand Date', 'in_hand_date');
+
   const contactRows = [];
   contactRows.push(['Customer', customerName]);
   if (customerEmail) contactRows.push(['Email', `<a href="mailto:${esc(customerEmail)}" style="color:${primaryColor};text-decoration:none;">${esc(customerEmail)}</a>`]);
   if (phone) contactRows.push(['Phone', `<a href="tel:${esc(phone)}" style="color:${primaryColor};text-decoration:none;">${esc(phone)}</a>`]);
   if (company) contactRows.push(['Company', company]);
+  if (adminBrand) contactRows.push(['Brand', adminBrand]);
+  if (adminBudget) contactRows.push(['Budget', adminBudget]);
+  if (adminInHand) contactRows.push(['In Hand', adminInHand]);
   if (orderDate) contactRows.push(['Date', formatDate(orderDate)]);
 
   const contactCard = `
@@ -505,15 +577,14 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
     .filter(Boolean)
     .join('');
 
-  const allFieldsCard = allFieldRows ? `
-    <details style="margin:16px 0;">
-      <summary style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;cursor:pointer;padding:8px 0;">All Order Fields</summary>
-      <table style="width:100%;margin-top:8px;">${allFieldRows}</table>
-    </details>
-  ` : '';
+  // The "All Order Fields" dump repeated everything already laid out above it,
+  // so it is gone. allFieldRows is retained only so the block above keeps
+  // compiling if someone reintroduces a debug view.
+  void allFieldRows;
+  const allFieldsCard = '';
 
   const adminBody = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">New Order${orderId ? ' — ' + esc(orderId) : ''}${total ? ' <span style="color:' + primaryColor + ';">' + esc(formatMoney(total)) + '</span>' : ''}</h2>
+    <h2 style="margin-top:0;font-size:20px;color:#111;">${hidePrices ? 'New Request' : 'New Order'}${orderId ? ' — ' + esc(orderId) : ''}${(total && !hidePrices) ? ' <span style="color:' + primaryColor + ';">' + esc(formatMoney(total)) + '</span>' : ''}</h2>
     ${contactCard}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
     ${buildReceipt(orderData, primaryColor, shopSlug)}
@@ -524,7 +595,7 @@ function sendAdminOrderEmail(orderData, shopSlug, companyName, primaryColor, fro
   `;
 
   const adminHtml = emailShell({ companyName, primaryColor, body: adminBody, slug: shopSlug });
-  const adminSubject = `[New Order] ${orderId || 'Order'} from ${customerName}${total ? ' — ' + formatMoney(total) : ''} | ${companyName}`;
+  const adminSubject = `[${hidePrices ? 'New Request' : 'New Order'}] ${orderId || 'Order'} from ${customerName}${(total && !hidePrices) ? ' — ' + formatMoney(total) : ''} | ${companyName}`;
   sendMail({ to: adminEmail, from: fromAddress, subject: adminSubject, html: adminHtml }).catch(() => {});
 }
 
@@ -580,6 +651,7 @@ async function sendShippedNotification(orderData, trackingNumber, shopSlug) {
 // ---------------------------------------------------------------------------
 
 async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
+  const hidePricesCancel = shopHidesPrices(shopSlug);
   const { cancelledBy = 'customer', reason = '' } = opts;
   const { companyName, primaryColor } = getShopBranding(shopSlug);
   const fromAddress = getFromAddress(companyName);
@@ -599,7 +671,7 @@ async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
     <div style="margin:20px 0;padding:16px 20px;background:#fef2f2;border-radius:8px;border:1px solid #fecaca;">
       <table style="width:100%;">
         ${orderId ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;width:100px;text-transform:uppercase;">Order</td><td style="padding:4px 0;font-size:14px;font-weight:700;color:#991b1b;">${esc(orderId)}</td></tr>` : ''}
-        ${prettyTotal ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Total Cost</td><td style="padding:4px 0;font-size:14px;color:#333;">${esc(prettyTotal)}</td></tr>` : ''}
+        ${(prettyTotal && !hidePricesCancel) ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Total Cost</td><td style="padding:4px 0;font-size:14px;color:#333;">${esc(prettyTotal)}</td></tr>` : ''}
         <tr><td style="padding:4px 0;color:#999;font-size:11px;text-transform:uppercase;">Status</td><td style="padding:4px 0;font-size:12px;font-weight:600;color:#dc2626;">Cancelled</td></tr>
         ${reasonHtml}
       </table>
@@ -627,7 +699,7 @@ async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
         <table style="width:100%;">
           <tr><td style="padding:4px 0;color:#999;font-size:11px;width:80px;text-transform:uppercase;">Customer</td><td style="padding:4px 0;font-size:14px;font-weight:700;color:#111;">${esc(customerName)}</td></tr>
           ${customerEmail ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Email</td><td style="padding:4px 0;font-size:13px;">${esc(customerEmail)}</td></tr>` : ''}
-          ${prettyTotal ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Total Cost</td><td style="padding:4px 0;font-size:14px;font-weight:600;">${esc(prettyTotal)}</td></tr>` : ''}
+          ${(prettyTotal && !hidePricesCancel) ? `<tr><td style="padding:4px 0;color:#999;font-size:11px;">Total Cost</td><td style="padding:4px 0;font-size:14px;font-weight:600;">${esc(prettyTotal)}</td></tr>` : ''}
           <tr><td style="padding:4px 0;color:#999;font-size:11px;">Action</td><td style="padding:4px 0;font-size:13px;font-weight:600;color:#dc2626;">${esc(actionText)}</td></tr>
         </table>
       </div>

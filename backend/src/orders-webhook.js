@@ -105,7 +105,7 @@ function removeOrderFromCsv(csvPath, orderId) {
 // ---------------------------------------------------------------------------
 router.post('/:slug/orders/notify', (req, res) => {
   const { slug } = req.params;
-  const { orderData } = req.body;
+  const { orderData, event } = req.body;
 
   if (!orderData || typeof orderData !== 'object' || Array.isArray(orderData)) {
     return res.status(400).json({ error: 'orderData must be a non-array object' });
@@ -126,7 +126,21 @@ router.post('/:slug/orders/notify', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
-  // Fire-and-forget email
+  // Fire-and-forget email.
+  //
+  // A storefront can cancel an order through its own API, which used to leave
+  // Launchpad unaware — so no cancellation email was ever sent for a
+  // cancellation started on the site. Only the emailed cancel link, which comes
+  // through the token route below, produced one. `event: 'cancelled'` closes
+  // that gap without opening another endpoint.
+  if (event === 'cancelled') {
+    const { sendCancellationEmail } = require('./email');
+    sendCancellationEmail(orderData, slug, { cancelledBy: 'customer', reason: '' }).catch(err => {
+      console.error(`[notify] Cancellation email failed for ${slug}: ${err.message}`);
+    });
+    return res.json({ message: 'Cancellation notification queued' });
+  }
+
   const { sendOrderConfirmation } = require('./email');
   sendOrderConfirmation(orderData, slug).catch(err => {
     console.error(`[notify] Email failed for ${slug}: ${err.message}`);
