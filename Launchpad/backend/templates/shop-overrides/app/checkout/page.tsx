@@ -86,8 +86,18 @@ export default function CheckoutPage() {
   const freightEnabled = (schema?.sections || [])
     .some(sec => sec.type === 'freight' && sec.enabled);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // Two steps on purpose. Legal requires the requestor to acknowledge that a
+  // submission is an approval request rather than an order, so the form's
+  // submit opens the statement and only the acknowledgement sends it.
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setConfirmOpen(true);
+  };
+
+  const submitRequest = async () => {
+    setConfirmOpen(false);
     setIsSubmitting(true);
     try {
       const shippingAddress = [
@@ -334,6 +344,60 @@ export default function CheckoutPage() {
         </p>
       )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {confirmOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirmTitle"
+          >
+            <div
+              className="bg-white max-w-lg w-full p-7 shadow-xl"
+              style={{ borderRadius: `${r}px` }}
+            >
+              <h2
+                id="confirmTitle"
+                className="text-xl font-bold mb-3"
+                style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}
+              >
+                Before you submit
+              </h2>
+              <p
+                className="mb-6 leading-relaxed"
+                style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
+              >
+                Cart submissions are requests, not orders. Once your request has
+                been validated you will receive an order confirmation for you to
+                approve.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={submitRequest}
+                  className="flex-1 py-3 text-white font-semibold hover:opacity-90 transition-opacity"
+                  style={{ backgroundColor: design.colors.secondary, borderRadius: `${r}px` }}
+                >
+                  OK
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmOpen(false)}
+                  className="flex-1 py-3 font-semibold border hover:opacity-90 transition-opacity"
+                  style={{
+                    borderColor: design.colors.border,
+                    color: design.colors.text,
+                    backgroundColor: 'transparent',
+                    borderRadius: `${r}px`,
+                  }}
+                >
+                  Go back
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="lg:col-span-2">
           <form onSubmit={handleSubmit} className="space-y-6">
             {schema.sections.map(renderSection)}
