@@ -1,6 +1,7 @@
 'use client';
 
 import { apiFetch } from '@/lib/api';
+import { useShopPresets } from '@/lib/useShopPresets';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getCart, clearCart, type Cart } from '@/lib/cart';
@@ -51,6 +52,7 @@ export default function CheckoutPage() {
   const [design, setDesign] = useState<DesignData | null>(null);
   const [schema, setSchema] = useState<CheckoutSchema | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { showPrices, isRequest } = useShopPresets();
 
   // All form values keyed by field id
   const [values, setValues] = useState<Record<string, string>>({});
@@ -81,8 +83,21 @@ export default function CheckoutPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const freightEnabled = (schema?.sections || [])
+    .some(sec => sec.type === 'freight' && sec.enabled);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // Two steps on purpose. Legal requires the requestor to acknowledge that a
+  // submission is an approval request rather than an order, so the form's
+  // submit opens the statement and only the acknowledgement sends it.
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setConfirmOpen(true);
+  };
+
+  const submitRequest = async () => {
+    setConfirmOpen(false);
     setIsSubmitting(true);
     try {
       const shippingAddress = [
@@ -105,7 +120,11 @@ export default function CheckoutPage() {
         company: values.company || '',
         country: values.country || '',
         shippingAddress,
-        freightOption,
+        // Only report a carrier when the shop actually offered the choice. The
+        // selector defaults to 'lr-paris' in state, so a shop with the freight
+        // section switched off was still submitting it, and the confirmation
+        // e-mail read it back to the client as their Shipping Method.
+        freightOption: freightEnabled ? freightOption : '',
         freightCompany: freightOption === 'own' ? values.freightCompany || '' : '',
         freightAccount: freightOption === 'own' ? values.freightAccount || '' : '',
         freightContact: freightOption === 'own' ? values.freightContact || '' : '',
@@ -123,11 +142,26 @@ export default function CheckoutPage() {
       if (!response.ok) throw new Error('Failed to submit order');
       const result = await response.json();
 
+      // The confirmation PDF prints addresses, brand, timing, budget and PO,
+      // so they have to survive the hop to the success page.
       sessionStorage.setItem('lastOrder', JSON.stringify({
         orderId: result.orderId,
         date: new Date().toISOString(),
         name: orderData.name,
+        email: orderData.email,
+        phone: orderData.phone,
         company: values.company,
+        brand: customFields.brand || '',
+        inHandDate: customFields.inHandDate || '',
+        estimatedBudget: customFields.estimatedBudget || '',
+        poNumber: customFields.poNumber || '',
+        artLink: customFields.artLink || '',
+        shippingAddress,
+        billingAddress: checkboxes.billingSameAsShipping
+          ? shippingAddress
+          : [values.billingName, values.billingAddress,
+             `${values.billingCity || ''} ${values.billingZip || ''}`.trim(),
+             values.billingCountry].filter(Boolean).join('\n'),
         items: cart.items,
         total: cart.total,
       }));
@@ -229,6 +263,9 @@ export default function CheckoutPage() {
           value={values[field.id] || ''}
           onChange={e => setValue(field.id, e.target.value)}
           placeholder={field.placeholder}
+          // An in-hands date in the past cannot be met, so the picker starts
+          // at today. Browsers enforce min on date inputs natively.
+          min={field.type === 'date' ? new Date().toISOString().slice(0, 10) : undefined}
           className={`${inputClass} disabled:opacity-50`}
           style={inputStyle}
         />
@@ -296,10 +333,71 @@ export default function CheckoutPage() {
 
   return (
     <div className="container mx-auto px-4 py-12">
-      <h1 className="text-4xl font-bold mb-8" style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}>
+      <h1 className="text-4xl font-bold mb-2" style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}>
         Checkout
       </h1>
+      {isRequest && (
+        <p className="mb-8 max-w-2xl" style={{ color: design.colors.textLight, fontFamily: design.fonts.bodyFont }}>
+          Submitting this sends your selection for approval. It is not an order
+          confirmation. Nothing is produced or shipped until we confirm
+          specifications, pricing and lead time in writing.
+        </p>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {confirmOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirmTitle"
+          >
+            <div
+              className="bg-white max-w-lg w-full p-7 shadow-xl"
+              style={{ borderRadius: `${r}px` }}
+            >
+              <h2
+                id="confirmTitle"
+                className="text-xl font-bold mb-3"
+                style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}
+              >
+                Before you submit
+              </h2>
+              <p
+                className="mb-6 leading-relaxed"
+                style={{ color: design.colors.text, fontFamily: design.fonts.bodyFont }}
+              >
+                Cart submissions are requests, not orders. Once your request has
+                been validated you will receive an order confirmation for you to
+                approve.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={submitRequest}
+                  className="flex-1 py-3 text-white font-semibold hover:opacity-90 transition-opacity"
+                  style={{ backgroundColor: design.colors.secondary, borderRadius: `${r}px` }}
+                >
+                  OK
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmOpen(false)}
+                  className="flex-1 py-3 font-semibold border hover:opacity-90 transition-opacity"
+                  style={{
+                    borderColor: design.colors.border,
+                    color: design.colors.text,
+                    backgroundColor: 'transparent',
+                    borderRadius: `${r}px`,
+                  }}
+                >
+                  Go back
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="lg:col-span-2">
           <form onSubmit={handleSubmit} className="space-y-6">
             {schema.sections.map(renderSection)}
@@ -309,7 +407,9 @@ export default function CheckoutPage() {
               className="w-full py-4 text-white text-lg font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
               style={{ backgroundColor: design.colors.secondary, borderRadius: `${r}px`, fontFamily: design.fonts.bodyFont }}
             >
-              {isSubmitting ? 'Submitting Order...' : 'Submit Order'}
+              {isSubmitting
+                ? (isRequest ? 'Submitting Request...' : 'Submitting Order...')
+                : (isRequest ? 'Submit Request' : 'Submit Order')}
             </button>
           </form>
         </div>
@@ -317,25 +417,23 @@ export default function CheckoutPage() {
         {/* Order Summary */}
         <div>
           <div className="border p-6 sticky top-24" style={borderStyle}>
-            <h2 className="text-2xl font-bold mb-6" style={h2Style}>Order Summary</h2>
+            <h2 className="text-2xl font-bold mb-6" style={h2Style}>{isRequest ? 'Request Summary' : 'Order Summary'}</h2>
             <div className="space-y-3 mb-6">
               {cart.items.map(item => (
                 <div key={item.productId} className="pb-3 border-b" style={{ borderColor: design.colors.border }}>
                   <div className="font-semibold mb-1" style={{ color: design.colors.text, fontFamily: design.fonts.titleFont }}>{item.productName}</div>
                   <div className="text-sm flex justify-between" style={{ color: design.colors.textLight, fontFamily: design.fonts.bodyFont }}>
-                    <span>{item.quantity} box{item.quantity > 1 ? 'es' : ''} × ${item.boxCost.toFixed(2)}</span>
-                    <span>${(item.boxCost * item.quantity).toFixed(2)}</span>
+                    <span>{item.quantity} unit{item.quantity > 1 ? 's' : ''}{showPrices ? ` × $${item.boxCost.toFixed(2)}` : ''}</span>
+                    {showPrices && <span>${(item.boxCost * item.quantity).toFixed(2)}</span>}
                   </div>
-                  <div className="text-xs" style={{ color: design.colors.textLight, fontFamily: design.fonts.bodyFont }}>
-                    {item.quantity * item.unitsPerBox} total units
-                  </div>
+
                 </div>
               ))}
             </div>
             <div className="border-t pt-4" style={{ borderColor: design.colors.border }}>
               <div className="flex justify-between items-center">
-                <span className="text-xl font-bold" style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}>Total:</span>
-                <span className="text-3xl font-bold" style={{ color: design.colors.secondary, fontFamily: design.fonts.titleFont }}>${cart.total.toFixed(2)}</span>
+                <span className="text-xl font-bold" style={{ color: design.colors.primary, fontFamily: design.fonts.titleFont }}>{showPrices ? 'Total:' : 'Total units:'}</span>
+                <span className="text-3xl font-bold" style={{ color: design.colors.secondary, fontFamily: design.fonts.titleFont }}>{showPrices ? `$${cart.total.toFixed(2)}` : cart.items.reduce((s, i) => s + i.quantity * i.unitsPerBox, 0)}</span>
               </div>
             </div>
           </div>
