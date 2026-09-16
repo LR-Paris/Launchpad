@@ -250,23 +250,45 @@ async function latestSts() {
 }
 
 // ---------------------------------------------------------------------------
+// The only tool names an agent can call, which is the tool server's whole
+// surface. Anything this file names in a `tool` field has to be in here: a name
+// that is not a tool sends the agent looking for something that does not exist,
+// and it finds out in front of the person it is talking to.
+// route-coverage.test.js reads this list and fails on any other name, so a tool
+// added to the server is added here once and nowhere else.
+// ---------------------------------------------------------------------------
+const MCP_TOOLS = Object.freeze([
+  'whoami', 'list_my_shops', 'create_shop', 'request_access',
+  'get_shop', 'shop_health', 'shop_logs', 'list_audit', 'list_backups',
+  'list_orders', 'get_order', 'get_inventory', 'get_approval_status', 'list_review_feedback',
+  'fulfill_order', 'set_stock', 'restart_shop', 'request_upload',
+  'stage_database', 'apply_database', 'rollback_database', 'resolve_feedback',
+  'request_go_live', 'withdraw_go_live', 'resend_review_link', 'set_stage',
+  'grant_access', 'revoke_access', 'list_access_requests', 'decide_access_request',
+]);
+
+// ---------------------------------------------------------------------------
 // What each role may do. you_cannot is the interesting half: it names the
 // person to ask, so an agent's "I can't do that" is never a dead end.
+//
+// A capability with `tool: null` is real work that no tool does. It keeps its
+// label so an agent can still say what it is, and the label names who does it,
+// because "I can do that" with nothing to call is worse than a refusal.
 // ---------------------------------------------------------------------------
 const CAPABILITIES = [
-  { id: 'read_health', role: 'viewer', label: 'See this shop\'s health', tool: 'get_shop_health' },
-  { id: 'read_catalog', role: 'viewer', label: 'Read the catalog', tool: 'get_catalog' },
-  { id: 'read_orders', role: 'viewer', label: 'Read orders', tool: 'get_orders' },
-  { id: 'edit_catalog', role: 'editor', label: 'Edit catalog items and stock', tool: 'edit_item' },
+  { id: 'read_health', role: 'viewer', label: 'See this shop\'s health', tool: 'shop_health' },
+  { id: 'read_catalog', role: 'viewer', label: 'Read the catalog', tool: 'get_inventory' },
+  { id: 'read_orders', role: 'viewer', label: 'Read orders', tool: 'list_orders' },
+  { id: 'edit_catalog', role: 'editor', label: 'Set how much stock an item has', tool: 'set_stock' },
   { id: 'stage_database', role: 'editor', label: 'Stage a new DATABASE folder', tool: 'stage_database' },
   { id: 'apply_database', role: 'editor', label: 'Apply a staged DATABASE folder', tool: 'apply_database' },
   { id: 'rollback_database', role: 'editor', label: 'Roll back the last DATABASE apply', tool: 'rollback_database' },
-  { id: 'launch_shop', role: 'editor', label: 'Launch or restart the shop', tool: 'launch_shop' },
-  { id: 'request_review', role: 'editor', label: 'Send the shop for go-live review', tool: 'request_review' },
+  { id: 'launch_shop', role: 'editor', label: 'Launch or restart the shop', tool: 'restart_shop' },
+  { id: 'request_review', role: 'editor', label: 'Send the shop for go-live review', tool: 'request_go_live' },
   { id: 'set_stage', role: 'owner', label: 'Change the shop stage', tool: 'set_stage' },
-  { id: 'approve_go_live', role: 'owner', label: 'Approve go-live', tool: 'approve_go_live' },
+  { id: 'approve_go_live', role: 'owner', label: 'Approve go-live, which Gio does in the Launchpad console', tool: null },
   { id: 'grant_access', role: 'owner', label: 'Grant or remove access', tool: 'grant_access' },
-  { id: 'delete_shop', role: 'owner', label: 'Delete the shop', tool: 'delete_shop' },
+  { id: 'delete_shop', role: 'owner', label: 'Delete the shop, which Gio does in the Launchpad console', tool: null },
   { id: 'set_stage_production', role: 'admin', label: 'Move the shop to in_production', tool: 'set_stage' },
 ];
 
@@ -276,7 +298,10 @@ function splitCapabilities(role, isAdminBypass, slug) {
   const cannot = [];
   let owners = null;
   const ownerNames = () => {
-    if (owners === null) owners = shopOwners(slug);
+    if (owners === null) {
+      // An unclaimed or brand new shop still has to answer with a name to ask.
+      try { owners = shopOwners(slug); } catch { owners = []; }
+    }
     return nameList(owners);
   };
 
@@ -352,7 +377,7 @@ function buildSuggestions(checks, container) {
     // A failing check with no `how` is still worth saying out loud, otherwise
     // the agent sees a red check and no next step and invents one.
     if (!(c.how || []).length) {
-      out.push({ why: c.why, do: `Look at ${c.title.toLowerCase()}.`, tool: c.tool || null, role_needed: c.role_needed || null, check: c.id });
+      out.push({ why: c.why, do: `Look at this: ${c.title}.`, tool: c.tool || null, role_needed: c.role_needed || null, check: c.id });
     }
   }
 
@@ -375,8 +400,17 @@ function buildSuggestions(checks, container) {
 // ---------------------------------------------------------------------------
 // Checks
 // ---------------------------------------------------------------------------
+// A title is the line an agent reads out loud first, so it has to be true in
+// the state the check is actually in. Pass { ok, fail } and the failing shop
+// gets the failing sentence, with the number in it, rather than the headline it
+// would have had if everything were fine.
+function pickTitle(title, ok) {
+  if (title && typeof title === 'object') return (ok ? title.ok : title.fail) || title.ok || title.fail;
+  return title;
+}
+
 function check(id, ok, title, why, how, tool, roleNeeded, extra = {}) {
-  return { id, ok, title, why, how: how || [], tool: tool || null, role_needed: roleNeeded || null, ...extra };
+  return { id, ok, title: pickTitle(title, ok), why, how: how || [], tool: tool || null, role_needed: roleNeeded || null, ...extra };
 }
 
 async function buildChecks(shop) {
@@ -386,14 +420,25 @@ async function buildChecks(shop) {
   const scan = scanCollections(slug);
   const orders = countUnfulfilled(slug);
   const sts = readShopSts(slug);
-  const stage = shop.stage || 'no_status';
+  // The derived stage, not the shops.stage column: the column has years of rows
+  // where it was never written, and the payload reports the derived one. A check
+  // reading the other of the two says "this shop has no stage" on a shop the
+  // same payload calls in_production.
+  const stage = effectiveStage(shop);
   const checks = [];
 
   // 1. database_present
   checks.push(check(
     'database_present',
     dirExists && scan.present && scan.itemCount > 0,
-    'DATABASE folder is in place',
+    {
+      ok: 'DATABASE folder is in place',
+      fail: !dirExists
+        ? 'Shop folder is missing on the server'
+        : !scan.present
+          ? 'No DATABASE folder yet'
+          : 'DATABASE folder has no products in it',
+    },
     !dirExists
       ? 'The shop folder does not exist on the server yet.'
       : !scan.present
@@ -413,7 +458,10 @@ async function buildChecks(shop) {
   checks.push(check(
     'unfulfilled_orders',
     orders.unfulfilled === 0,
-    'No orders waiting',
+    {
+      ok: 'No orders waiting',
+      fail: `${orders.unfulfilled} order${orders.unfulfilled === 1 ? '' : 's'} waiting to ship`,
+    },
     orders.unreadable
       ? 'The orders file could not be parsed.'
       : !orders.hasFile
@@ -422,10 +470,10 @@ async function buildChecks(shop) {
           ? `All ${orders.total} order(s) are shipped or cancelled.`
           : `${orders.unfulfilled} of ${orders.total} order(s) are still waiting to ship.`,
     orders.unfulfilled === 0 ? [] : [
-      'Read them with get_orders.',
-      'Mark each one shipped once it leaves, with the tracking number.',
+      'Read them with list_orders.',
+      'Mark each one shipped with fulfill_order once it leaves, with the tracking number.',
     ],
-    'get_orders', 'viewer',
+    'list_orders', 'viewer',
     { unfulfilled: orders.unfulfilled, total: orders.total },
   ));
 
@@ -433,7 +481,7 @@ async function buildChecks(shop) {
   checks.push(check(
     'stage_unset',
     stage !== 'no_status' && STAGES.includes(stage),
-    'Shop stage is set',
+    { ok: 'Shop stage is set', fail: 'Shop has no stage set' },
     stage === 'no_status'
       ? 'This shop has no stage, so nothing knows whether it is a sandbox or a live store.'
       : `Stage is ${stage}.`,
@@ -449,15 +497,20 @@ async function buildChecks(shop) {
   checks.push(check(
     'variants_ok',
     lonely.length === 0,
-    'Product variants look complete',
+    {
+      ok: 'Product variants look complete',
+      fail: `${lonely.length} product${lonely.length === 1 ? ' has' : 's have'} only one variant`,
+    },
     lonely.length === 0
       ? 'Every product with a variant in its folder name has at least one sibling.'
       : `${lonely.length} product(s) have exactly one variant, which usually means the rest were never added.`,
+    // No tool reads folder names, and no tool renames them. Somebody opens the
+    // DATABASE folder and looks, which is why this names the person, not a tool.
     lonely.length === 0 ? [] : [
-      'Check the folder names under DATABASE/ShopCollections.',
-      'Either add the missing variants or drop the parentheses from the folder name.',
+      'Open the DATABASE folder on your computer and read the product folder names under ShopCollections.',
+      'Either add the missing variants or drop the parentheses from the folder name, then send the folder up again with request_upload and stage_database.',
     ],
-    'get_catalog', 'editor',
+    null, 'editor',
     { lonely: lonely.slice(0, 10) },
   ));
 
@@ -465,11 +518,11 @@ async function buildChecks(shop) {
   checks.push(check(
     'legacy',
     !sts.legacy,
-    'Shop is on the Shuttle template',
+    { ok: 'Shop is on the Shuttle template', fail: 'Shop predates the Shuttle template' },
     sts.legacy
       ? 'There is no lib/version.ts, so this shop predates the Shuttle template. Template tools will not work on it.'
       : `Shop reports ${sts.version || 'an unreadable version'}.`,
-    sts.legacy ? ['Rebuild the shop from the current Shuttle template, or leave it alone and edit it by hand.'] : [],
+    sts.legacy ? ['Ask Gio to rebuild this shop from the current Shuttle template, or leave it as it is and edit it by hand.'] : [],
     null, 'owner',
     { shop_version: sts.version },
   ));
@@ -482,13 +535,13 @@ async function buildChecks(shop) {
     latest = null;
   }
   if (sts.legacy) {
-    checks.push(check('sts_current', true, 'Shuttle version is current',
+    checks.push(check('sts_current', true, 'Shuttle version was not checked',
       'Skipped: this shop is not on the Shuttle template.', [], null, 'owner',
       { shop_version: null, latest_version: latest, note: 'not applicable' }));
   } else if (!latest || !sts.version) {
     // GitHub unreachable, or the version file is unreadable. Degrade to ok so a
     // network blip never looks like a broken shop.
-    checks.push(check('sts_current', true, 'Shuttle version is current',
+    checks.push(check('sts_current', true, 'Shuttle version was not checked',
       !latest
         ? `Could not read the newest Shuttle version from GitHub, so this was not checked${stsCache.error ? ` (${stsCache.error})` : ''}.`
         : 'Could not read a VERSION out of this shop\'s lib/version.ts, so this was not checked.',
@@ -496,12 +549,18 @@ async function buildChecks(shop) {
       { shop_version: sts.version, latest_version: latest, note: 'not checked', error: stsCache.error }));
   } else {
     const behind = compareVersions(sts.version, latest) < 0;
-    checks.push(check('sts_current', !behind, 'Shuttle version is current',
+    checks.push(check('sts_current', !behind,
+      {
+        ok: 'Shuttle version is current',
+        fail: `Shop is on ${sts.version}, newest is ${latest}`,
+      },
       behind
         ? `This shop is on ${sts.version} and the newest Shuttle is ${latest}.`
         : `This shop is on ${sts.version}, which is current.`,
-      behind ? ['Run update_template, then relaunch and check the storefront.'] : [],
-      'update_template', 'owner',
+      // Moving a shop to a newer Shuttle rebuilds it from the template, which is
+      // Gio's job on the server. No tool does it, and none should pretend to.
+      behind ? [`Ask Gio to move this shop to ${latest}, then check the storefront once it has rebuilt.`] : [],
+      null, 'owner',
       { shop_version: sts.version, latest_version: latest }));
   }
 
@@ -513,20 +572,33 @@ async function buildChecks(shop) {
 // "not available" instead of breaking the one call an agent always makes.
 // golive.preflight(slug) returns { slug, ok, checked_at, checks[], failures[] }.
 function readyForReview(slug) {
+  // checks and failures are arrays in every branch, including the two where
+  // there was no preflight to run. A caller walks them without asking whether
+  // the preflight was there, which on an empty shop it may not be.
+  const unavailable = {
+    available: false, ok: null, checks: [], failures: [],
+    note: 'The go-live preflight is not installed on this server yet.',
+  };
   let golive;
   try {
     golive = require('./golive');
   } catch {
-    return { available: false, ok: null, note: 'The go-live preflight is not installed on this server yet.' };
+    return unavailable;
   }
   try {
-    if (typeof golive.preflight !== 'function') {
-      return { available: false, ok: null, note: 'The go-live preflight is not installed on this server yet.' };
-    }
-    const result = golive.preflight(slug);
-    return { available: true, ...(result || {}) };
+    if (typeof golive.preflight !== 'function') return unavailable;
+    const result = golive.preflight(slug) || {};
+    return {
+      available: true,
+      ...result,
+      checks: Array.isArray(result.checks) ? result.checks : [],
+      failures: Array.isArray(result.failures) ? result.failures : [],
+    };
   } catch (err) {
-    return { available: true, ok: false, note: `The go-live preflight failed to run: ${err.message}` };
+    return {
+      available: true, ok: false, checks: [], failures: [],
+      note: `The go-live preflight failed to run: ${err.message}`,
+    };
   }
 }
 
@@ -551,8 +623,23 @@ router.get('/:slug/health', async (req, res) => {
       'Try again. If it keeps failing, tell Gio and include the shop name.', true);
   }
 
-  const { can, cannot } = splitCapabilities(req.shopRole, req.isAdminBypass, shop.slug);
-  const locked = fileLock.isLocked(shop.slug);
+  // you_can and you_cannot are lists an agent walks, and you_cannot is the half
+  // that names a person to ask. A shop with no members and no folder on disk
+  // must still answer with both, so neither the membership read nor the lock
+  // file can take the whole payload down with it.
+  let can = [];
+  let cannot = [];
+  try {
+    ({ can, cannot } = splitCapabilities(req.shopRole, req.isAdminBypass, shop.slug));
+  } catch (err) {
+    console.error(`[health] ${shop.slug} could not list capabilities: ${err.message}`);
+  }
+  let locked = false;
+  try {
+    locked = fileLock.isLocked(shop.slug);
+  } catch {
+    locked = false;
+  }
 
   const container = {
     status: shop.status || 'unknown',
@@ -578,8 +665,8 @@ router.get('/:slug/health', async (req, res) => {
     // tool server passes them straight through without renaming anything.
     checks: checks.map((c) => ({ ...c, name: c.title, detail: c.why })),
     suggestions: buildSuggestions(checks, container),
-    you_can: can,
-    you_cannot: cannot,
+    you_can: Array.isArray(can) ? can : [],
+    you_cannot: Array.isArray(cannot) ? cannot : [],
     ready_for_review: readyForReview(shop.slug),
   });
 });
@@ -587,5 +674,6 @@ router.get('/:slug/health', async (req, res) => {
 module.exports = router;
 module.exports.router = router;
 module.exports.STAGES = STAGES;
+module.exports.MCP_TOOLS = MCP_TOOLS;
 module.exports.VARIANT_RE = VARIANT_RE;
 module.exports._internals = { scanCollections, lonelyVariants, countUnfulfilled, readShopSts, parseStsVersion, compareVersions, latestSts };

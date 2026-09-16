@@ -99,6 +99,74 @@ function isGuard(fn) {
 // it, this test says so before a deploy does.
 const MCP_FORBIDDEN_MOUNTS = ['/api/users', '/api/system', '/api/mission-control'];
 
+// ---------------------------------------------------------------------------
+// health.js names a tool beside every check and every suggestion, and an agent
+// reads those names out loud and then calls them. A name that is not a tool is
+// a dead end in front of the person being helped, which is how `get_catalog`
+// and `get_orders` shipped. The list of real tools lives in exactly one place,
+// `health.MCP_TOOLS`; a tool added to the server is added there and nowhere
+// else, and this test fails on any other name.
+//
+// Two forms carry a tool name: the `tool:` property in CAPABILITIES and in
+// buildSuggestions, and the sixth positional argument of check(). Both are
+// read off the source rather than off a payload, so a branch that only a broken
+// shop reaches is checked too.
+// ---------------------------------------------------------------------------
+
+// Split a call's arguments at top-level commas, honoring quotes, comments and
+// nesting, so check(id, ok, title, why, how, tool, role) can be read without a
+// parser.
+function callArgs(src, openParen) {
+  const args = [];
+  let depth = 0;
+  let start = openParen + 1;
+  for (let i = openParen + 1; i < src.length; i++) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (ch === '/' && next === '/') { i = src.indexOf('\n', i); if (i < 0) break; continue; }
+    if (ch === '/' && next === '*') { i = src.indexOf('*/', i) + 1; if (i < 1) break; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i++;
+      while (i < src.length && src[i] !== quote) { if (src[i] === '\\') i++; i++; }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+    if (ch === ')' && depth === 0) { args.push(src.slice(start, i)); return args; }
+    if (ch === ')' || ch === ']' || ch === '}') { depth--; continue; }
+    if (ch === ',' && depth === 0) { args.push(src.slice(start, i)); start = i + 1; }
+  }
+  return args;
+}
+
+function lineOf(src, index) {
+  return src.slice(0, index).split('\n').length;
+}
+
+// Every tool name health.js hands to an agent, with the line it sits on.
+function toolNamesIn(src) {
+  const found = [];
+  const literal = /^\s*(?:'([^']*)'|"([^"]*)")\s*$/;
+
+  const prop = /\btool:\s*(null|'([^']*)'|"([^"]*)")/g;
+  let m;
+  while ((m = prop.exec(src))) {
+    if (m[1] === 'null') continue;
+    found.push({ line: lineOf(src, m.index), name: m[2] !== undefined ? m[2] : m[3] });
+  }
+
+  const call = /\bcheck\(/g;
+  while ((m = call.exec(src))) {
+    const args = callArgs(src, m.index + m[0].length - 1);
+    const sixth = args[5];
+    if (sixth === undefined) continue;
+    const lit = literal.exec(sixth);
+    if (lit) found.push({ line: lineOf(src, m.index), name: lit[1] !== undefined ? lit[1] : lit[2] });
+  }
+
+  return found;
+}
+
 const routes = [];
 
 function walk(stack, prefix, inherited) {
@@ -229,9 +297,35 @@ function main() {
       }
     }
 
+    // -- every tool health.js names is a tool that exists --------------------
+    {
+      const healthPath = path.join(box.src, 'health.js');
+      const health = require(healthPath);
+      const tools = health.MCP_TOOLS;
+      if (!Array.isArray(tools) || tools.length === 0) {
+        say('FAIL  health.js exports no MCP_TOOLS, so nothing ties the names it reads out to the real tool server.');
+        failures++;
+      } else {
+        const named = toolNamesIn(fs.readFileSync(healthPath, 'utf8'));
+        if (named.length === 0) {
+          say('FAIL  found no tool names in health.js at all, which means this test is not reading the real file.');
+          failures++;
+        }
+        const bad = named.filter((n) => !tools.includes(n.name));
+        for (const n of bad) {
+          say(`FAIL  health.js line ${n.line} names "${n.name}", which is not a tool.`);
+          say(`      Use one of the ${tools.length} in health.MCP_TOOLS, or set tool: null and say in the text who does it.`);
+          failures++;
+        }
+        if (bad.length === 0) {
+          say(`ok    all ${named.length} tool name(s) in health.js are real tools`);
+        }
+      }
+    }
+
     say('');
     say(failures === 0
-      ? `PASS  every :slug route is behind requireShopAccess (${guarded.length} guarded, ${byKey.size} public by design), the admin mounts are closed to MCP, and no extract path trusts a declared size.`
+      ? `PASS  every :slug route is behind requireShopAccess (${guarded.length} guarded, ${byKey.size} public by design), the admin mounts are closed to MCP, no extract path trusts a declared size, and health.js names only real tools.`
       : `FAIL  ${failures} problem(s).`);
   } catch (err) {
     say(`FAIL  ${err.stack || err.message}`);
