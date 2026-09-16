@@ -105,7 +105,7 @@ function removeOrderFromCsv(csvPath, orderId) {
 // ---------------------------------------------------------------------------
 router.post('/:slug/orders/notify', (req, res) => {
   const { slug } = req.params;
-  const { orderData } = req.body;
+  const { orderData, event, reason } = req.body;
 
   if (!orderData || typeof orderData !== 'object' || Array.isArray(orderData)) {
     return res.status(400).json({ error: 'orderData must be a non-array object' });
@@ -126,7 +126,25 @@ router.post('/:slug/orders/notify', (req, res) => {
     return res.status(404).json({ error: 'Shop not found' });
   }
 
-  // Fire-and-forget email
+  // Fire-and-forget email.
+  //
+  // A storefront can cancel an order through its own API, which used to leave
+  // Launchpad unaware — so no cancellation email was ever sent for a
+  // cancellation started on the site. Only the emailed cancel link, which comes
+  // through the token route below, produced one. `event: 'cancelled'` closes
+  // that gap without opening another endpoint.
+  if (event === 'cancelled') {
+    const { sendCancellationEmail } = require('./email');
+    // The storefront asks the requestor why, optionally, and passes it here.
+    // Trimmed and capped: it is free text typed by the public and it lands in
+    // an e-mail to the client.
+    const note = typeof reason === 'string' ? reason.trim().slice(0, 500) : '';
+    sendCancellationEmail(orderData, slug, { cancelledBy: 'customer', reason: note }).catch(err => {
+      console.error(`[notify] Cancellation email failed for ${slug}: ${err.message}`);
+    });
+    return res.json({ message: 'Cancellation notification queued' });
+  }
+
   const { sendOrderConfirmation } = require('./email');
   sendOrderConfirmation(orderData, slug).catch(err => {
     console.error(`[notify] Email failed for ${slug}: ${err.message}`);
@@ -302,9 +320,15 @@ router.get('/:slug/orders/email-image/:productId', (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/:slug/orders/logo', (req, res) => {
   const { slug } = req.params;
-  const detailsDir = path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details');
+  // Logos live in Design/Logos. This route only ever looked in Design/Details,
+  // so it 404'd for every shop ever created and no order e-mail showed a mark.
+  const dirs = [
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Logos'),
+    path.join(SHOPS_DIR, slug, 'DATABASE', 'Design', 'Details'),
+  ];
+  const detailsDir = dirs.find(d => fs.existsSync(d));
 
-  if (!fs.existsSync(detailsDir)) {
+  if (!detailsDir) {
     return res.status(404).end();
   }
 

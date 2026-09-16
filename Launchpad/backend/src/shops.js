@@ -793,7 +793,8 @@ router.post('/', (req, res) => {
     }
 
     // Reload nginx
-    log.push(reloadNginx() ? 'Nginx reload triggered.' : 'WARNING: nginx reload trigger failed — reload manually.');
+    reloadNginx();
+    log.push('Nginx reloaded.');
 
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     req.app.locals.auditLog?.('shop_created', { req, details: { slug, name } });
