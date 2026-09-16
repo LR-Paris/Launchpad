@@ -9,6 +9,10 @@ const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx')
 
 const { checkShopPermission, isAdminOrAbove } = require('./users');
 const { acquire: lockAcquire, release: lockRelease, isLocked } = require('./lock');
+const { requireShopAccess, audit, membershipRole, setShopRole, refuse, currentLock } = require('./authz');
+const {
+  injectStageBanner, applyShopStage, effectiveStage,
+} = require('./golive');
 
 // Shop-to-launchpad gateway IP — same value the shop containers use to reach
 // the launchpad in their generated .env file. Docker default bridge gateway.
@@ -19,8 +23,84 @@ const HOST_GATEWAY = '172.17.0.1';
 const BUILD_TIMEOUT_MS = 15 * 60 * 1000;
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// ADR-001. index.js mounts resolveShopAndRole + a viewer/editor/owner floor on
+// every /api/shops/:slug path before any of these routers see the request.
+// What follows only RAISES that floor for the handful of actions that deserve
+// more than "an editor may do it". Mounted on paths, not decorated onto
+// handlers, so a new method on the same path inherits the same bar.
+// ---------------------------------------------------------------------------
+router.use('/:slug/update-template', requireShopAccess('owner'));
+router.use('/:slug/upgrade', requireShopAccess('owner'));
+// Stage changes live in golive.js (PUT /:slug/stage), which also syncs
+// lifecycle_status and rebuilds the shop so the internal-only banner moves with
+// it. The raise here covers that path at the router level whatever method it
+// grows next; golive.js gates in_production on a real admin itself.
+router.use('/:slug/stage', requireShopAccess('owner'));
+router.use('/:slug/deploy', requireShopAccess('owner'));
+
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
+
+// ---------------------------------------------------------------------------
+// Slugs that are already routed at the host level, and so can never be a shop.
+//
+// A shop's slug becomes `location /<slug>/` in nginx, appended to
+// shops-locations.inc by generateShopConfig. Creating a shop called "mcp" would
+// append a SECOND `location /mcp/` next to the tool server's own block, and
+// nginx -t would then fail. That does not break one shop, it breaks every later
+// reload on the whole platform, including the one that would undo it. Cheaper
+// to refuse the name.
+//
+// Keep this list in step with whatever the lrparisstore.com server block routes
+// by hand. Everything under /api and the SPA's own paths are here for the same
+// reason: a shop that shadows them is a shop that eats the console.
+// ---------------------------------------------------------------------------
+const RESERVED_SLUGS = new Set([
+  'mcp',           // the Shuttle dev tool (deploy/mcp-locations.inc)
+  'api',           // the Launchpad backend
+  'review',        // the client review page, /review/:token
+  'well-known',    // OAuth discovery lives at /.well-known/...
+  '_next',         // Next.js build output
+  'assets', 'static', 'public',
+  'login', 'logout', 'shops', 'users', 'settings', 'profile',
+  'launchpad', 'admin', 'health', 'upload', 'system', 'mission-control',
+]);
+
+function reservedSlugError(slug) {
+  if (!RESERVED_SLUGS.has(slug)) return null;
+  return `"${slug}" is reserved for the platform and cannot be a shop URL. Pick another URL path.`;
+}
+
+// Where a shop actually answers, so a tool can hand back a link rather than a
+// slug. Shops are path-routed under the Launchpad host: lrparisstore.com/<slug>/
+function shopUrl(slug) {
+  const base = (process.env.SHOP_BASE_URL || process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+  return base ? `${base}/${slug}/` : `/${slug}/`;
+}
+
+// Creating a shop is gated on users.can_create_shops, a column that has been on
+// the user row since February and was never read. Admins are implicitly allowed.
+function canCreateShops(req) {
+  const user = req.session?.user;
+  if (!user) return false;
+  // Admin is a web-console fact. Over MCP even Gio is judged by the column, the
+  // same as everyone else.
+  if (req.via !== 'mcp' && (user.role === 'super_admin' || user.role === 'admin')) return true;
+  try {
+    const udb = new Database(path.join(DATA_DIR, 'users.db'), { readonly: true });
+    try {
+      const row = udb.prepare('SELECT can_create_shops FROM users WHERE id = ?').get(user.id);
+      return !!(row && row.can_create_shops);
+    } finally {
+      udb.close();
+    }
+  } catch (err) {
+    console.error(`[shops] can_create_shops lookup failed: ${err.message}`);
+    return false;
+  }
+}
 const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
 const TEMPLATE_REPO = 'https://github.com/LR-Paris/Shuttle';
@@ -606,8 +686,15 @@ export default function AnalyticsTracker() {
 
 // POST /api/shops — Create new shop (admin only)
 router.post('/', (req, res) => {
-  if (!isAdminOrAbove(req)) {
-    return res.status(403).json({ error: 'Only admins can create shops' });
+  // Admin-only was the old rule, and it made create_shop dead on arrival: an
+  // MCP request is never admin, so nobody could ever create a shop through the
+  // dev tool, including Gio. The real permission already exists as a column on
+  // the user row, so that is what gates it now. Admins keep the ability by
+  // virtue of being admins.
+  if (!canCreateShops(req)) {
+    return refuse(res, 403, 'NOT_PERMITTED',
+      'You are not set up to create shops.',
+      'Ask Gio to turn on "can create shops" for your account in Launchpad.', false);
   }
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
   let { slug: customSlug } = req.body;
@@ -622,6 +709,10 @@ router.post('/', (req, res) => {
     : slugify(name, { lower: true, strict: true });
   if (!slug) {
     return res.status(400).json({ error: 'Invalid shop name / URL path' });
+  }
+  const reserved = reservedSlugError(slug);
+  if (reserved) {
+    return refuse(res, 409, 'NOT_PERMITTED', reserved, 'Pick a different URL path for the shop.', false);
   }
 
   const shopDir = path.join(SHOPS_DIR, slug);
@@ -707,6 +798,13 @@ router.post('/', (req, res) => {
       log.push('Injected analytics tracker into shop layout.');
     }
 
+    // Render the internal-only banner and the robots tag from the layout, so no
+    // page can leave them out. New shops start unapproved.
+    const stageBannerPatched = injectStageBanner(shopDir);
+    if (stageBannerPatched > 0) {
+      log.push('Injected stage banner into shop layout.');
+    }
+
     // Create orders directory
     fs.mkdirSync(path.join(shopDir, 'orders'), { recursive: true });
     log.push('Created orders directory.');
@@ -763,6 +861,7 @@ router.post('/', (req, res) => {
         .replace(/{PORT}/g, String(port))
         .replace(/{SHOP_DIR}/g, hostShopDir)
         .replace(/{SLUG}/g, slug)
+        .replace(/{STAGE}/g, 'no_status')
     );
     log.push(`Configured shop docker-compose.yml on port ${port}.`);
 
@@ -797,8 +896,18 @@ router.post('/', (req, res) => {
     log.push('Nginx reloaded.');
 
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
-    req.app.locals.auditLog?.('shop_created', { req, details: { slug, name } });
-    res.status(201).json({ shop, log: log.join('\n') });
+
+    // A shop with no owner is a shop nobody can grant access to, and every
+    // refusal on it would have to name an admin instead of a person. The
+    // creator owns what they create.
+    try {
+      if (req.session?.user?.id) setShopRole(req.session.user.id, slug, 'owner', req.session.user.id);
+    } catch (roleErr) {
+      console.error(`[shops] could not set creator as owner of ${slug}: ${roleErr.message}`);
+    }
+
+    const audit_id = audit(req, 'shop_created', { slug, name });
+    res.status(201).json({ shop, url: shopUrl(slug), role: 'owner', audit_id, log: log.join('\n') });
   } catch (err) {
     // Cleanup on failure
     console.error(`[shops] create ${slug} error:`, err.message);
@@ -811,14 +920,46 @@ router.post('/', (req, res) => {
   }
 });
 
-// GET /api/shops — List all shops
+// GET /api/shops — the shop list.
+//
+// TWO ANSWERS, DELIBERATELY.
+//
+// Over MCP this is membership filtered for everybody, admins included: the
+// admin bypass is off there, so an agent acting as Gio lists exactly the shops
+// Gio was granted and the tool never widens anyone. That is the rule the ADR
+// cares about, and /api/mcp/my-shops is the route the dev tool actually calls.
+//
+// On the web it still returns every shop to every signed-in user, because the
+// Launchpad SPA has always shown the full list and narrowing it is a change to
+// a product this ADR is not scoped to touch. Several people have no
+// user_shop_permissions row at all today, and they would open the console to an
+// empty dashboard with no way to ask for anything. Set
+// LAUNCHPAD_STRICT_SHOP_LIST=true to filter the web list too, once every person
+// who should see a shop has a row for it (run scripts/migrate-adr001.js first,
+// then check). Each entry carries `role`, so the UI can already tell the
+// difference between a shop you own and one you are only looking at.
 router.get('/', (req, res) => {
   const db = getDb();
   try {
     const shops = db.prepare('SELECT * FROM shops ORDER BY created_at DESC').all();
 
+    const user = req.session?.user;
+    const viaMcp = req.via === 'mcp';
+    const strictWeb = process.env.LAUNCHPAD_STRICT_SHOP_LIST === 'true';
+    const seeEverything = !viaMcp && (user?.role === 'super_admin' || !strictWeb);
+
+    const visible = seeEverything
+      ? shops.map(shop => ({
+        ...shop,
+        role: user?.role === 'super_admin' ? 'owner' : (membershipRole(user.id, shop.slug) || null),
+      }))
+      : shops
+        .map(shop => ({ shop, role: user ? membershipRole(user.id, shop.slug) : null }))
+        .filter(({ role }) => !!role)
+        .map(({ shop, role }) => ({ ...shop, role }));
+
     // Update live status (honors is_building flag with HTTP-port probe via poller)
-    const updatedShops = shops.map(shop => ({
+    const updatedShops = visible.map(shop => ({
       ...shop,
       status: resolveLiveStatus(shop),
       locked: isLocked(shop.slug),
@@ -840,7 +981,19 @@ router.get('/:slug', (req, res) => {
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
     if (!shop) return res.status(404).json({ error: 'Shop not found' });
-    res.json({ shop: { ...shop, status: resolveLiveStatus(shop), locked: isLocked(slug) } });
+    res.json({
+      shop: {
+        ...shop,
+        status: resolveLiveStatus(shop),
+        locked: isLocked(slug),
+        // The two things a caller always wants next: where it answers, and what
+        // they may do to it. req.shopRole is set by resolveShopAndRole.
+        url: shopUrl(slug),
+        role: req.shopRole || null,
+      },
+      url: shopUrl(slug),
+      role: req.shopRole || null,
+    });
   } catch (err) {
     console.error(`[shops] get ${slug} error:`, err.message);
     res.status(500).json({ error: 'Failed to get shop details.' });
@@ -873,6 +1026,40 @@ router.patch('/:slug', (req, res) => {
       return res.status(400).json({ error: `Invalid lifecycle status. Must be one of: ${LIFECYCLE_STATUSES.join(', ')}` });
     }
 
+    // -----------------------------------------------------------------------
+    // THE HOLE THIS ADR EXISTS TO CLOSE.
+    //
+    // Until now anyone with can_edit_ui could set lifecycle_status to 'active'
+    // through this route, from the settings page, with no admin check and no
+    // confirmation. 'active' is the live stage: it puts the shop in production,
+    // takes the internal-only banner off it and lets search engines index it.
+    // That is precisely the accident the ADR is about, and it was never on a
+    // new route, it was on this one.
+    //
+    // Gated exactly like golive.js's PUT /:slug/stage, and only for a real
+    // CHANGE: a PATCH that resends the value a shop already has is a no-op and
+    // must not start failing for the people who edit a name or a description.
+    // -----------------------------------------------------------------------
+    if (lifecycle_status !== undefined && lifecycle_status !== (shop.lifecycle_status || 'none')) {
+      if (req.shopRole !== 'owner') {
+        return refuse(res, 403, 'ROLE_TOO_LOW',
+          `Changing the stage of "${slug}" needs owner access.`,
+          'Ask an owner of this shop to change the stage, or call request_access.', false);
+      }
+      if (lifecycle_status === 'active') {
+        if (req.via === 'mcp') {
+          return refuse(res, 403, 'ADMIN_ONLY',
+            'Moving a shop to production has to be done in Launchpad, in a browser.',
+            'Open the shop settings page in Launchpad and use the Stage control there.', false);
+        }
+        if (req.session?.user?.role !== 'super_admin') {
+          return refuse(res, 403, 'ADMIN_ONLY',
+            'Only a super admin can move a shop to production.',
+            'Ask Giovanni Lupo or Arnaud Aubert to make the change.', false);
+        }
+      }
+    }
+
     const newName = name !== undefined ? String(name).trim() : shop.name;
     const newDescription = description !== undefined ? String(description).trim() : (shop.description || '');
     const newLifecycle = lifecycle_status !== undefined ? lifecycle_status : (shop.lifecycle_status || 'none');
@@ -894,6 +1081,11 @@ router.patch('/:slug', (req, res) => {
       : slug;
 
     if (!newSlug) return res.status(400).json({ error: 'Invalid URL path' });
+
+    const reservedNew = newSlug !== slug ? reservedSlugError(newSlug) : null;
+    if (reservedNew) {
+      return refuse(res, 409, 'NOT_PERMITTED', reservedNew, 'Pick a different URL path for the shop.', false);
+    }
 
     if (newSlug !== slug) {
       // Check uniqueness
@@ -952,6 +1144,14 @@ router.patch('/:slug', (req, res) => {
       'UPDATE shops SET slug = ?, name = ?, description = ?, subdomain = ?, lifecycle_status = ?, language = ? WHERE slug = ?'
     ).run(newSlug, newName, newDescription, newSlug, newLifecycle, newLanguage, slug);
 
+    // A lifecycle change is a stage change, and the banner is compiled into the
+    // shop, so the compose env has to be rewritten and the shop rebuilt. The
+    // settings UI goes through PUT /:slug/stage, which rebuilds itself; this is
+    // for every other caller of PATCH.
+    if (newLifecycle !== (shop.lifecycle_status || 'none')) {
+      applyShopStage(newSlug, effectiveStage({ lifecycle_status: newLifecycle }), { rebuild: true });
+    }
+
     // If language changed and the docker-compose.yml exists, regenerate the
     // SHUTTLE_LANG env line so the running shop picks it up on next restart.
     if (newLanguage !== (shop.language || 'en')) {
@@ -972,8 +1172,8 @@ router.patch('/:slug', (req, res) => {
     }
 
     const updated = db.prepare('SELECT * FROM shops WHERE slug = ?').get(newSlug);
-    req.app.locals.auditLog?.('shop_updated', { req, details: { slug, newSlug, name: newName, lifecycle_status: newLifecycle, language: newLanguage } });
-    res.json({ shop: updated });
+    const audit_id = audit(req, 'shop_updated', { slug, newSlug, name: newName, lifecycle_status: newLifecycle, language: newLanguage });
+    res.json({ shop: updated, url: shopUrl(newSlug), audit_id });
   } catch (err) {
     console.error(`[shops] patch ${slug} error:`, err.message);
     res.status(500).json({ error: 'Failed to update shop.' });
@@ -985,7 +1185,10 @@ router.patch('/:slug', (req, res) => {
 // GET /api/shops/:slug/logs — Get recent docker compose logs
 router.get('/:slug/logs', (req, res) => {
   const { slug } = req.params;
-  const lines = parseInt(req.query.lines, 10) || 100;
+  // Capped at 200. Uncapped, one `?lines=500000` turns a log read into a
+  // several-megabyte JSON response, which is bad for a browser and ruinous for
+  // an agent paying by the token.
+  const lines = Math.min(Math.max(parseInt(req.query.lines, 10) || 100, 1), 200);
   const db = getDb();
   try {
     const shop = db.prepare('SELECT * FROM shops WHERE slug = ?').get(slug);
@@ -1058,8 +1261,8 @@ router.delete('/:slug', (req, res) => {
     // Remove from database
     db.prepare('DELETE FROM shops WHERE slug = ?').run(slug);
 
-    req.app.locals.auditLog?.('shop_deleted', { req, details: { slug, deleteFiles } });
-    res.json({ message: `Shop "${slug}" removed` });
+    const audit_id = audit(req, 'shop_deleted', { slug, deleteFiles });
+    res.json({ message: `Shop "${slug}" removed`, audit_id });
   } finally {
     db.close();
   }
@@ -1114,10 +1317,9 @@ router.post('/:slug/start', (req, res) => {
       return res.status(500).json({ error: 'Failed to start shop container.' });
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    req.app.locals.auditLog?.('shop_started', {
-      req, details: { slug, force, skippedUpdate: skipUpdate },
-    });
+    const audit_id = audit(req, 'shop_started', { slug, force, skippedUpdate: skipUpdate });
     res.json({
+      audit_id,
       message: `Shop "${slug}" started`,
       log: out,
       skippedUpdate: skipUpdate,
@@ -1160,8 +1362,8 @@ router.post('/:slug/stop', (req, res) => {
     db.prepare(
       'UPDATE shops SET status = ?, is_building = 0 WHERE slug = ?'
     ).run('stopped', slug);
-    req.app.locals.auditLog?.('shop_stopped', { req, details: { slug } });
-    res.json({ message: `Shop "${slug}" stopped`, log: out });
+    const audit_id = audit(req, 'shop_stopped', { slug });
+    res.json({ message: `Shop "${slug}" stopped`, log: out, audit_id });
   } catch (err) {
     console.error(`[shops] stop ${slug} error:`, err.message);
     res.status(500).json({ error: 'Failed to stop shop.' });
@@ -1178,6 +1380,17 @@ router.post('/:slug/restart', (req, res) => {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
+  // A restart in the middle of a launch stomps the launch's own lock and can
+  // leave a half-built container. Refuse it with the shape every other refusal
+  // uses, and name who is holding it, so an agent can say "Marc started a
+  // launch four minutes ago" rather than "it failed". possible: true, because
+  // this one clears on its own.
+  const busy = currentLock(slug);
+  if (busy) {
+    return refuse(res, 409, 'SHOP_BUSY',
+      `"${slug}" is busy: ${busy.held_by_name || 'someone'} is running ${busy.action}.`,
+      { held_by: busy.held_by_name || null, action: busy.action, since: busy.since }, true);
+  }
   const force = req.query.force === 'true';
   const db = getDb();
 
@@ -1222,10 +1435,9 @@ router.post('/:slug/restart', (req, res) => {
       }
     }
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    req.app.locals.auditLog?.('shop_restarted', {
-      req, details: { slug, force, skippedUpdate: skipUpdate },
-    });
+    const audit_id = audit(req, 'shop_restarted', { slug, force, skippedUpdate: skipUpdate });
     res.json({
+      audit_id,
       message: `Shop "${slug}" restarted`,
       log: out,
       skippedUpdate: skipUpdate,
@@ -1244,6 +1456,14 @@ router.post('/:slug/restart', (req, res) => {
 router.post('/:slug/deploy', (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  {
+    const busy = currentLock(req.params.slug);
+    if (busy) {
+      return refuse(res, 409, 'SHOP_BUSY',
+        `"${req.params.slug}" is busy: ${busy.held_by_name || 'someone'} is running ${busy.action}.`,
+        { held_by: busy.held_by_name || null, action: busy.action, since: busy.since }, true);
+    }
   }
   const { slug } = req.params;
   const db = getDb();
@@ -1313,8 +1533,8 @@ router.post('/:slug/deploy', (req, res) => {
     }
 
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('running', slug);
-    req.app.locals.auditLog?.('shop_deployed', { req, details: { slug } });
-    res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n') });
+    const audit_id = audit(req, 'shop_deployed', { slug });
+    res.json({ message: `Shop "${slug}" redeployed`, log: log.join('\n'), audit_id });
   } catch (err) {
     console.error(`[shops] deploy ${slug} error:`, err.message);
     db.prepare('UPDATE shops SET status = ? WHERE slug = ?').run('error', slug);
@@ -1569,7 +1789,8 @@ router.post('/:slug/update-template', (req, res) => {
     db.prepare('UPDATE shops SET shuttle_version = ? WHERE slug = ?').run(updatedVersion, slug);
 
     log.push(`Update complete. Now at ${updatedVersion} (commit ${newCommit}).`);
-    res.json({ message: `Shop "${slug}" updated to ${updatedVersion}`, commit: newCommit, log: log.join('\n') });
+    const audit_id = audit(req, 'shop_template_updated', { slug, version: updatedVersion, commit: newCommit });
+    res.json({ message: `Shop "${slug}" updated to ${updatedVersion}`, commit: newCommit, log: log.join('\n'), audit_id });
   } catch (err) {
     console.error('[shops] error:', err.message);
     res.status(500).json({ error: 'An unexpected error occurred.' });
@@ -1703,7 +1924,8 @@ router.post('/:slug/upgrade', (req, res) => {
     db.prepare('UPDATE shops SET shuttle_version = ?, status = ? WHERE slug = ?').run(upgradedVersion, 'running', slug);
     log.push(`Updated shop version to ${upgradedVersion}.`);
 
-    res.json({ message: `Shop "${slug}" upgraded to ${upgradedVersion}`, log: log.join('\n') });
+    const audit_id = audit(req, 'shop_upgraded', { slug, version: upgradedVersion });
+    res.json({ message: `Shop "${slug}" upgraded to ${upgradedVersion}`, log: log.join('\n'), audit_id });
   } catch (err) {
     console.error('[shops] error:', err.message);
     res.status(500).json({ error: 'An unexpected error occurred.' });

@@ -40,11 +40,23 @@ function release(slug) {
 
 // Express middleware: blocks shop-mutating routes while a launch is in progress.
 // Old shops with no .db.lock file pass through unchanged.
+//
+// The body is the ADR-001 refusal payload, because this is a refusal and an
+// agent that can read every other refusal should not need a special case for
+// this one. The 423 status and the top-level `reason` are kept exactly as they
+// were: the current frontend checks both, and `error` moving from a string to
+// an object is already the breaking half of this change. possible is true —
+// the build finishes on its own, usually within a few minutes.
 function requireUnlocked(req, res, next) {
   const slug = req.params.slug;
   if (slug && isLocked(slug)) {
     return res.status(423).json({
-      error: 'Shuttle is launching — catalog is read-only until build completes.',
+      error: {
+        code: 'SHOP_BUSY',
+        message: `"${slug}" is launching, so the catalog is read only until the build finishes.`,
+        resolution: 'Wait for the launch to finish, usually two or three minutes, then try again.',
+        possible: true,
+      },
       reason: 'launch_in_progress',
     });
   }

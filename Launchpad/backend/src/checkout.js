@@ -2,7 +2,27 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { checkShopPermission } = require('./users');
+const { resolveShopAndRole, requireShopAccess, audit } = require('./authz');
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// ADR-001, fixed here. This router is mounted on '/api/shops' in index.js, but
+// every path inside it used to start with '/shops/:slug', so what it really
+// served was /api/shops/shops/:slug/checkout/schema. The frontend has always
+// called /api/shops/:slug/checkout/schema (frontend/src/lib/api.js, getCheckoutSchema
+// and saveCheckoutSchema, on an axios instance with baseURL '/api'). Nothing
+// answered that, so the checkout schema editor has been dead for as long as the
+// double prefix has been there, and PUT has been silently failing with a 404.
+//
+// The fix is in the router rather than in the mount, so the mount line in
+// index.js keeps sitting with every other /api/shops router and the shop-access
+// floor covers it the same way.
+//
+// Nothing could have depended on the broken path: it was never in the frontend,
+// never in the MCP client, and a shop container has no reason to read its own
+// checkout schema over HTTP.
+// ---------------------------------------------------------------------------
+router.use('/:slug', resolveShopAndRole, requireShopAccess({ GET: 'viewer', default: 'editor' }));
 
 const VALID_SLUG = /^[a-zA-Z0-9_-]+$/;
 
@@ -67,7 +87,7 @@ const DEFAULT_SCHEMA = {
 };
 
 // GET /api/shops/:slug/checkout/schema
-router.get('/shops/:slug/checkout/schema', (req, res) => {
+router.get('/:slug/checkout/schema', (req, res) => {
   const { slug } = req.params;
   if (!VALID_SLUG.test(slug)) return res.status(400).json({ error: 'Invalid slug' });
   const schemaPath = getSchemaPath(slug);
@@ -84,7 +104,7 @@ router.get('/shops/:slug/checkout/schema', (req, res) => {
 });
 
 // PUT /api/shops/:slug/checkout/schema
-router.put('/shops/:slug/checkout/schema', (req, res) => {
+router.put('/:slug/checkout/schema', (req, res) => {
   const { slug } = req.params;
   if (!VALID_SLUG.test(slug)) return res.status(400).json({ error: 'Invalid slug' });
   if (!checkShopPermission(req, 'can_edit_ui')) {
@@ -98,7 +118,8 @@ router.put('/shops/:slug/checkout/schema', (req, res) => {
   try {
     fs.mkdirSync(path.dirname(schemaPath), { recursive: true });
     fs.writeFileSync(schemaPath, JSON.stringify(schema, null, 2));
-    return res.json({ success: true });
+    const audit_id = audit(req, 'checkout_schema_saved', { slug, sections: schema.sections.length });
+    return res.json({ success: true, audit_id });
   } catch (err) {
     console.error('Error saving checkout schema:', err);
     return res.status(500).json({ error: 'Failed to save schema' });

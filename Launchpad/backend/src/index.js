@@ -14,6 +14,7 @@ const Database = require('better-sqlite3');
 const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME, setUserFns } = require('./auth');
 const {
   router: usersRouter,
+  meRouter,
   initUsersDb,
   getUserByUsernameOrEmail,
   getUserCount,
@@ -66,6 +67,22 @@ class BetterSqlite3Store extends Store {
     } catch (e) { cb?.(e); }
   }
 }
+// --- ADR-001 "Shuttle Dev Tool" ---------------------------------------------
+const { initPlatformDb, degradedReason: platformDbDegraded } = require('./platform-db');
+const {
+  resolveShopAndRole,
+  requireShopAccess,
+  accessRouter,
+  shopAuditRouter,
+  mcpRouter,
+  mcpPublicRouter,
+  mcpActor,
+  mcpEnabled,
+  denyMcp,
+} = require('./authz');
+const healthRouter = require('./health');
+// ---------------------------------------------------------------------------
+
 const { router: shopsRouter, initDb } = require('./shops');
 const ordersRouter = require('./orders');
 const filesRouter = require('./files');
@@ -75,6 +92,12 @@ const ordersWebhookRouter = require('./orders-webhook');
 const missionControlRouter = require('./mission-control');
 const { trackRouter: analyticsTrackRouter, queryRouter: analyticsQueryRouter } = require('./analytics');
 const checkoutRouter = require('./checkout');
+
+// --- ADR-001 phases 1b and 1c (agents B and C) ------------------------------
+const { ticketRouter: uploadTicketRouter, uploadRouter, purgeExpiredTickets } = require('./upload-ticket');
+const { router: stagingRouter, recoverInterruptedApply } = require('./staging');
+const { router: goLiveRouter, publicRouter: reviewRouter } = require('./golive');
+// ---------------------------------------------------------------------------
 
 const app = express();
 // Trust proxy (required when behind nginx)
@@ -90,6 +113,30 @@ if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
 // Initialize databases on startup
 initDb();
 initUsersDb();
+// Creates data/platform.db and runs the additive user_shop_permissions /
+// shops.stage column migrations. Idempotent: a second boot is a no-op.
+initPlatformDb();
+if (mcpEnabled()) {
+  console.log('[mcp] Signed tool access is enabled (X-Launchpad-Actor).');
+}
+
+// An apply that died between its two renames leaves the shop's DATABASE parked
+// under .DATABASE.replacing-*. Put it back at boot, before anything serves a
+// request, so a crash mid-apply never shows a customer an empty shop.
+try {
+  const shopsRoot = path.join(__dirname, '..', 'shops');
+  if (fs.existsSync(shopsRoot)) {
+    for (const slug of fs.readdirSync(shopsRoot)) {
+      const recovered = recoverInterruptedApply(slug);
+      if (recovered) console.warn(`[staging] Recovered an interrupted DATABASE apply for "${slug}".`);
+    }
+  }
+} catch (err) {
+  console.error('[staging] Startup recovery sweep failed:', err.message);
+}
+
+// Sweep used and expired upload tickets, and the temp zips they point at.
+setInterval(purgeExpiredTickets, 60 * 60 * 1000);
 
 // Wire auth module to user functions (breaks circular dependency)
 setUserFns({
@@ -140,7 +187,12 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false,
 }));
-app.use(express.json({ limit: '10mb' }));
+// The raw body is kept because the MCP actor signature covers it. express.json
+// consumes the stream, so this is the only chance to see the bytes.
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => { req.rawBody = buf; },
+}));
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (server-to-server, curl, etc.)
@@ -174,7 +226,11 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-app.use(session({
+// Signed tool requests authenticate with an HMAC header instead of a cookie,
+// and are resolved BEFORE express-session so they never write a session row.
+app.use(mcpActor);
+
+const sessionMiddleware = session({
   store: new BetterSqlite3Store({
     dir: dataDir,
     db: 'sessions.db',
@@ -189,7 +245,8 @@ app.use(session({
     maxAge: 24 * 60 * 60 * 1000, // 24 hours default (overridden per-session on login)
     sameSite: 'lax',
   },
-}));
+});
+app.use((req, res, next) => (req.via === 'mcp' ? next() : sessionMiddleware(req, res, next)));
 
 // ---------------------------------------------------------------------------
 // CSRF protection — double-submit cookie pattern
@@ -197,6 +254,10 @@ app.use(session({
 function csrfProtection(req, res, next) {
   // Skip for GET/HEAD/OPTIONS (safe methods) and unauthenticated webhook routes
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+  // Signed tool requests carry no cookie, so there is no cross-site request to
+  // forge. The HMAC over body+actor+timestamp is the stronger check.
+  if (req.via === 'mcp') return next();
 
   // Generate CSRF token if session doesn't have one
   if (req.session && !req.session.csrfToken) {
@@ -222,9 +283,25 @@ app.get('/api/auth/csrf-token', (req, res) => {
 // ---------------------------------------------------------------------------
 // Rate limiting
 // ---------------------------------------------------------------------------
+// Keyed by IP *and* identifier. Per-IP alone was right when every sign in came
+// from a person's own browser. It is wrong now: every enrollment through the
+// dev tool arrives from one container, so ten sign ins would lock out the
+// eleventh person on a shared bucket they never touched. Pairing the two keeps
+// the per-person brake (10 tries per address per 15 minutes) and keeps a single
+// noisy IP from spraying addresses, without one colleague's sign in costing
+// another one theirs.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // Slightly higher since OTP needs 2 requests per login
+  keyGenerator: (req) => {
+    const ident = String(req.body?.identifier || '').trim().toLowerCase().slice(0, 120);
+    return `${req.ip || 'noip'}|${ident || 'noident'}`;
+  },
+  // express-rate-limit warns when a custom keyGenerator touches req.ip, because
+  // a bare IPv6 address lets one client rotate through a /64. Here the address
+  // is only half the key and the identifier is the half that matters, so the
+  // check is turned off rather than worked around.
+  validate: { ip: false },
   message: { error: 'Too many login attempts, try again in 15 minutes' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -251,8 +328,27 @@ app.post('/api/auth/login-request', loginLimiter);
 app.post('/api/auth/login-verify', loginLimiter);
 app.use('/api/auth', authRouter);
 
+// ---------------------------------------------------------------------------
+// The tool server's own routes. enroll and token/introspect are called with
+// actor 0, before the caller has a user id, so they sit OUTSIDE requireAuth;
+// both refuse anything that did not arrive signed. The other three are normal
+// authenticated routes that happen to be MCP only.
+// ---------------------------------------------------------------------------
+app.use('/api/mcp', mcpPublicRouter);
+app.use('/api/mcp', requireAuth, mcpRouter);
+
 // User management routes (protected + CSRF, super_admin enforced inside router)
-app.use('/api/users', requireAuth, csrfProtection, usersRouter);
+//
+// denyMcp comes first and is the point: these three mounts predate ADR-001 and
+// gate on requireRole('super_admin'), which reads the account role and knows
+// nothing about how the request arrived. A signed tool call carrying a
+// super_admin's id used to get all of it, including "create another
+// super_admin". There is no MCP use case for any of them, so the tool server
+// never gets in at all, whatever it holds.
+app.use('/api/users', requireAuth, denyMcp('User administration'), csrfProtection, usersRouter);
+
+// Who am I, what may I reach — the first call every client makes.
+app.use('/api/me', requireAuth, meRouter);
 
 // Unauthenticated webhook for Shuttle containers (must come BEFORE requireAuth)
 const notifyLimiter = rateLimit({
@@ -281,25 +377,79 @@ const analyticsLimiter = rateLimit({
 app.use('/api/shops/:slug/analytics/track', analyticsLimiter);
 app.use('/api/shops', analyticsTrackRouter);
 
+// Unauthenticated DATABASE upload (must stay OUTSIDE the requireAuth tree).
+// The ticket in the URL is the whole credential: single use, 15 minute expiry,
+// bound to one shop and one user, stored only as its SHA-256. It sits here
+// because a shell `curl --data-binary @db.zip` has no session cookie and a
+// browser drop has no CSRF token. Rate limiting, the ticket check and the body
+// cap all live inside the router, and the ticket is burned before a byte is
+// written to disk.
+app.use('/api/upload', uploadRouter);
+
+// Client site review — a token in the URL is the only credential, so this
+// cannot sit behind requireAuth. golive.js applies its own read and write rate
+// limiters and every response is scoped to the one shop the token points at.
+app.use('/api/review', reviewRouter);
+
+// ---------------------------------------------------------------------------
+// ADR-001 shop scope
+//
+// Access requests come FIRST, because the whole point of request_access is that
+// somebody with no access can call it.
+// ---------------------------------------------------------------------------
+app.use('/api/shops', requireAuth, csrfProtection, accessRouter);
+
+// Then the floor that every remaining /api/shops/:slug route sits behind. It is
+// mounted once, here, rather than decorated onto each handler: a route added
+// next month is covered by default instead of by somebody remembering.
+// Individual routers raise the bar above this floor where the action deserves
+// it (shops.js, orders.js, files.js).
+//
+// Reading is viewer, deleting is owner, everything else is editor. A path that
+// needs more than that says so in its own router.
+app.use('/api/shops/:slug', requireAuth, resolveShopAndRole, requireShopAccess({
+  GET: 'viewer',
+  HEAD: 'viewer',
+  DELETE: 'owner',
+  default: 'editor',
+}));
+
 // Protected routes — CSRF enforced on state-changing requests
+app.use('/api/shops', requireAuth, csrfProtection, shopAuditRouter);
+app.use('/api/shops', requireAuth, csrfProtection, healthRouter);
 app.use('/api/shops', requireAuth, csrfProtection, shopsRouter);
 app.use('/api/shops', requireAuth, csrfProtection, ordersRouter);
 app.use('/api/shops', requireAuth, csrfProtection, filesRouter);
 app.use('/api/shops', requireAuth, csrfProtection, inventoryRouter);
 app.use('/api/shops', requireAuth, csrfProtection, checkoutRouter);
 
+// Issuing an upload ticket is a normal authenticated, CSRF-protected action:
+// you must already have editor access to be handed the credential the
+// unauthenticated upload route accepts.
+app.use('/api/shops', requireAuth, csrfProtection, uploadTicketRouter);
+// stage / apply / rollback / backups. Every mutation inside runs through withShopLock.
+app.use('/api/shops', requireAuth, csrfProtection, stagingRouter);
+// preflight / go-live approval / PUT :slug/stage.
+app.use('/api/shops', requireAuth, csrfProtection, goLiveRouter);
+
 // Analytics query routes (protected, read-only so no CSRF needed)
 app.use('/api/shops', requireAuth, analyticsQueryRouter);
 
 // System / update routes (protected + CSRF, admin-only enforced inside router)
-app.use('/api/system', requireAuth, csrfProtection, updateRouter);
+app.use('/api/system', requireAuth, denyMcp('Updating Launchpad'), csrfProtection, updateRouter);
 
 // Mission Control (protected, admin-only enforced inside router)
-app.use('/api/mission-control', requireAuth, missionControlRouter);
+app.use('/api/mission-control', requireAuth, denyMcp('Mission Control'), missionControlRouter);
 
-// Health check
+// Health check. It reports whether platform.db is the real file or the
+// in-memory fallback, because a server that came up degraded looks completely
+// healthy from the outside otherwise.
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    platform_db: platformDbDegraded() ? 'degraded' : 'ok',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Global error handler — return generic messages in production
@@ -312,6 +462,12 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: message });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Launchpad backend running on port ${PORT}`);
-});
+// Only listen when started directly. Requiring this file (the route-coverage
+// test does) builds the app without binding a port.
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Launchpad backend running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

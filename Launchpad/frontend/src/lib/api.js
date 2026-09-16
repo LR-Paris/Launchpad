@@ -262,4 +262,29 @@ export const checkHealth = () =>
 export const getCheckoutSchema = (slug) => api.get(`/shops/${slug}/checkout/schema`).then(r => r.data);
 export const saveCheckoutSchema = (slug, schema) => api.put(`/shops/${slug}/checkout/schema`, schema).then(r => r.data);
 
+// Go live — approval, preflight and stage
+export const getPreflight = (slug) =>
+  api.get(`/shops/${slug}/preflight`).then(r => r.data);
+
+export const getApprovalStatus = (slug) =>
+  api.get(`/shops/${slug}/golive`).then(r => r.data);
+
+export const requestGoLive = (slug, data) =>
+  api.post(`/shops/${slug}/golive`, data).then(r => r.data);
+
+export const withdrawGoLive = (slug) =>
+  api.post(`/shops/${slug}/golive/withdraw`).then(r => r.data);
+
+export const resendReviewLink = (slug) =>
+  api.post(`/shops/${slug}/golive/resend`).then(r => r.data);
+
+export const listReviewFeedback = (slug, includeResolved = false) =>
+  api.get(`/shops/${slug}/golive/feedback?include_resolved=${includeResolved}`).then(r => r.data);
+
+export const resolveFeedback = (slug, id, resolved = true) =>
+  api.post(`/shops/${slug}/golive/feedback/${id}/resolve`, { resolved }).then(r => r.data);
+
+export const setShopStage = (slug, stage) =>
+  api.put(`/shops/${slug}/stage`, { stage }).then(r => r.data);
+
 export default api;

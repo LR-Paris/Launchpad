@@ -954,10 +954,18 @@ async function sendCancellationEmail(orderData, shopSlug, opts = {}) {
 }
 
 module.exports = {
+  // Exported so authz.js can notify shop owners about an access request without
+  // building a second Mailgun path. Nothing else in this file changed.
+  sendMail,
   sendOrderConfirmation,
   sendShippedNotification,
   sendCancellationEmail,
   getAdminEmail,
   getShopBranding,
   esc,
+  // Also exported for golive.js, so the review emails use the same
+  // branded shell and the same from address as the order emails.
+  emailShell,
+  getFromAddress,
+  getBaseUrl,
 };

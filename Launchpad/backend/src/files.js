@@ -7,8 +7,19 @@ const AdmZip = require('adm-zip');
 const { checkShopPermission } = require('./users');
 const { requireUnlocked } = require('./lock');
 const { renameCollectionInCsv, renameItemInCsv } = require('./inventory');
+const { requireShopAccess, audit, refuse } = require('./authz');
+const { readEntryData, entryFileType, ZipEntryError } = require('./safe-zip');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// ADR-001. The viewer/editor/owner floor is mounted in index.js (GET viewer,
+// DELETE owner, everything else editor). Raised here: a full DATABASE export is
+// the whole client catalog and order history leaving the server in one zip, so
+// it takes more than read access.
+// ---------------------------------------------------------------------------
+router.use('/:slug/database/export', requireShopAccess('editor'));
+
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
 // Parse a path under DATABASE/ShopCollections to figure out whether a rename
@@ -29,6 +40,15 @@ function classifyCollectionPath(relPath) {
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
 
+// Thrown by the zip checks below so a bad upload comes back as a refusal a
+// person can act on, rather than as a 500.
+class PreflightFailure extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'PreflightFailure';
+  }
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
@@ -43,13 +63,44 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
+// A slug is a directory name, never a path. It arrives as a route parameter,
+// and Express decodes %2F in route parameters, so "a%2F..%2F.." would otherwise
+// reach path.resolve as a path of its own and move the shop directory itself.
+const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+// Every path in this module goes through here. It answers one question: does
+// this resolve to something inside this one shop's folder, yes or no.
 function safeShopPath(slug, relPath) {
+  if (!SLUG_RE.test(String(slug || ''))) return null;
+  if (relPath != null && String(relPath).includes('\0')) return null;
   const shopDir = path.resolve(SHOPS_DIR, slug);
-  const resolved = path.resolve(shopDir, relPath || '.');
+  const resolved = path.resolve(shopDir, relPath == null ? '.' : String(relPath));
   if (!resolved.startsWith(shopDir + path.sep) && resolved !== shopDir) {
     return null;
   }
   return resolved;
+}
+
+// Folders inside a shop that belong to the DATABASE pipeline rather than to the
+// file browser. Wiping .backups throws away the only way back from a bad apply,
+// and wiping .staging destroys a catalog somebody is in the middle of reviewing.
+const PROTECTED_TOP_LEVEL = new Set(['.staging', '.backups', '.git']);
+
+// Which of those a path falls into, or null.
+function protectedTopLevel(slug, resolved) {
+  const shopDir = path.resolve(SHOPS_DIR, slug);
+  const first = path.relative(shopDir, resolved).split(path.sep)[0];
+  return PROTECTED_TOP_LEVEL.has(first) ? first : null;
+}
+
+// One refusal for "that path is not inside this shop", in the contract's shape.
+// The legacy string refusals elsewhere in this module are left alone: the
+// catalog editor renders `data.error` as text and this is the only place the
+// answer changed.
+function refuseOutsideShop(res, slug) {
+  return refuse(res, 400, 'NOT_PERMITTED',
+    `That path is not inside "${slug}".`,
+    'Give a path inside the shop folder, for example DATABASE/ShopCollections.', false);
 }
 
 const TEXT_EXTENSIONS = new Set([
@@ -183,8 +234,8 @@ router.put('/:slug/files/write', requireUnlocked, (req, res) => {
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, content, 'utf8');
-  req.app.locals.auditLog?.('file_written', { req, details: { slug, path: relPath } });
-  res.json({ message: 'File saved', path: relPath });
+  const audit_id = audit(req, 'file_written', { slug, path: relPath });
+  res.json({ message: 'File saved', path: relPath, audit_id });
 });
 
 // DELETE /api/shops/:slug/files?path=file.txt (requires can_delete)
@@ -201,6 +252,13 @@ router.delete('/:slug/files', requireUnlocked, (req, res) => {
   const resolved = safeShopPath(slug, relPath);
   if (!resolved) return res.status(400).json({ error: 'Invalid path' });
 
+  const protectedDir = protectedTopLevel(slug, resolved);
+  if (protectedDir) {
+    return refuse(res, 400, 'NOT_PERMITTED',
+      `"${protectedDir}" holds this shop's backups and staged uploads and cannot be deleted from the file browser.`,
+      'Use rollback_database if you want an older catalog back.', false);
+  }
+
   if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'File not found' });
 
   const stat = fs.statSync(resolved);
@@ -209,8 +267,8 @@ router.delete('/:slug/files', requireUnlocked, (req, res) => {
   } else {
     fs.unlinkSync(resolved);
   }
-  req.app.locals.auditLog?.('file_deleted', { req, details: { slug, path: relPath, isDirectory: stat.isDirectory() } });
-  res.json({ message: 'Deleted', path: relPath });
+  const audit_id = audit(req, 'file_deleted', { slug, path: relPath, isDirectory: stat.isDirectory() });
+  res.json({ message: 'Deleted', path: relPath, audit_id });
 });
 
 // POST /api/shops/:slug/files/upload-zip?path=DATABASE
@@ -229,6 +287,7 @@ const uploadZip = multer({
 });
 
 const MAX_ZIP_EXTRACTED_SIZE = 500 * 1024 * 1024; // 500MB max uncompressed
+const MAX_ZIP_ENTRIES = 20000;                    // same ceiling as the staging pipeline
 
 router.post('/:slug/files/upload-zip', requireUnlocked, uploadZip.single('file'), (req, res) => {
   if (!checkShopPermission(req, 'can_edit_ui')) {
@@ -236,29 +295,52 @@ router.post('/:slug/files/upload-zip', requireUnlocked, uploadZip.single('file')
   }
   const { slug } = req.params;
   const relPath = req.query.path || 'DATABASE';
-  const shopDir = path.resolve(SHOPS_DIR, slug);
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const cleanup = () => { try { fs.unlinkSync(req.file.path); } catch { /* best effort */ } };
+
+  // THE fix for the hole this route used to have: the target is resolved and
+  // confined before anything is deleted. It used to be path.join(shopDir,
+  // relPath) with no check at all, so ?path=../../data rm -rf'd the backend's
+  // own database folder.
+  const shopDir = path.resolve(SHOPS_DIR, slug);
+  const targetDir = safeShopPath(slug, relPath);
+  if (!targetDir) {
+    cleanup();
+    return refuseOutsideShop(res, slug);
+  }
+  if (targetDir === shopDir) {
+    cleanup();
+    return refuse(res, 400, 'NOT_PERMITTED',
+      `A zip cannot replace the whole "${slug}" folder.`,
+      'Upload into a folder inside the shop, for example DATABASE.', false);
+  }
+  const firstSegment = protectedTopLevel(slug, targetDir);
+  if (firstSegment) {
+    cleanup();
+    return refuse(res, 400, 'NOT_PERMITTED',
+      `"${firstSegment}" belongs to the upload and backup pipeline and cannot be replaced by a zip.`,
+      'Use stage_database and apply_database for catalog changes.', false);
+  }
+
+  // Extract beside the target and swap. The old code deleted the target first,
+  // so a zip that failed halfway left the shop with a half-written DATABASE and
+  // no way back.
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const parentDir = path.dirname(targetDir);
+  const baseName = path.basename(targetDir);
+  // Hidden names, so a half-finished upload that a crash left behind does not
+  // look like shop content in the file browser.
+  const incomingDir = path.join(parentDir, `.${baseName}.incoming-${stamp}`);
+  const replacedDir = path.join(parentDir, `.${baseName}.replaced-${stamp}`);
 
   try {
     const zip = new AdmZip(req.file.path);
     const entries = zip.getEntries();
-
-    // Zip bomb protection: check total uncompressed size
-    let totalSize = 0;
-    for (const entry of entries) {
-      totalSize += entry.header.size;
-      if (totalSize > MAX_ZIP_EXTRACTED_SIZE) {
-        fs.unlinkSync(req.file.path);
-        return res.status(400).json({ error: `Zip uncompressed size exceeds ${MAX_ZIP_EXTRACTED_SIZE / 1024 / 1024}MB limit` });
-      }
+    if (!entries.length) throw new PreflightFailure('That zip is empty.');
+    if (entries.length > MAX_ZIP_ENTRIES) {
+      throw new PreflightFailure(`That zip has ${entries.length} entries, more than the ${MAX_ZIP_ENTRIES} allowed.`);
     }
-
-    // Delete the existing target folder entirely so the zip fully replaces it
-    const targetDir = path.join(shopDir, relPath);
-    if (fs.existsSync(targetDir)) {
-      fs.rmSync(targetDir, { recursive: true, force: true });
-    }
-    fs.mkdirSync(targetDir, { recursive: true });
 
     // Determine which top-level prefix to strip so files always land directly
     // in targetDir regardless of how the zip was created.
@@ -271,7 +353,7 @@ router.post('/:slug/files/upload-zip', requireUnlocked, uploadZip.single('file')
     }
 
     let stripPrefix = '';
-    const targetName = path.basename(relPath);
+    const targetName = baseName;
     if (topLevelNames.size === 1) {
       // Single meaningful top-level folder — always strip it
       stripPrefix = [...topLevelNames][0] + '/';
@@ -286,38 +368,96 @@ router.post('/:slug/files/upload-zip', requireUnlocked, uploadZip.single('file')
       }
     }
 
+    fs.mkdirSync(incomingDir, { recursive: true });
+
     let fileCount = 0;
+    let writtenBytes = 0;
     for (const entry of entries) {
       // Skip OS junk entries entirely
       const firstPart = entry.entryName.split('/')[0];
       if (JUNK.has(firstPart)) continue;
 
-      let entryName = entry.entryName;
+      const rawName = entry.entryName;
+      if (rawName.includes('\0') || rawName.includes('\\') || rawName.startsWith('/') || /^[A-Za-z]:/.test(rawName)) {
+        throw new PreflightFailure(`The zip entry "${rawName}" is not a path inside the folder it is being unpacked into.`);
+      }
+      if (rawName.split('/').some((part) => part === '..')) {
+        throw new PreflightFailure(`The zip entry "${rawName}" points outside the folder it is being unpacked into.`);
+      }
+
+      // A symlink or a device node written out as a regular file is a way back
+      // out of this folder. The staging pipeline has refused these since day
+      // one; this route wrote them.
+      const type = entryFileType(entry);
+      if (!entry.isDirectory && type !== 'regular' && type !== 'directory') {
+        throw new PreflightFailure(`The zip entry "${rawName}" is a ${type}, not a file or a folder.`);
+      }
+
+      let entryName = rawName;
       if (stripPrefix && entryName.startsWith(stripPrefix)) {
         entryName = entryName.slice(stripPrefix.length);
       }
       if (!entryName) continue; // skip the root directory entry itself
 
-      const destPath = path.join(targetDir, entryName);
-      // Prevent path traversal
-      if (!destPath.startsWith(targetDir + path.sep) && destPath !== targetDir) continue;
+      const destPath = path.resolve(incomingDir, entryName);
+      // Prevent path traversal. Refuse the zip rather than skipping the entry:
+      // a zip that tries this is not one to extract the safe parts of.
+      if (!destPath.startsWith(incomingDir + path.sep) && destPath !== incomingDir) {
+        throw new PreflightFailure(`The zip entry "${rawName}" resolves outside the folder it is being unpacked into.`);
+      }
 
       if (entry.isDirectory) {
         fs.mkdirSync(destPath, { recursive: true });
       } else {
+        // The 500 MB cap used to be checked against entry.header.size, which is
+        // a number the uploader writes into the zip. This inflates with a hard
+        // cap instead, so the size that counts is the one measured here.
+        const allowance = MAX_ZIP_EXTRACTED_SIZE - writtenBytes;
+        let data;
+        try {
+          data = readEntryData(entry, allowance);
+        } catch (err) {
+          if (err instanceof ZipEntryError) {
+            throw new PreflightFailure(err.code === 'ZIP_ENTRY_TOO_LARGE'
+              ? `That zip unpacks to more than the ${MAX_ZIP_EXTRACTED_SIZE / 1024 / 1024}MB limit.`
+              : err.message);
+          }
+          throw err;
+        }
+        writtenBytes += data.length;
         fs.mkdirSync(path.dirname(destPath), { recursive: true });
-        fs.writeFileSync(destPath, entry.getData());
+        fs.writeFileSync(destPath, data);
         fileCount++;
       }
     }
 
-    // Clean up temp file
-    try { fs.unlinkSync(req.file.path); } catch {}
+    // Swap: the old folder only goes away once the new one is complete on disk.
+    let hadTarget = false;
+    if (fs.existsSync(targetDir)) {
+      fs.renameSync(targetDir, replacedDir);
+      hadTarget = true;
+    } else {
+      fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+    }
+    try {
+      fs.renameSync(incomingDir, targetDir);
+    } catch (err) {
+      if (hadTarget) fs.renameSync(replacedDir, targetDir); // put it back
+      throw err;
+    }
+    if (hadTarget) fs.rmSync(replacedDir, { recursive: true, force: true });
 
-    req.app.locals.auditLog?.('zip_uploaded', { req, details: { slug, path: relPath, fileCount } });
-    res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath });
+    cleanup();
+
+    const audit_id = audit(req, 'zip_uploaded', { slug, path: relPath, fileCount, bytes: writtenBytes });
+    res.json({ message: `Extracted ${fileCount} file(s) from zip`, path: relPath, audit_id });
   } catch (err) {
-    try { fs.unlinkSync(req.file.path); } catch {}
+    cleanup();
+    fs.rmSync(incomingDir, { recursive: true, force: true });
+    if (err instanceof PreflightFailure) {
+      return refuse(res, 400, 'PREFLIGHT_FAILED', err.message,
+        'Fix that in the folder you zipped and upload it again.', true);
+    }
     res.status(400).json({ error: 'Failed to extract zip: ' + err.message });
   }
 });
@@ -339,8 +479,8 @@ router.post('/:slug/files/replace', requireUnlocked, upload.single('file'), (req
 
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.renameSync(req.file.path, resolved);
-  req.app.locals.auditLog?.('file_replaced', { req, details: { slug, path: relPath } });
-  res.json({ message: 'File replaced', path: relPath });
+  const audit_id = audit(req, 'file_replaced', { slug, path: relPath });
+  res.json({ message: 'File replaced', path: relPath, audit_id });
 });
 
 // POST /api/shops/:slug/files/upload?path=subdir (requires can_edit_ui)
@@ -367,8 +507,8 @@ router.post('/:slug/files/upload', requireUnlocked, upload.array('files', 20), (
     saved.push(safeName);
   }
 
-  req.app.locals.auditLog?.('files_uploaded', { req, details: { slug, path: relPath, files: saved } });
-  res.json({ message: `Uploaded ${saved.length} file(s)`, files: saved });
+  const audit_id = audit(req, 'files_uploaded', { slug, path: relPath, files: saved });
+  res.json({ message: `Uploaded ${saved.length} file(s)`, files: saved, audit_id });
 });
 
 // POST /api/shops/:slug/files/rename — rename a file or directory in place
@@ -408,8 +548,8 @@ router.post('/:slug/files/rename', requireUnlocked, (req, res) => {
     console.error(`[files] rename inventory sync failed for ${slug}:`, err.message);
   }
 
-  req.app.locals.auditLog?.('file_renamed', { req, details: { slug, from, to, inventoryUpdated } });
-  res.json({ message: 'Renamed', from, to, inventoryUpdated });
+  const audit_id = audit(req, 'file_renamed', { slug, from, to, inventoryUpdated });
+  res.json({ message: 'Renamed', from, to, inventoryUpdated, audit_id });
 });
 
 // POST /api/shops/:slug/files/move — move a file or directory across parents
@@ -446,8 +586,8 @@ router.post('/:slug/files/move', requireUnlocked, (req, res) => {
     console.error(`[files] move inventory sync failed for ${slug}:`, err.message);
   }
 
-  req.app.locals.auditLog?.('file_moved', { req, details: { slug, from, to, inventoryUpdated } });
-  res.json({ message: 'Moved', from, to, inventoryUpdated });
+  const audit_id = audit(req, 'file_moved', { slug, from, to, inventoryUpdated });
+  res.json({ message: 'Moved', from, to, inventoryUpdated, audit_id });
 });
 
 // POST /api/shops/:slug/files/copy — recursively copy a file or directory
@@ -470,8 +610,8 @@ router.post('/:slug/files/copy', requireUnlocked, (req, res) => {
   fs.mkdirSync(path.dirname(toAbs), { recursive: true });
   fs.cpSync(fromAbs, toAbs, { recursive: true });
 
-  req.app.locals.auditLog?.('file_copied', { req, details: { slug, from, to } });
-  res.json({ message: 'Copied', from, to });
+  const audit_id = audit(req, 'file_copied', { slug, from, to });
+  res.json({ message: 'Copied', from, to, audit_id });
 });
 
 // GET /api/shops/:slug/database/export — stream the shop's DATABASE/ as a zip
@@ -480,7 +620,10 @@ router.get('/:slug/database/export', (req, res) => {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
-  const dbDir = path.join(SHOPS_DIR, slug, 'DATABASE');
+  // Through safeShopPath like everything else here, so a slug that is not a
+  // plain directory name cannot reach the filesystem.
+  const dbDir = safeShopPath(slug, 'DATABASE');
+  if (!dbDir) return refuseOutsideShop(res, slug);
   if (!fs.existsSync(dbDir)) return res.status(404).json({ error: 'DATABASE folder not found' });
 
   const zip = new AdmZip();
@@ -504,7 +647,7 @@ router.get('/:slug/database/export', (req, res) => {
   const filename = `${slug}-database-${today}.zip`;
   const buffer = zip.toBuffer();
 
-  req.app.locals.auditLog?.('database_exported', { req, details: { slug, bytes: buffer.length } });
+  audit(req, 'database_exported', { slug, bytes: buffer.length });
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Content-Length', buffer.length);

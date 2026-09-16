@@ -6,13 +6,15 @@ import {
   listShopFiles, readShopFile, writeShopFile, deleteShopFile, uploadShopFiles,
   getShopImageUrl, replaceShopFile, checkShopUpdate, installShopUpdate, wipeOrders,
   getShopVersion, upgradeShop, getDatabaseExportUrl,
+  getPreflight, getApprovalStatus, requestGoLive, withdrawGoLive, resendReviewLink,
+  listReviewFeedback, resolveFeedback, setShopStage,
 } from '../lib/api';
 import { usePermissions } from '../lib/permissions';
 import {
   ArrowLeft, ChevronDown, Rocket, Trash2, Terminal, Database, Save, RefreshCw,
   Play, Square, RotateCcw, Folder, FileText, ChevronRight, X, Eye, EyeOff,
   Upload, Copy, ImageIcon, Store, SlidersHorizontal, Check, Download, ShoppingCart,
-  ArrowUpCircle, Settings2, Package, Lock,
+  ArrowUpCircle, Settings2, Package, Lock, ShieldCheck, Send, AlertTriangle, MessageSquare,
 } from 'lucide-react';
 import KeyValueEditor from '../components/KeyValueEditor';
 
@@ -20,6 +22,16 @@ import KeyValueEditor from '../components/KeyValueEditor';
 const SETTINGS_ORDER = [
   'companyname', 'password', 'adminemail', 'descriptions', 'colors', 'fonts', 'style',
 ];
+
+// The shops table stores lifecycle_status; the three stages the ADR talks about
+// are a view over it. Keep this in step with LIFECYCLE_TO_STAGE in golive.js.
+const LIFECYCLE_TO_STAGE = {
+  none: 'no_status',
+  development: 'in_testing',
+  testing: 'in_testing',
+  active: 'in_production',
+  closed: 'no_status',
+};
 
 function sortEntries(entries) {
   return [...entries].sort((a, b) => {
@@ -38,7 +50,7 @@ export default function Settings() {
   const { slug } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { getShopPerms } = usePermissions();
+  const { getShopPerms, isSuperAdmin, isAdminOrAbove } = usePermissions();
   const perms = getShopPerms(slug);
   const canEditUI = perms.can_edit_ui;
 
@@ -476,6 +488,22 @@ export default function Settings() {
     onError: (err) => setMessage(err.response?.data?.error || 'Delete failed'),
   });
 
+  // Moving the stage re-renders the shop's SHOP_STAGE and rebuilds it, so the
+  // internal-only banner on the storefront always matches what Launchpad says.
+  const stageMutation = useMutation({
+    mutationFn: ({ targetSlug, stage }) => setShopStage(targetSlug, stage),
+    onSuccess: (data) => {
+      setSaveError('');
+      setSaveSuccess(`Stage set to ${data.stage_label}.${data.rebuilt ? ' The shop is rebuilding.' : ''}`);
+      queryClient.invalidateQueries({ queryKey: ['shops'] });
+      queryClient.invalidateQueries({ queryKey: ['golive', slug] });
+      setTimeout(() => setSaveSuccess(''), 4000);
+    },
+    onError: (err) => setSaveError(
+      err.response?.data?.error?.message || err.response?.data?.error || 'Could not change the stage.'
+    ),
+  });
+
   const updateMutation = useMutation({
     mutationFn: ({ targetSlug, data }) => updateShop(targetSlug, data),
     onSuccess: (data, variables) => {
@@ -683,6 +711,9 @@ export default function Settings() {
   const logOutput = [deployLog, logsData?.logs].filter(Boolean).join('\n\n--- Live Logs ---\n');
   const currentShop = allShops.find((s) => s.slug === slug);
   const currentStatus = currentShop?.status ?? 'stopped';
+  const currentStage = LIFECYCLE_TO_STAGE[currentShop?.lifecycle_status || 'none'] || 'no_status';
+  // can_delete is what an owner has in the legacy booleans.
+  const isOwner = isAdminOrAbove || perms.can_delete;
 
   return (
     <div className="max-w-4xl lp-fadein">
@@ -704,35 +735,48 @@ export default function Settings() {
         <div className="rounded-md border border-border bg-card px-4 py-3 text-sm mb-4 font-mono">{message}</div>
       )}
 
-      {/* Lifecycle Status */}
-      <div className="flex items-center gap-3 mb-5">
-        <span className="text-xs font-semibold text-muted-foreground" style={{ fontFamily: 'Syne, sans-serif' }}>Status</span>
+      {/* Stage
+          Owners move a shop between No status and In testing freely. Only a
+          super admin can put one in production, and the client's approval and
+          the launch checks sit right next to the button so the person clicking
+          it can see both. */}
+      <div className="flex items-start gap-3 mb-5 flex-wrap">
+        <span className="text-xs font-semibold text-muted-foreground pt-1.5" style={{ fontFamily: 'Syne, sans-serif' }}>Stage</span>
         <div className="flex items-center gap-1">
           {[
-            ['none', 'No Status', 'bg-secondary text-muted-foreground border-border/60 hover:bg-accent'],
-            ['development', 'Development', 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'],
-            ['testing', 'In Testing', 'bg-amber-500/10 text-amber-400 border-amber-500/25 hover:bg-amber-500/20'],
-            ['active', 'Active', 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20'],
-            ['closed', 'Closed', 'bg-zinc-500/10 text-zinc-400 border-zinc-500/25 hover:bg-zinc-500/20'],
+            ['no_status', 'No Status', 'bg-secondary text-muted-foreground border-border/60 hover:bg-accent'],
+            ['in_testing', 'In Testing', 'bg-amber-500/10 text-amber-400 border-amber-500/25 hover:bg-amber-500/20'],
+            ['in_production', 'In Production', 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20'],
           ].map(([value, label, cls]) => {
-            const isActive = (currentShop?.lifecycle_status || 'none') === value;
+            const isCurrent = currentStage === value;
+            const blocked = value === 'in_production' && !isSuperAdmin;
             return (
               <button
                 key={value}
+                disabled={blocked || stageMutation.isPending}
+                title={blocked ? 'Only a super admin can put a shop in production.' : undefined}
                 onClick={() => {
-                  updateMutation.mutate({ targetSlug: slug, data: { lifecycle_status: value } });
+                  if (value === 'in_production' && !window.confirm(
+                    'Put this shop in production? The internal-only banner comes off, the site becomes indexable, and the shop rebuilds.'
+                  )) return;
+                  stageMutation.mutate({ targetSlug: slug, stage: value });
                 }}
                 className={`text-[11px] font-mono font-medium px-2 py-1 rounded border transition-all ${
-                  isActive
+                  isCurrent
                     ? cls + ' ring-1 ring-primary/40'
                     : 'bg-secondary/30 text-muted-foreground/50 border-border/30 hover:bg-secondary/60 hover:text-muted-foreground'
-                }`}
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
               >
                 {label}
               </button>
             );
           })}
         </div>
+        <span className="text-[10px] text-muted-foreground/60 font-mono pt-1.5">
+          {currentStage === 'in_production'
+            ? 'Live. No banner, indexable.'
+            : 'Shows the internal-only banner and is not indexed.'}
+        </span>
       </div>
 
       {/* Storefront language + Database export */}
@@ -776,6 +820,8 @@ export default function Settings() {
       </div>
 
       <div className="space-y-5">
+
+        <GoLivePanel slug={slug} isOwner={isOwner} stage={currentStage} />
 
         {/* Shop Settings — DATABASE/Design/Details */}
         <div className={`lp-card rounded-xl overflow-hidden${!detailsLoading ? ' lp-fadein' : ''}`}>
@@ -1609,6 +1655,277 @@ export default function Settings() {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Go live
+//
+// The client's approval is evidence, not the trigger. This panel puts that
+// evidence and the launch checks next to the Stage buttons above, so whoever
+// moves a shop to production can see both before they click.
+// ---------------------------------------------------------------------------
+
+function formatWhen(ms) {
+  if (!ms) return '';
+  return new Date(ms).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function errorText(err, fallback) {
+  return err?.response?.data?.error?.message || err?.response?.data?.error || fallback;
+}
+
+function GoLivePanel({ slug, isOwner, stage }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(true);
+  const [clientEmail, setClientEmail] = useState('');
+  const [note, setNote] = useState('');
+  const [panelError, setPanelError] = useState('');
+  const [panelNotice, setPanelNotice] = useState('');
+
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ['golive', slug],
+    queryFn: () => getApprovalStatus(slug),
+    retry: false,
+  });
+
+  const { data: preflightData, isFetching: preflightFetching, refetch: refetchPreflight } = useQuery({
+    queryKey: ['preflight', slug],
+    queryFn: () => getPreflight(slug),
+    retry: false,
+  });
+
+  const { data: feedbackData } = useQuery({
+    queryKey: ['review-feedback', slug],
+    queryFn: () => listReviewFeedback(slug),
+    retry: false,
+  });
+
+  const afterChange = (message) => {
+    setPanelError('');
+    setPanelNotice(message);
+    queryClient.invalidateQueries({ queryKey: ['golive', slug] });
+    queryClient.invalidateQueries({ queryKey: ['review-feedback', slug] });
+    setTimeout(() => setPanelNotice(''), 5000);
+  };
+
+  const requestMutation = useMutation({
+    mutationFn: () => requestGoLive(slug, { client_email: clientEmail.trim(), note: note.trim() }),
+    onSuccess: () => { setClientEmail(''); setNote(''); afterChange('The review link was sent.'); },
+    onError: (err) => setPanelError(errorText(err, 'Could not send the review link.')),
+  });
+
+  const withdrawMutation = useMutation({
+    mutationFn: () => withdrawGoLive(slug),
+    onSuccess: () => afterChange('The review was withdrawn and the old link stopped working.'),
+    onError: (err) => setPanelError(errorText(err, 'Could not withdraw the review.')),
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: () => resendReviewLink(slug),
+    onSuccess: () => afterChange('A new link was sent. The old one stopped working.'),
+    onError: (err) => setPanelError(errorText(err, 'Could not resend the link.')),
+  });
+
+  const resolveMutation = useMutation({
+    mutationFn: (id) => resolveFeedback(slug, id, true),
+    onSuccess: () => afterChange('Comment marked as done.'),
+    onError: (err) => setPanelError(errorText(err, 'Could not update the comment.')),
+  });
+
+  const preflight = preflightData?.preflight;
+  const active = status?.active;
+  const approval = status?.approval;
+  const comments = feedbackData?.comments || [];
+
+  return (
+    <div className="lp-card rounded-xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-5 py-3 hover:bg-foreground/[0.02] transition-colors text-left"
+      >
+        <ShieldCheck className="h-4 w-4 text-primary/70" />
+        <h2 className="text-sm font-bold" style={{ fontFamily: 'Syne, sans-serif' }}>Go Live</h2>
+        <span className="text-xs text-muted-foreground font-mono ml-1">Client review and launch checks</span>
+        {approval?.status === 'approved' && (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/25">
+            Approved
+          </span>
+        )}
+        {comments.length > 0 && (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/25">
+            {comments.length} open
+          </span>
+        )}
+        <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-5">
+          {/* Approval evidence */}
+          <div className="rounded-lg border border-border/50 px-4 py-3">
+            <p className="text-xs font-semibold mb-1" style={{ fontFamily: 'Syne, sans-serif' }}>Client approval</p>
+            {statusLoading ? (
+              <p className="text-xs text-muted-foreground font-mono">Loading</p>
+            ) : approval?.status === 'approved' ? (
+              <p className="text-xs text-emerald-400 font-mono">
+                Approved by {approval.decided_by_name} ({approval.decided_by_email}) on {formatWhen(approval.decided_at)}.
+              </p>
+            ) : approval?.status === 'changes_requested' ? (
+              <p className="text-xs text-amber-400 font-mono">
+                {approval.decided_by_name} asked for changes on {formatWhen(approval.decided_at)}.
+              </p>
+            ) : active ? (
+              <p className="text-xs text-muted-foreground font-mono">
+                Waiting on {active.client_email}. Sent {formatWhen(active.requested_at)}, expires {formatWhen(active.expires_at)}.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground font-mono">
+                No client has approved this shop. Approval is a record, not a release. Moving the stage above is what changes the site.
+              </p>
+            )}
+            {stage === 'in_production' && approval?.status !== 'approved' && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                This shop is in production with no client approval on file.
+              </p>
+            )}
+          </div>
+
+          {/* Launch checks */}
+          <div className="rounded-lg border border-border/50 px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <p className="text-xs font-semibold" style={{ fontFamily: 'Syne, sans-serif' }}>Launch checks</p>
+              <button
+                type="button"
+                onClick={() => refetchPreflight()}
+                className="text-[10px] font-mono text-muted-foreground hover:text-primary ml-auto inline-flex items-center gap-1"
+              >
+                <RefreshCw className={`h-3 w-3 ${preflightFetching ? 'animate-spin' : ''}`} />
+                Run again
+              </button>
+            </div>
+            {!preflight ? (
+              <p className="text-xs text-muted-foreground font-mono">Running</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {preflight.checks.map((c) => (
+                  <li key={c.id} className="flex items-start gap-2">
+                    {c.ok
+                      ? <Check className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-400" />
+                      : <X className="h-3.5 w-3.5 shrink-0 mt-0.5 text-destructive" />}
+                    <span className="text-xs">
+                      <span className={c.ok ? 'text-muted-foreground' : 'text-foreground font-medium'}>{c.label}</span>
+                      {c.detail && <span className="text-muted-foreground/70"> {c.detail}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Ask the client */}
+          {isOwner && (
+            <div className="rounded-lg border border-border/50 px-4 py-3">
+              <p className="text-xs font-semibold mb-2" style={{ fontFamily: 'Syne, sans-serif' }}>Ask the client to review</p>
+              {active ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-mono">
+                    A review is open with {active.client_email}.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => resendMutation.mutate()}
+                    disabled={resendMutation.isPending}
+                    className="text-[11px] font-mono px-2 py-1 rounded border border-border/50 hover:border-primary/40 transition-all disabled:opacity-50"
+                  >
+                    Resend link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Withdraw this review? The link the client has stops working right away.')) {
+                        withdrawMutation.mutate();
+                      }
+                    }}
+                    disabled={withdrawMutation.isPending}
+                    className="text-[11px] font-mono px-2 py-1 rounded border border-border/50 hover:border-destructive/40 hover:text-destructive transition-all disabled:opacity-50"
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="Client email address"
+                    className="w-full bg-input border border-border/50 rounded-md px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary/40"
+                  />
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    rows={2}
+                    maxLength={1000}
+                    placeholder="Anything you want them to look at first (optional)"
+                    className="w-full bg-input border border-border/50 rounded-md px-3 py-2 text-xs focus:outline-none focus:border-primary/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => requestMutation.mutate()}
+                    disabled={requestMutation.isPending || !clientEmail.trim()}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded border border-primary/40 text-primary hover:bg-primary/10 transition-all disabled:opacity-50"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Send review link
+                  </button>
+                  <p className="text-[10px] text-muted-foreground/60 font-mono">
+                    The link works for 30 days, needs no password, and dies if you resend or withdraw it.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* What the client said */}
+          {comments.length > 0 && (
+            <div className="rounded-lg border border-border/50 px-4 py-3">
+              <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ fontFamily: 'Syne, sans-serif' }}>
+                <MessageSquare className="h-3.5 w-3.5 text-primary/70" />
+                What the client said
+              </p>
+              <ul className="space-y-2">
+                {comments.map((c) => (
+                  <li key={c.id} className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground/60">
+                        {c.target_ref || 'The site in general'}
+                        {c.author_name ? `, ${c.author_name}` : ''}
+                      </p>
+                      <p className="text-xs whitespace-pre-wrap break-words">{c.body}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => resolveMutation.mutate(c.id)}
+                      className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-border/50 hover:border-emerald-500/40 hover:text-emerald-400 transition-all shrink-0"
+                    >
+                      Done
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {panelNotice && <p className="text-xs text-emerald-400 font-mono">{panelNotice}</p>}
+          {panelError && <p className="text-xs text-destructive font-mono">{panelError}</p>}
+        </div>
+      )}
     </div>
   );
 }

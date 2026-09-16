@@ -254,15 +254,28 @@ function cleanupExpiredOTPs() {
 // ---------------------------------------------------------------------------
 // Permission check helpers (for use in route handlers)
 // ---------------------------------------------------------------------------
+// ADR-001: an account role only means something on the web console. A signed
+// tool request is never an admin, even when the row says super_admin, so every
+// check that reads the role has to ask how the request arrived. Without this,
+// "admin" leaked back in through the legacy boolean checks in files.js and
+// orders.js, which call checkShopPermission rather than requireShopAccess.
+function isWebAdmin(req) {
+  const user = req.session?.user;
+  if (!user) return false;
+  if (req.via === 'mcp') return false;
+  return user.role === 'super_admin' || user.role === 'admin';
+}
+
 function checkShopPermission(req, permission) {
   const user = req.session?.user;
   if (!user) return false;
-  if (user.role === 'super_admin' || user.role === 'admin') return true;
+  if (isWebAdmin(req)) return true;
   const perms = getUserShopPermissions(user.id, req.params.slug);
   return perms && !!perms[permission];
 }
 
 function checkRole(req, ...roles) {
+  if (req.via === 'mcp') return false;
   return req.session?.user && roles.includes(req.session.user.role);
 }
 
@@ -274,6 +287,20 @@ function isAdminOrAbove(req) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.session?.user) return res.status(401).json({ error: 'Authentication required' });
+    // Fails closed for a signed tool request whatever the account role says.
+    // denyMcp in index.js already keeps the tool server off these mounts; this
+    // is the same answer given one layer down, so a router mounted somewhere
+    // else later still gets it.
+    if (req.via === 'mcp') {
+      return res.status(403).json({
+        error: {
+          code: 'ADMIN_ONLY',
+          message: 'That is admin only, and the dev tool never acts as an admin.',
+          resolution: 'Ask Gio to do this from the Launchpad console.',
+          possible: false,
+        },
+      });
+    }
     if (!roles.includes(req.session.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
@@ -482,8 +509,88 @@ router.put('/:id/permissions', requireRole('super_admin'), (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/me — ADR-001
+//
+// One call that tells a client who it is, whether it is an admin, and exactly
+// which shops it can reach and at what role. Everything else the dev tool does
+// starts from this answer.
+// ---------------------------------------------------------------------------
+const meRouter = express.Router();
+
+meRouter.get('/', (req, res) => {
+  // Required lazily: authz reads users.db through its own handle and this file
+  // is loaded first at boot.
+  const { membershipRole } = require('./authz');
+  const { db: platformDb, SHOPS_DB_PATH } = require('./platform-db');
+
+  const sessionUser = req.session.user;
+  const user = getUserById(sessionUser.id) || sessionUser;
+  const isAdmin = user.role === 'super_admin';
+  // The admin bypass is a web-console convenience, so over MCP an admin sees
+  // only the shops they were actually granted.
+  const seeEverything = isAdmin && req.via !== 'mcp';
+
+  let rows = [];
+  try {
+    const shopsDb = new Database(SHOPS_DB_PATH, { readonly: true });
+    try {
+      rows = shopsDb.prepare(
+        'SELECT slug, name, status, stage, lifecycle_status, port FROM shops ORDER BY name COLLATE NOCASE'
+      ).all();
+    } finally {
+      shopsDb.close();
+    }
+  } catch (err) {
+    // A brand new install has no shops.db yet. An empty list is the right answer.
+    console.error('[me] could not read shops.db:', err.message);
+  }
+
+  const shops = [];
+  for (const shop of rows) {
+    const role = seeEverything ? 'owner' : membershipRole(user.id, shop.slug);
+    if (!role) continue;
+    shops.push({
+      slug: shop.slug,
+      name: shop.name,
+      role,
+      stage: shop.stage || 'no_status',
+      status: shop.status || 'unknown',
+      lifecycle_status: shop.lifecycle_status || 'none',
+    });
+  }
+
+  // "Have we ever seen this person do anything?" There is no first_login column
+  // and adding one would mean a write on every request; the audit log already
+  // answers it and is the only record that matters.
+  let firstLogin = false;
+  try {
+    const seen = platformDb
+      .prepare('SELECT 1 FROM audit_log WHERE user_id = ? LIMIT 1')
+      .get(user.id);
+    firstLogin = !seen;
+  } catch { /* if the audit table is unreadable, do not claim a first login */ }
+
+  res.json({
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    },
+    // Reported the same way it is enforced: over MCP nobody is an admin, so an
+    // agent is never told it has an authority the routes will not honour.
+    is_admin: seeEverything,
+    via: req.via || 'web',
+    shops,
+    first_login: firstLogin,
+  });
+});
+
 module.exports = {
   router,
+  meRouter,
   initUsersDb,
   getUserById,
   getUserByUsername,
@@ -499,6 +606,7 @@ module.exports = {
   checkShopPermission,
   checkRole,
   isAdminOrAbove,
+  isWebAdmin,
   requireRole,
   requireShopPerm,
 };

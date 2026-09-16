@@ -5,8 +5,24 @@ const Database = require('better-sqlite3');
 const { parse } = require('csv-parse/sync');
 
 const { checkShopPermission } = require('./users');
+const { requireShopAccess, audit, refuse } = require('./authz');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// ADR-001. The viewer/editor/owner floor is mounted in index.js. Wiping an
+// order history is not an edit, it is a deletion of the only record of what a
+// client bought, so it is raised to owner here.
+// ---------------------------------------------------------------------------
+router.use('/:slug/orders/wipe', requireShopAccess('owner'));
+
+// Reading a customer list is the kind of thing you want a trail of, so every
+// order read is audited. Writes audit themselves with their own action name.
+router.use('/:slug/orders', (req, res, next) => {
+  if (req.method === 'GET') audit(req, 'read_orders', { path: req.path });
+  next();
+});
+
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'shops.db');
@@ -161,31 +177,66 @@ function findPoFile(slug, rawFilename) {
 }
 
 // GET /api/shops/:slug/orders (requires can_view_orders)
+// Every column of every row was the old answer. It is still the answer the
+// console asks for, because the orders table renders all of it. A caller that
+// says view=summary gets six fields per order instead of forty, which is the
+// difference between an agent reading one page of orders and an agent reading
+// a shop's entire customer list into a metered context.
+const SUMMARY_KEYS = ['Order ID', 'Date', 'Company', 'Name', 'Email', 'Status', 'Tracking', 'Total'];
+
+function summarize(row) {
+  const out = {};
+  for (const key of SUMMARY_KEYS) {
+    if (row[key] !== undefined) out[key] = row[key];
+  }
+  // A CSV whose header does not use our names is better shown whole than empty.
+  return Object.keys(out).length ? out : row;
+}
+
+function readOrders(slug) {
+  const csvPath = findCsvPath(slug);
+  if (!csvPath) return null;
+  backfillStatusColumns(csvPath);
+  const content = fs.readFileSync(csvPath, 'utf8');
+  return parse(content, { columns: true, skip_empty_lines: true, trim: true });
+}
+
+function orderIdOf(row) {
+  return String(row['Order ID'] ?? row.orderId ?? row.OrderID ?? row.id ?? '');
+}
+
 router.get('/:slug/orders', (req, res) => {
   if (!checkShopPermission(req, 'can_view_orders')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   const { slug } = req.params;
-  const csvPath = findCsvPath(slug);
 
-  if (!csvPath) {
-    return res.json({ orders: [] });
-  }
-
-  // Lazy migration: ensure Status/Tracking columns exist
-  backfillStatusColumns(csvPath);
-
+  let records;
   try {
-    const content = fs.readFileSync(csvPath, 'utf8');
-    const records = parse(content, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
-    res.json({ orders: records });
+    records = readOrders(slug);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to parse orders CSV' });
+    return res.status(500).json({ error: 'Failed to parse orders CSV' });
   }
+  if (records === null) return res.json({ orders: [], total: 0, limit: 0, offset: 0 });
+
+  const status = typeof req.query.status === 'string' && req.query.status ? req.query.status.toLowerCase() : null;
+  const filtered = status
+    ? records.filter((r) => String(r['Status'] || '').toLowerCase() === status)
+    : records;
+
+  // No limit means the old behaviour, because the console still wants it all.
+  const hasLimit = req.query.limit !== undefined;
+  const limit = hasLimit ? Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 500) : filtered.length;
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const page = filtered.slice(offset, offset + limit);
+  const summary = req.query.view === 'summary';
+
+  res.json({
+    orders: summary ? page.map(summarize) : page,
+    total: filtered.length,
+    limit,
+    offset,
+  });
 });
 
 // GET /api/shops/:slug/orders/download (requires can_view_orders)
@@ -238,8 +289,8 @@ router.post('/:slug/orders/wipe', (req, res) => {
     }
     // Write back just the header row
     fs.writeFileSync(csvPath, firstLine + '\n');
-    req.app.locals.auditLog?.('orders_wiped', { req, details: { slug } });
-    res.json({ message: 'Orders wiped. CSV header preserved.' });
+    const audit_id = audit(req, 'orders_wiped', { slug });
+    res.json({ message: 'Orders wiped. CSV header preserved.', audit_id });
   } catch (err) {
     console.error(`[orders] wipe ${slug} error:`, err.message);
     res.status(500).json({ error: 'Failed to wipe orders.' });
@@ -458,8 +509,8 @@ router.post('/:slug/orders/:orderId/ship', (req, res) => {
     console.error(`[ship] Email failed for ${slug}/${orderId}: ${err.message}`);
   });
 
-  req.app.locals.auditLog?.('order_shipped', { req, details: { slug, orderId, trackingNumber } });
-  res.json({ message: 'Order marked as shipped', order: updatedRow });
+  const audit_id = audit(req, 'order_shipped', { slug, orderId, trackingNumber });
+  res.json({ message: 'Order marked as shipped', order: updatedRow, audit_id });
 });
 
 // POST /api/shops/:slug/orders/:orderId/cancel — Admin cancel (no time limit, requires can_view_orders)
@@ -506,8 +557,40 @@ router.post('/:slug/orders/:orderId/cancel', (req, res) => {
     console.error(`[cancel] Email failed for ${slug}/${orderId}: ${err.message}`);
   });
 
-  req.app.locals.auditLog?.('order_cancelled', { req, details: { slug, orderId } });
-  res.json({ message: 'Order cancelled', order: updatedRow });
+  const audit_id = audit(req, 'order_cancelled', { slug, orderId });
+  res.json({ message: 'Order cancelled', order: updatedRow, audit_id });
+});
+
+// GET /api/shops/:slug/orders/:orderId — one order.
+//
+// Registered LAST on purpose. /download, /po, /catalog-photos and
+// /product-image are all registered above it, so they win the match; anything
+// else that reaches here is an order id. Orders live in a CSV, so this is a
+// scan, not a lookup, and there is no index to add.
+router.get('/:slug/orders/:orderId', (req, res) => {
+  if (!checkShopPermission(req, 'can_view_orders')) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  const { slug, orderId } = req.params;
+
+  let records;
+  try {
+    records = readOrders(slug);
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to parse orders CSV' });
+  }
+  if (records === null) {
+    return refuse(res, 404, 'NO_SUCH_SHOP', `"${slug}" has no orders file yet.`,
+      'Nobody has ordered from this shop yet.', false);
+  }
+
+  const wanted = String(orderId);
+  const order = records.find((r) => orderIdOf(r) === wanted);
+  if (!order) {
+    return refuse(res, 404, 'NOT_PERMITTED', `There is no order ${wanted} in "${slug}".`,
+      'Call list_orders to see the order numbers this shop has.', false);
+  }
+  res.json({ order });
 });
 
 module.exports = router;

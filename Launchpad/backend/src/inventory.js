@@ -5,8 +5,17 @@ const { parse } = require('csv-parse/sync');
 
 const { checkShopPermission } = require('./users');
 const { requireUnlocked } = require('./lock');
+const { audit } = require('./authz');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// ADR-001. index.js mounts resolveShopAndRole and the viewer/editor/owner floor
+// on every /api/shops/:slug path, which covers everything in this router:
+// reading the manifest is viewer, every seed/bulk/patch is editor. Nothing here
+// deserves owner, so there is nothing to raise.
+// ---------------------------------------------------------------------------
+
 const SHOPS_DIR = path.join(__dirname, '..', 'shops');
 
 // Must match the slugify logic in Shuttle's catalog.ts so product IDs align
@@ -190,7 +199,24 @@ router.get('/:slug/inventory', (req, res) => {
 
   migrateInventoryIds(slug);
   const records = readInventory(slug);
-  res.json({ inventory: records });
+
+  // low_stock_only and paging exist for callers that pay per token. No limit
+  // means the old answer, unchanged, because the catalog editor wants the lot.
+  const lowOnly = req.query.low_stock_only === 'true' || req.query.low_stock_only === '1';
+  const filtered = lowOnly
+    ? records.filter((r) => (parseInt(r['Stock'], 10) || 0) <= 5)
+    : records;
+
+  const hasLimit = req.query.limit !== undefined;
+  const limit = hasLimit ? Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 500) : filtered.length;
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  res.json({
+    inventory: filtered.slice(offset, offset + limit),
+    total: filtered.length,
+    limit,
+    offset,
+  });
 });
 
 // GET /api/shops/:slug/inventory/summary — Lightweight fuel status overview
@@ -254,7 +280,8 @@ router.post('/:slug/inventory/seed', requireUnlocked, (req, res) => {
   }
 
   writeInventory(slug, existing);
-  res.json({ message: `Cargo manifest updated — ${added} new item(s) loaded onto the manifest`, added, total: existing.length });
+  const audit_id = audit(req, 'inventory_seeded', { slug, added });
+  res.json({ message: `Cargo manifest updated — ${added} new item(s) loaded onto the manifest`, added, total: existing.length, audit_id });
 });
 
 // PATCH /api/shops/:slug/inventory/bulk — Bulk update stock (requires can_edit_items)
@@ -289,11 +316,19 @@ router.patch('/:slug/inventory/bulk', requireUnlocked, (req, res) => {
   }
 
   writeInventory(slug, records);
-  res.json({ success: true, message: `${updated} payload(s) updated`, updated });
+  const audit_id = audit(req, 'inventory_bulk_updated', { slug, updated });
+  res.json({ success: true, message: `${updated} payload(s) updated`, updated, audit_id });
 });
 
 // PATCH /api/shops/:slug/inventory/:productId — Update single item (requires can_edit_items)
-router.patch('/:slug/inventory/:productId(*)', requireUnlocked, (req, res) => {
+//
+// The pattern used to be :productId(*), which matches slashes, so
+// .../inventory/a/b/c arrived as one product id containing path separators.
+// Nothing downstream joins it onto a path today, but a wildcard that swallows
+// slashes on a route that takes a user-supplied identifier is one refactor away
+// from being a traversal. Product ids are slugs: letters, digits, dot, dash,
+// underscore, and nothing else.
+router.patch('/:slug/inventory/:productId([A-Za-z0-9._-]+)', requireUnlocked, (req, res) => {
   if (!checkShopPermission(req, 'can_edit_items')) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
@@ -317,7 +352,8 @@ router.patch('/:slug/inventory/:productId(*)', requireUnlocked, (req, res) => {
   record['Last Updated'] = new Date().toISOString();
 
   writeInventory(slug, records);
-  res.json({ success: true, item: record });
+  const audit_id = audit(req, 'inventory_updated', { slug, productId, stock, notes });
+  res.json({ success: true, item: record, audit_id });
 });
 
 module.exports = { router, renameCollectionInCsv, renameItemInCsv };

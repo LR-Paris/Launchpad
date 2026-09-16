@@ -14,6 +14,7 @@ import MissionControl from './pages/MissionControl';
 import Analytics from './pages/Analytics';
 import AdminUsers from './pages/AdminUsers';
 import CheckoutEditor from './pages/CheckoutEditor';
+import ClientReview from './pages/ClientReview';
 import Header from './components/Header';
 import { ShieldX } from 'lucide-react';
 
@@ -70,6 +71,7 @@ function AppContent({ user, theme, toggleTheme }) {
   const location = useLocation();
   const isCatalog = /^\/shops\/[^/]+\/catalog/.test(location.pathname);
   const isMissionControl = location.pathname === '/mission-control';
+  const isClientReview = /^\/review\//.test(location.pathname);
   const [backendDown, setBackendDown] = useState(false);
   const failCount = useRef(0);
 
@@ -90,6 +92,17 @@ function AppContent({ user, theme, toggleTheme }) {
     const id = setInterval(poll, 30000);
     return () => { mounted = false; clearInterval(id); };
   }, []);
+
+  // The client review page is opened from an emailed link by somebody with no
+  // account, so it gets no header, no footer and no auth gate. Everything it
+  // can see is scoped to the one shop its token points at.
+  if (isClientReview) {
+    return (
+      <Routes>
+        <Route path="/review/:token" element={<ClientReview />} />
+      </Routes>
+    );
+  }
 
   // Mission Control is a full-screen immersive layout — no header/footer/padding
   if (isMissionControl) {
