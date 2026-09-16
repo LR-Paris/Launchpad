@@ -7,3 +7,4 @@ dist/
 .DS_Store
 Launchpad/docker-compose.yml
 Launchpad/backend/data/
+Launchpad/backend/nginx/conf.d/shops-locations.inc
