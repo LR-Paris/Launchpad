@@ -198,19 +198,84 @@ async function main() {
     // ---------------------------------------------------------------------
     // 3. Enroll a new person, as the tool server does: actor 0, signed
     // ---------------------------------------------------------------------
+    // Mailgun is not configured in this sandbox, so the code never leaves the
+    // process. Read it the way the web login test does: straight out of the
+    // database it was written to.
+    const platformDbPath = path.join(box.dataDir, 'platform.db');
+    const countUsers = (email) => {
+      const u = new Database(box.usersDbPath, { readonly: true });
+      const row = u.prepare('SELECT COUNT(*) AS n FROM users WHERE lower(email) = lower(?)').get(email);
+      u.close();
+      return row.n;
+    };
+    const pendingCode = (email) => {
+      const pdb = new Database(platformDbPath, { readonly: true });
+      const row = pdb.prepare('SELECT code FROM pending_enrollments WHERE email = ?').get(email);
+      pdb.close();
+      return row && row.code;
+    };
+    const mailedCode = (email) => {
+      const u = new Database(box.usersDbPath, { readonly: true });
+      const row = u.prepare(`SELECT c.code FROM otp_codes c JOIN users usr ON usr.id = c.user_id
+        WHERE lower(usr.email) = lower(?) AND c.used = 0 ORDER BY c.id DESC LIMIT 1`).get(email);
+      u.close();
+      return row && row.code;
+    };
+
     const bad = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'nobody@gmail.com' } });
     eq('an off-domain address cannot enroll', bad.status, 403);
     eq('and it is refused with a code, not a stack trace', bad.json?.error?.code, 'NOT_PERMITTED');
+    eq('the domain check ran before anything was written', pendingCode('nobody@gmail.com'), undefined);
+    eq('and before any account existed', countUsers('nobody@gmail.com'), 0);
 
-    const enroll = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'n.hire@lrparis.com' } });
-    eq('a new colleague enrolls on first sign in', enroll.status, 201);
-    ok('the enrollment created the account', enroll.json?.created === true);
+    // The defect this section exists for: submitting an address used to create
+    // the users row, so anyone who could reach the login page could write rows
+    // into the user admin. It must now create nothing at all.
+    const started = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'n.hire@lrparis.com' } });
+    eq('submitting an address is accepted', started.status, 200);
+    ok('and says only that a code went out', started.json?.sent === true);
+    ok('it hands back no user id', started.json?.user === undefined);
+    eq('NO account row exists before the code is verified', countUsers('n.hire@lrparis.com'), 0);
+    const firstCode = pendingCode('n.hire@lrparis.com');
+    ok('the claim on the address is pending, not a user', typeof firstCode === 'string');
+
+    // An address nobody has ever used and a real colleague's address must be
+    // indistinguishable, or this route answers "does this person work here".
+    const knownStart = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'r.loiseau@lrparis.com' } });
+    const strangerStart = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'no.such.person@lrparis.com' } });
+    eq('a known address and an unknown one answer with the same status', knownStart.status, strangerStart.status);
+    eq('and with the same body', knownStart.text, strangerStart.text);
+    eq('the unknown one still created no account', countUsers('no.such.person@lrparis.com'), 0);
+
+    const wrong = await callMcp(0, 'POST', '/api/mcp/enroll/verify', { body: { email: 'n.hire@lrparis.com', code: '000000' } });
+    eq('a wrong code is refused', wrong.status, 401);
+    eq('a wrong code creates no account', countUsers('n.hire@lrparis.com'), 0);
+
+    // A wrong code for an address that has no pending claim at all has to look
+    // the same as a wrong code for one that does.
+    const wrongUnknown = await callMcp(0, 'POST', '/api/mcp/enroll/verify', { body: { email: 'never.asked@lrparis.com', code: '000000' } });
+    eq('and an unknown address is refused the same way', wrongUnknown.status, wrong.status);
+    eq('with the same body', wrongUnknown.text, wrong.text);
+
+    const enroll = await callMcp(0, 'POST', '/api/mcp/enroll/verify', { body: { email: 'n.hire@lrparis.com', code: firstCode } });
+    eq('a new colleague is signed in by the right code', enroll.status, 201);
+    ok('and only now is the account created', enroll.json?.created === true);
     const newUser = enroll.json?.user?.id;
     ok('and it handed back a user id', Number.isInteger(newUser));
+    eq('the account exists exactly once', countUsers('n.hire@lrparis.com'), 1);
+    eq('the pending claim is consumed', pendingCode('n.hire@lrparis.com'), undefined);
 
-    const second = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'n.hire@lrparis.com' } });
-    eq('enrolling twice does not create a second account', second.json?.user?.id, newUser);
+    // Second time round the same person is an ordinary OTP user: the code is
+    // written to otp_codes by Launchpad's own generateOTP, not to a pending row.
+    const again2 = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'n.hire@lrparis.com' } });
+    eq('a returning person gets the same answer as a new one', again2.text, started.text);
+    eq('and no second pending claim is opened', pendingCode('n.hire@lrparis.com'), undefined);
+    const second = await callMcp(0, 'POST', '/api/mcp/enroll/verify', {
+      body: { email: 'n.hire@lrparis.com', code: mailedCode('n.hire@lrparis.com') },
+    });
+    eq('signing in twice does not create a second account', second.json?.user?.id, newUser);
     eq('and says so', second.json?.created, false);
+    eq('still exactly one row', countUsers('n.hire@lrparis.com'), 1);
 
     const unsigned = await fetch(`${BASE}/api/mcp/enroll`, {
       method: 'POST',
@@ -218,6 +283,44 @@ async function main() {
       body: JSON.stringify({ email: 'n.hire@lrparis.com' }),
     });
     eq('an unsigned enrollment is refused', unsigned.status, 401);
+
+    // ---------------------------------------------------------------------
+    // 3b. cleanup-probe-users.js, on a row of the kind the old ordering left
+    // ---------------------------------------------------------------------
+    {
+      // Exactly what the broken route used to write: a users row for an address
+      // nobody ever proved, with no code verified and no membership.
+      const u = new Database(box.usersDbPath);
+      u.prepare(`INSERT INTO users (username, email, name, role, created_by, can_create_shops)
+        VALUES ('probe.person', 'probe.person@lrparis.com', 'Probe Person', 'user', 'mcp-enroll', 0)`).run();
+      u.close();
+
+      const cleanup = path.join(__dirname, '..', 'scripts', 'cleanup-probe-users.js');
+      const dry = require('child_process').spawnSync(process.execPath, [cleanup], {
+        env: { ...process.env, LAUNCHPAD_DATA_DIR: box.dataDir }, encoding: 'utf8',
+      });
+      eq('cleanup-probe-users exits clean', dry.status, 0);
+      ok('it defaults to a dry run', /DRY RUN/.test(dry.stdout), dry.stdout);
+      ok('and names the row it would delete', /probe\.person@lrparis\.com/.test(dry.stdout), dry.stdout);
+      ok('and does not delete it yet', countUsers('probe.person@lrparis.com') === 1);
+      // n.hire signed in for real a moment ago, through the same route, with the
+      // same created_by. Nothing but the verified sign in separates them.
+      ok('it keeps the colleague who actually signed in',
+        !/n\.hire@lrparis\.com/.test(dry.stdout.split('Would delete')[1] || ''), dry.stdout);
+      ok('and never considers a row created by admin or migration',
+        /never considered/.test(dry.stdout), dry.stdout);
+
+      const applied = require('child_process').spawnSync(process.execPath, [cleanup, '--apply'], {
+        env: { ...process.env, LAUNCHPAD_DATA_DIR: box.dataDir }, encoding: 'utf8',
+      });
+      eq('--apply exits clean', applied.status, 0);
+      eq('the probe row is gone', countUsers('probe.person@lrparis.com'), 0);
+      eq('and the real account is untouched', countUsers('n.hire@lrparis.com'), 1);
+      eq('as is every account that predates the dev tool', countUsers('r.loiseau@lrparis.com'), 1);
+      ok('it wrote a backup of users.db before deleting',
+        fs.readdirSync(box.dataDir).some((f) => f.startsWith('users.db.pre-cleanup-')),
+        fs.readdirSync(box.dataDir).join(' '));
+    }
 
     // ---------------------------------------------------------------------
     // 4. A fresh account sees nothing, and is told who to ask

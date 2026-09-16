@@ -207,4 +207,9 @@ module.exports = {
   loadUsers,
   SESSION_COOKIE_NAME,
   setUserFns,
+  // Exported for the tool server's first sign in (authz.js). It must be this
+  // function and not a copy of it: same Mailgun account, same From address,
+  // same template, same "expires in 10 minutes" sentence. A second mailer is
+  // how two sign-in emails start to disagree about what the code means.
+  sendOTPEmail,
 };

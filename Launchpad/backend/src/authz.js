@@ -16,6 +16,13 @@ const Database = require('better-sqlite3');
 
 const { db: platformDb, USERS_DB_PATH, SHOPS_DB_PATH } = require('./platform-db');
 const fileLock = require('./lock');
+// The tool server's first sign in reuses Launchpad's own OTP machinery rather
+// than growing a second one: the same otp_codes table for people who already
+// have an account, the same ten minute expiry, the same Mailgun sender.
+// users.js only requires this file lazily, inside a function, so there is no
+// cycle. See the enrollment block near the bottom.
+const { generateOTP, verifyOTP } = require('./users');
+const { sendOTPEmail } = require('./auth');
 
 const ROLES = ['viewer', 'editor', 'owner'];
 const RANK = { any: 0, viewer: 1, editor: 2, owner: 3 };
@@ -985,31 +992,150 @@ function uniqueUsername(base) {
 
 const mcpPublicRouter = express.Router();
 
-// POST /api/mcp/enroll — actor 0. Creates the users row on a first sign in, so
-// a new hire does not wait on an admin to type their name into a form.
-mcpPublicRouter.post('/enroll', requireMcp, (req, res) => {
+// ---------------------------------------------------------------------------
+// First sign in, in the order ADR-001 asks for: verify, then create.
+//
+// The first build had it the other way round. Submitting an address created the
+// users row, and the code was only checked afterwards, so anybody who could
+// reach the login page could write an @lrparis.com row into Launchpad's user
+// admin under whatever name they chose. It escalated nothing (no row without a
+// verified code can ever hold a token or a membership) but it was junk in a
+// list people read, and it is not what the ADR says.
+//
+// Moving the INSERT alone does not work, because Launchpad's OTP routes only
+// mail a user that already exists: a colleague who has never signed in has no
+// row to send a code to, and ADR requirement 3 is that they sign in anyway,
+// unaided. So the claim on an address waits somewhere that is not a users row
+// (platform.db pending_enrollments) until the code comes back.
+//
+// Two numbers here are deliberately not tuned. The pending code expires in the
+// same ten minutes generateOTP() gives a real user, and both halves of this
+// flow answer with the same bytes whether or not the address is known. A
+// shorter expiry, a different status, or a different message would each turn
+// this pair of routes into a way to ask Launchpad who works here.
+// ---------------------------------------------------------------------------
+const PENDING_TTL_MS = 10 * 60 * 1000; // same as users.js generateOTP, on purpose
+const PENDING_MAX_ATTEMPTS = 5;
+
+// The email is valid and in an allowed domain, or the response has already been
+// sent and this returns null. The domain check lives here so it runs before any
+// mail is sent and before any row of any kind is written.
+function enrollableEmail(req, res) {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
-    return refuse(res, 400, 'NOT_PERMITTED', 'That is not an email address.',
+    refuse(res, 400, 'NOT_PERMITTED', 'That is not an email address.',
       'Type your work email address and try again.', false);
+    return null;
   }
   const domain = email.split('@')[1];
   if (!enrollDomains().includes(domain)) {
-    return refuse(res, 403, 'NOT_PERMITTED',
+    refuse(res, 403, 'NOT_PERMITTED',
       `The dev tool only signs in ${enrollDomains().join(' or ')} addresses.`,
       'Use your LR Paris work address. If you do not have one, ask Gio.', false);
+    return null;
   }
+  return email;
+}
 
-  const existing = usersDb()
+function userByEmail(email) {
+  return usersDb()
     .prepare('SELECT id, username, email, name, role FROM users WHERE lower(email) = lower(?)')
     .get(email);
+}
+
+// Replaces any code already outstanding for this address, the way generateOTP
+// invalidates a user's previous unused code. Asking twice must not leave two
+// live codes behind.
+function startPendingEnrollment(email) {
+  const now = Date.now();
+  const code = crypto.randomInt(100000, 999999).toString();
+  platformDb.prepare('DELETE FROM pending_enrollments WHERE expires_at < ?').run(now);
+  platformDb.prepare(`
+    INSERT INTO pending_enrollments (email, code, expires_at, attempts, created_at)
+    VALUES (?, ?, ?, 0, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      code = excluded.code, expires_at = excluded.expires_at,
+      attempts = 0, created_at = excluded.created_at
+  `).run(email, code, now + PENDING_TTL_MS, now);
+  return code;
+}
+
+// True exactly once per correct code. The row is consumed on success and on the
+// fifth wrong guess, so a burnt claim cannot be retried.
+function takePendingEnrollment(email, code) {
+  const row = platformDb
+    .prepare('SELECT code, expires_at, attempts FROM pending_enrollments WHERE email = ?')
+    .get(email);
+  if (!row) return false;
+  const drop = () => platformDb.prepare('DELETE FROM pending_enrollments WHERE email = ?').run(email);
+  if (row.expires_at < Date.now() || row.attempts >= PENDING_MAX_ATTEMPTS) {
+    drop();
+    return false;
+  }
+  if (row.code !== code) {
+    platformDb.prepare('UPDATE pending_enrollments SET attempts = attempts + 1 WHERE email = ?').run(email);
+    return false;
+  }
+  drop();
+  return true;
+}
+
+// POST /api/mcp/enroll — actor 0. Step one: check the domain, mail a code.
+// Creates nothing in users.db. The response is the same for an address that
+// has signed in a hundred times and one nobody has ever used.
+mcpPublicRouter.post('/enroll', requireMcp, (req, res) => {
+  const email = enrollableEmail(req, res);
+  if (!email) return undefined;
+
+  const existing = userByEmail(email);
+  let code;
+  try {
+    code = existing ? generateOTP(existing.id) : startPendingEnrollment(email);
+  } catch (err) {
+    console.error(`[authz] could not start a sign in for ${email}: ${err.message}`);
+    return refuse(res, 500, 'NOT_PERMITTED', 'That sign in could not be started just now.',
+      'Try again in a moment. If it keeps happening, tell Gio.', true);
+  }
+
+  // Launchpad's own sender, deliberately. One mail path, one template.
+  sendOTPEmail(email, code, existing ? existing.username : email.split('@')[0]);
+
+  auditRaw({
+    userId: existing ? existing.id : null,
+    username: existing ? existing.username : null,
+    action: 'mcp_enroll_request',
+    detail: { email, known: !!existing },
+    via: 'mcp',
+  });
+  return res.json({ sent: true, expires_in: Math.round(PENDING_TTL_MS / 1000) });
+});
+
+// POST /api/mcp/enroll/verify — actor 0. Step two: prove the mailbox, and only
+// then become a user. This is where the INSERT the ADR asks for happens.
+mcpPublicRouter.post('/enroll/verify', requireMcp, (req, res) => {
+  const email = enrollableEmail(req, res);
+  if (!email) return undefined;
+  const code = String(req.body?.code || '').trim();
+
+  // One refusal for every way this can fail: wrong code, expired code, a code
+  // that was never asked for, an address nobody has ever used. Somebody probing
+  // a colleague's address and somebody probing an invented one get the same
+  // status and the same bytes.
+  const deny = () => refuse(res, 401, 'NOT_PERMITTED', 'That code is wrong or has expired.',
+    'Ask for a new code, then type the one in the most recent email.', false);
+  if (!/^[0-9]{6}$/.test(code)) return deny();
+
+  const existing = userByEmail(email);
   if (existing) {
-    auditRaw({ userId: existing.id, username: existing.username, action: 'mcp_enroll', detail: { email, created: false }, via: 'mcp' });
+    if (!verifyOTP(existing.id, code)) return deny();
+    auditRaw({ userId: existing.id, username: existing.username, action: 'mcp_sign_in', detail: { email, created: false }, via: 'mcp' });
     return res.json({
       user: { id: existing.id, username: existing.username, email: existing.email, name: existing.name },
       created: false,
     });
   }
+
+  if (!takePendingEnrollment(email, code)) return deny();
 
   const local = email.split('@')[0];
   const username = uniqueUsername(local);
@@ -1023,14 +1149,28 @@ mcpPublicRouter.post('/enroll', requireMcp, (req, res) => {
       "INSERT INTO users (username, email, name, role, created_by, can_create_shops) VALUES (?, ?, ?, 'user', 'mcp-enroll', 0)",
     ).run(username, email, name);
   } catch (err) {
+    // Two verifies of the same code cannot both win (takePendingEnrollment
+    // consumes the row), but a retry after a partial write can still land on
+    // the UNIQUE(email) index. If the row is there, the sign in succeeded.
+    const raced = userByEmail(email);
+    if (raced) {
+      return res.json({
+        user: { id: raced.id, username: raced.username, email: raced.email, name: raced.name },
+        created: false,
+      });
+    }
     console.error(`[authz] enroll failed for ${email}: ${err.message}`);
     return refuse(res, 500, 'NOT_PERMITTED', 'That account could not be created just now.',
       'Try again in a moment. If it keeps happening, tell Gio.', true);
   }
 
   const id = Number(info.lastInsertRowid);
-  auditRaw({ userId: id, username, action: 'mcp_enroll', detail: { email, created: true }, via: 'mcp' });
-  res.status(201).json({ user: { id, username, email, name }, created: true });
+  // 'mcp_sign_in' and not 'mcp_enroll': the old broken route wrote mcp_enroll
+  // rows for addresses nobody ever proved, so that action name cannot mean
+  // "this person signed in". This one only ever follows a correct code, which
+  // is what cleanup-probe-users.js reads it as.
+  auditRaw({ userId: id, username, action: 'mcp_sign_in', detail: { email, created: true }, via: 'mcp' });
+  return res.status(201).json({ user: { id, username, email, name }, created: true });
 });
 
 // POST /api/mcp/token/introspect — actor 0. Static tokens only; the tool

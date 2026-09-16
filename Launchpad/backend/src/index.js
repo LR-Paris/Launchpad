@@ -294,7 +294,11 @@ const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // Slightly higher since OTP needs 2 requests per login
   keyGenerator: (req) => {
-    const ident = String(req.body?.identifier || '').trim().toLowerCase().slice(0, 120);
+    // The web login calls the address "identifier"; the tool server's two
+    // enrollment routes call it "email". Reading both is what keeps every sign
+    // in on the same per-address budget instead of collapsing the tool server's
+    // traffic onto one bucket keyed by its container IP.
+    const ident = String(req.body?.identifier || req.body?.email || '').trim().toLowerCase().slice(0, 120);
     return `${req.ip || 'noip'}|${ident || 'noident'}`;
   },
   // express-rate-limit warns when a custom keyGenerator touches req.ip, because
@@ -334,6 +338,13 @@ app.use('/api/auth', authRouter);
 // both refuse anything that did not arrive signed. The other three are normal
 // authenticated routes that happen to be MCP only.
 // ---------------------------------------------------------------------------
+//
+// The two enrollment routes go through the SAME limiter as the web login, and
+// not one of their own. They mail through the same sender and write the same
+// otp_codes rows, so a separate budget would just be a second way to spend the
+// first one.
+app.post('/api/mcp/enroll', loginLimiter);
+app.post('/api/mcp/enroll/verify', loginLimiter);
 app.use('/api/mcp', mcpPublicRouter);
 app.use('/api/mcp', requireAuth, mcpRouter);
 

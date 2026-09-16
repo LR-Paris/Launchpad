@@ -231,6 +231,28 @@ const SCHEMA = `
     revoked_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_mcp_static_tokens_user ON mcp_static_tokens(user_id);
+
+  -- A first sign in that has been started but not yet proved.
+  --
+  -- The ADR says "verify; if no user -> INSERT INTO users", and Launchpad's OTP
+  -- routes only mail a user that already exists. Those two facts do not fit
+  -- together on their own: a colleague who has never signed in has no row to
+  -- send a code to. The first build resolved that by creating the users row on
+  -- email submission, which meant anyone who could reach the login page could
+  -- write an @lrparis.com row into the user admin, under any name they liked.
+  --
+  -- This table is the missing middle. It holds the claim on an address for as
+  -- long as the code is good and no longer. It is not a user: it has no id
+  -- anyone can be granted access to, it never appears in the user admin, and it
+  -- carries nothing but the right to become a users row by answering mail.
+  CREATE TABLE IF NOT EXISTS pending_enrollments (
+    email      TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_pending_enroll_expiry ON pending_enrollments(expires_at);
 `;
 
 // ---------------------------------------------------------------------------

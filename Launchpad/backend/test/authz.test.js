@@ -537,6 +537,55 @@ async function main() {
       ok('and the file landed where it was asked to',
         fs.existsSync(path.join(box.shopsDir, 'serhant', 'DATABASE', 'Uploads', 'hello.txt')));
     }
+
+    // -- 12. the pending claim on an address expires and can be burnt --------
+    //
+    // integration.test.js walks the happy path over HTTP. These are the two
+    // ways a pending claim dies, which nothing else reaches: the clock, and
+    // five wrong guesses. Both have to end with no account row.
+    {
+      const Database = require(path.join(__dirname, '..', 'node_modules', 'better-sqlite3'));
+      const platformDbPath = path.join(box.dataDir, 'platform.db');
+      const countUsers = (email) => {
+        const u = new Database(box.usersDbPath, { readonly: true });
+        const n = u.prepare('SELECT COUNT(*) AS n FROM users WHERE lower(email) = lower(?)').get(email).n;
+        u.close();
+        return n;
+      };
+      const pendingRow = (email) => {
+        const pdb = new Database(platformDbPath, { readonly: true });
+        const row = pdb.prepare('SELECT code, expires_at, attempts FROM pending_enrollments WHERE email = ?').get(email);
+        pdb.close();
+        return row;
+      };
+
+      const expired = 'e.xpired@lrparis.com';
+      await mcpFetch(base, 'POST', '/api/mcp/enroll', 0, { email: expired });
+      const staleCode = pendingRow(expired).code;
+      {
+        // Reach in and age the claim rather than waiting ten minutes for it.
+        const pdb = new Database(platformDbPath);
+        pdb.prepare('UPDATE pending_enrollments SET expires_at = ? WHERE email = ?').run(Date.now() - 1000, expired);
+        pdb.close();
+      }
+      const tooLate = await mcpFetch(base, 'POST', '/api/mcp/enroll/verify', 0, { email: expired, code: staleCode });
+      ok('an expired claim refuses its own code', tooLate.status === 401, tooLate.status);
+      ok('and creates no account', countUsers(expired) === 0);
+      ok('and the dead claim is cleared', pendingRow(expired) === undefined);
+
+      const guessed = 'g.uessed@lrparis.com';
+      await mcpFetch(base, 'POST', '/api/mcp/enroll', 0, { email: guessed });
+      const realCode = pendingRow(guessed).code;
+      const wrongCode = realCode === '111111' ? '222222' : '111111';
+      for (let i = 0; i < 5; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await mcpFetch(base, 'POST', '/api/mcp/enroll/verify', 0, { email: guessed, code: wrongCode });
+      }
+      const burnt = await mcpFetch(base, 'POST', '/api/mcp/enroll/verify', 0, { email: guessed, code: realCode });
+      ok('five wrong guesses burn the claim', burnt.status === 401, burnt.status);
+      ok('so the right code afterwards is worth nothing', countUsers(guessed) === 0);
+      ok('and the claim is gone', pendingRow(guessed) === undefined);
+    }
   } catch (err) {
     failed++;
     say(`FAIL  threw: ${err.stack || err.message}`);
