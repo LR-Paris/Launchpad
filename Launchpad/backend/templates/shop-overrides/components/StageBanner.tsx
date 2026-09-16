@@ -16,9 +16,11 @@
 const STAGE = process.env.SHOP_STAGE || '';
 const IS_APPROVED = STAGE === 'in_production';
 
-// Black on yellow, the highest contrast pairing we can put on a live page
-// without it reading as an error state. One token so it is easy to change.
-const BANNER_BG = '#FFD100';
+// LR Paris accent orange, from the approved 2026 palette. Black on it is
+// 7.1:1, past AA, and it reads as a warning without reading as an error.
+// A yellow tested higher but is not a brand color, and adding one needs
+// Design and Marketing sign-off. One token, so swapping it later is one line.
+const BANNER_BG = '#FF6423';
 const BANNER_FG = '#000000';
 const BANNER_MIN_HEIGHT = 64;
 
