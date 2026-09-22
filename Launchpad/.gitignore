@@ -1,0 +1,4 @@
+
+# Generated at runtime by nginx.js. Never track: a checkout/merge wipes live shop routes.
+backend/nginx/conf.d/shops-locations.inc
+backend/nginx/conf.d/*.inc.bak-*
