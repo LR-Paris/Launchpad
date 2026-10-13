@@ -12,6 +12,13 @@
 //   node backend/test/authz.test.js
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
+
+// Sign-in codes are stored as HMAC hashes (users.js hashOTP), so a test cannot
+// read a mailed code back. It writes the hash of a known code over the newest one.
+const KNOWN_CODE = '424242';
+const otpHash = (code) => crypto
+  .createHmac('sha256', process.env.OTP_PEPPER || process.env.SESSION_SECRET || 'launchpad-otp')
+  .update(String(code)).digest('hex');
 const fs = require('fs');
 const path = require('path');
 const sandbox = require('./_sandbox');
@@ -59,16 +66,26 @@ function mcpFetch(base, method, url, actorId, body) {
 // ---------------------------------------------------------------------------
 async function webLogin(base, box, identifier) {
   const Database = require(path.join(__dirname, '..', 'node_modules', 'better-sqlite3'));
+  // Start each sign-in fresh. The per-account brake (60 s cooldown, 5 codes
+  // per 15 min) would otherwise hold back a second code for the same user.
+  {
+    const db = new Database(box.usersDbPath);
+    const u = db.prepare('SELECT id FROM users WHERE username = ?').get(identifier);
+    if (u) db.prepare('DELETE FROM otp_codes WHERE user_id = ?').run(u.id);
+    db.close();
+  }
   await fetch(`${base}/api/auth/login-request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier }),
   });
 
-  const udb = new Database(box.usersDbPath, { readonly: true });
+  const udb = new Database(box.usersDbPath);
   const user = udb.prepare('SELECT id FROM users WHERE username = ?').get(identifier);
-  const row = udb.prepare('SELECT code FROM otp_codes WHERE user_id = ? AND used = 0 ORDER BY id DESC LIMIT 1').get(user.id);
+  const otp = udb.prepare('SELECT id FROM otp_codes WHERE user_id = ? AND used = 0 ORDER BY id DESC LIMIT 1').get(user.id);
+  udb.prepare('UPDATE otp_codes SET code = ? WHERE id = ?').run(otpHash(KNOWN_CODE), otp.id);
   udb.close();
+  const row = { code: KNOWN_CODE };
 
   const res = await fetch(`${base}/api/auth/login-verify`, {
     method: 'POST',

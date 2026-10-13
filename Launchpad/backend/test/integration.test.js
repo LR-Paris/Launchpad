@@ -18,6 +18,10 @@
 // ---------------------------------------------------------------------------
 const assert = require('assert');
 const crypto = require('crypto');
+
+// Sign-in codes are stored as HMAC hashes (users.js hashOTP), so a test cannot
+// read a mailed code back. It writes the hash of a known code over the newest one.
+const KNOWN_CODE = '424242';
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -25,6 +29,9 @@ const { spawn } = require('child_process');
 const sandbox = require('./_sandbox');
 
 const SESSION_SECRET = 'integration-test-session-secret-0123456789';
+const otpHash = (code) => crypto
+  .createHmac('sha256', process.env.OTP_PEPPER || SESSION_SECRET)
+  .update(String(code)).digest('hex');
 const MCP_SHARED_SECRET = 'integration-test-mcp-shared-secret-0123456789';
 
 let passed = 0;
@@ -215,11 +222,12 @@ async function main() {
       return row && row.code;
     };
     const mailedCode = (email) => {
-      const u = new Database(box.usersDbPath, { readonly: true });
-      const row = u.prepare(`SELECT c.code FROM otp_codes c JOIN users usr ON usr.id = c.user_id
+      const u = new Database(box.usersDbPath);
+      const row = u.prepare(`SELECT c.id FROM otp_codes c JOIN users usr ON usr.id = c.user_id
         WHERE lower(usr.email) = lower(?) AND c.used = 0 ORDER BY c.id DESC LIMIT 1`).get(email);
+      if (row) u.prepare('UPDATE otp_codes SET code = ? WHERE id = ?').run(otpHash(KNOWN_CODE), row.id);
       u.close();
-      return row && row.code;
+      return row ? KNOWN_CODE : undefined;
     };
 
     const bad = await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 'nobody@gmail.com' } });
@@ -643,6 +651,13 @@ async function main() {
     // shop list still answers the way it always has. The tool path is filtered;
     // this one is not, because several people have no membership row yet and
     // narrowing it would open their dashboard to nothing.
+    // Start each sign-in fresh. The per-account brake (60 s cooldown, 5 codes
+    // per 15 min) would otherwise hold back a second code for the same user.
+    {
+      const db = new Database(box.usersDbPath);
+      db.prepare('DELETE FROM otp_codes WHERE user_id = ?').run(newUser);
+      db.close();
+    }
     const askCode = await fetch(`${BASE}/api/auth/login-request`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -652,10 +667,11 @@ async function main() {
 
     let code = null;
     {
-      const u = new Database(box.usersDbPath, { readonly: true });
-      const row = u.prepare('SELECT code FROM otp_codes WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(newUser);
+      const u = new Database(box.usersDbPath);
+      const row = u.prepare('SELECT id FROM otp_codes WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(newUser);
+      if (row) u.prepare('UPDATE otp_codes SET code = ? WHERE id = ?').run(otpHash(KNOWN_CODE), row.id);
       u.close();
-      code = row && row.code;
+      code = row ? KNOWN_CODE : null;
     }
     ok('a sign-in code was issued', typeof code === 'string' && code.length > 0);
 
