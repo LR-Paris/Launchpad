@@ -39,8 +39,11 @@ api.interceptors.request.use(async (config) => {
 });
 
 // Auth — OTP flow
-export const requestLoginCode = (identifier) =>
-  api.post('/auth/login-request', { identifier }).then(r => r.data);
+export const requestLoginCode = (identifier, turnstileToken) =>
+  api.post('/auth/login-request', { identifier, turnstileToken }).then(r => r.data);
+
+export const getAuthConfig = () =>
+  api.get('/auth/config').then(r => r.data);
 
 export const verifyLoginCode = (identifier, code, rememberMe) =>
   api.post('/auth/login-verify', { identifier, code, rememberMe }).then(r => r.data);

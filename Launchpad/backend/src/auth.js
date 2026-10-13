@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const geo = require('./security/geo');
+const turnstile = require('./security/turnstile');
 const authAlerts = require('./security/authAlerts');
 
 const router = express.Router();
@@ -91,6 +92,11 @@ function requireAuth(req, res, next) {
 // ---------------------------------------------------------------------------
 
 // POST /api/auth/login-request — request OTP code
+// Public: tells the login page whether to show the Turnstile check.
+router.get('/config', (req, res) => {
+  res.json({ turnstileSiteKey: turnstile.siteKey() });
+});
+
 router.post('/login-request', async (req, res) => {
   const { identifier } = req.body; // username or email
   const audit = req.app.locals.auditLog;
@@ -100,6 +106,11 @@ router.post('/login-request', async (req, res) => {
   }
 
   const meta = await geo.requestMeta(req);
+  const captcha = await turnstile.verify(req.body.turnstileToken, meta.ip);
+  if (!captcha.ok) {
+    audit?.('login_request_failed', { req, details: { identifier, reason: `turnstile_${captcha.reason}` } });
+    return res.status(403).json({ error: 'The security check did not pass. Reload the page and try again.' });
+  }
   const user = userFns.getUserByUsernameOrEmail(identifier.trim());
   if (!user) {
     audit?.('login_request_failed', { req, details: { identifier, reason: 'user_not_found' } });

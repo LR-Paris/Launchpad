@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { requestLoginCode, verifyLoginCode } from '../lib/api';
+import { requestLoginCode, verifyLoginCode, getAuthConfig } from '../lib/api';
+import TurnstileWidget from '../components/TurnstileWidget';
 import { loginWithPasskey } from '../lib/passkey';
 import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound } from 'lucide-react';
 
@@ -21,8 +22,17 @@ export default function Login() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const codeInputRef = useRef(null);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileReset, setTurnstileReset] = useState(0);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    getAuthConfig()
+      .then((cfg) => setTurnstileSiteKey(cfg.turnstileSiteKey || null))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (step === 'verify' && codeInputRef.current) {
@@ -37,13 +47,14 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const data = await requestLoginCode(identifier);
+      const data = await requestLoginCode(identifier, turnstileToken);
       setMessage(data.message);
       setStep('verify');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to send code');
     } finally {
       setLoading(false);
+      if (turnstileSiteKey) setTurnstileReset((n) => n + 1);
     }
   };
 
@@ -119,10 +130,13 @@ export default function Login() {
                 autoComplete="username"
               />
             </div>
+            {turnstileSiteKey && (
+              <TurnstileWidget siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileReset} />
+            )}
             {error && <p className="text-xs text-destructive font-mono">{error}</p>}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (turnstileSiteKey && !turnstileToken)}
               className="w-full btn-launch rounded-md px-4 py-2.5 text-sm font-medium disabled:opacity-50 transition-all"
             >
               {loading ? 'Sending code...' : 'Send sign-in code'}
