@@ -10,6 +10,7 @@ const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx')
 const { checkShopPermission, isAdminOrAbove } = require('./users');
 const { acquire: lockAcquire, release: lockRelease, isLocked } = require('./lock');
 const { requireShopAccess, audit, membershipRole, setShopRole, refuse, currentLock } = require('./authz');
+const { writeStarterDatabase } = require('./starter-database');
 const {
   injectStageBanner, applyShopStage, effectiveStage,
 } = require('./golive');
@@ -692,9 +693,15 @@ router.post('/', (req, res) => {
   // the user row, so that is what gates it now. Admins keep the ability by
   // virtue of being admins.
   if (!canCreateShops(req)) {
+    // "Ask Gio" is a dead end when the caller is Gio. Over MCP admins are
+    // judged by the column too, so tell an admin where their own switch is.
+    const role = req.session?.user?.role;
+    const isAdminAccount = role === 'super_admin' || role === 'admin';
     return refuse(res, 403, 'NOT_PERMITTED',
       'You are not set up to create shops.',
-      'Ask Gio to turn on "can create shops" for your account in Launchpad.', false);
+      isAdminAccount
+        ? 'Turn on "Can create shops" for your own account on the Users page in Launchpad. Over the dev tool, admin accounts need it too.'
+        : 'Ask Gio to turn on "can create shops" for your account in Launchpad.', false);
   }
   const { name, folderPath, description, shopType, dataRequired, hotelList } = req.body;
   let { slug: customSlug } = req.body;
@@ -715,9 +722,24 @@ router.post('/', (req, res) => {
     return refuse(res, 409, 'NOT_PERMITTED', reserved, 'Pick a different URL path for the shop.', false);
   }
 
+  // A taken address used to come back as a bare { error } with no code, which
+  // the tool server can only report as a platform fault. Say what is true, and
+  // tell a member of that shop to carry on with it rather than make another.
+  const refuseTaken = () => {
+    const memberRole = req.session?.user?.id ? membershipRole(req.session.user.id, slug) : null;
+    if (memberRole) {
+      return refuse(res, 409, 'NOT_PERMITTED',
+        `The shop "${slug}" already exists, and you are its ${memberRole}. Nothing was created.`,
+        `Call get_shop on "${slug}" and carry on with that shop.`, false);
+    }
+    return refuse(res, 409, 'NOT_PERMITTED',
+      `The address "${slug}" already belongs to another shop. Nothing was created.`,
+      `Pick a different address. If you should be working on "${slug}", call request_access for it.`, false);
+  };
+
   const shopDir = path.join(SHOPS_DIR, slug);
   if (fs.existsSync(shopDir)) {
-    return res.status(409).json({ error: 'Shop with this slug already exists' });
+    return refuseTaken();
   }
 
   const db = getDb();
@@ -725,12 +747,13 @@ router.post('/', (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM shops WHERE slug = ?').get(slug);
     if (existing) {
-      return res.status(409).json({ error: 'Shop with this slug already exists' });
+      return refuseTaken();
     }
 
     const port = getNextPort(db);
     const subdomain = slug;
     const log = [];
+    let starterPassword = null;
 
     // Clone or copy shop files
     if (folderPath) {
@@ -752,6 +775,13 @@ router.post('/', (req, res) => {
         log.push(`Clone error: ${msg}`);
         throw new Error(`git clone failed: ${msg}`);
       }
+      // The template repo's DATABASE is a real client's catalog. A new shop
+      // must not open with it, so swap in an empty starter before anything
+      // builds. A shop copied from folderPath keeps what it was given.
+      const starter = writeStarterDatabase(path.join(shopDir, 'DATABASE'), { name, slug });
+      starterPassword = starter.password;
+      log.push(`Reset DATABASE to an empty starter: removed ${starter.removed.products} sample product(s), `
+        + `${starter.removed.images} image(s) and ${starter.removed.fonts} font file(s), and set a new shop password.`);
     }
 
     // Apply path-based routing overrides (next.config.js, lib/api.ts, etc.)
@@ -907,7 +937,17 @@ router.post('/', (req, res) => {
     }
 
     const audit_id = audit(req, 'shop_created', { slug, name });
-    res.status(201).json({ shop, url: shopUrl(slug), role: 'owner', audit_id, log: log.join('\n') });
+    res.status(201).json({
+      shop,
+      url: shopUrl(slug),
+      role: 'owner',
+      audit_id,
+      // The starter's password, so the person can open their own shop before
+      // the first catalog upload replaces it. Null when the shop was copied.
+      password: starterPassword,
+      catalog: starterPassword ? 'empty' : 'copied',
+      log: log.join('\n'),
+    });
   } catch (err) {
     // Cleanup on failure
     console.error(`[shops] create ${slug} error:`, err.message);

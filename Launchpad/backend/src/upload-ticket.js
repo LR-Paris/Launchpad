@@ -84,6 +84,12 @@ function sameHash(a, b) {
 
 const TICKET_RE = /^[0-9a-f]{64}$/;
 
+// The link goes to a person, so it has to work when pasted. A path like
+// /api/upload/<ticket> made every agent guess the host. Same base as shopUrl().
+function publicBase() {
+  return (process.env.SHOP_BASE_URL || process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+}
+
 function issueTicket(slug, userId, via) {
   const raw = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
@@ -97,7 +103,8 @@ function issueTicket(slug, userId, via) {
     shop: slug,
     expires_at: new Date(expiresAt).toISOString(),
     max_bytes: MAX_UPLOAD_BYTES,
-    upload_url: `/api/upload/${raw}`,
+    upload_url: `${publicBase()}/api/upload/${raw}`,
+    expires_in_minutes: Math.round(TICKET_TTL_MS / 60000),
   };
 }
 
@@ -203,7 +210,9 @@ ticketRouter.post('/:slug/database/upload-ticket', issueLimiter, (req, res) => {
     expires_at: ticket.expires_at,
     max_bytes: MAX_UPLOAD_BYTES,
   });
-  // The shape is flat: { ticket, shop, expires_at, max_bytes, upload_url }.
+  // The shape is flat: { ticket, shop, expires_at, expires_in_minutes,
+  // max_bytes, upload_url }. upload_url is absolute when the server knows its
+  // public address (SHOP_BASE_URL or FRONTEND_URL).
   // `ticket` is the credential itself, which is why it is a string here and not
   // an object with an id in it.
   res.json({ ...ticket, audit_id });

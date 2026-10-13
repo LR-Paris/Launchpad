@@ -424,17 +424,30 @@ function checkContainer(slug) {
 
 // The shop's mode comes from DATABASE/Presets, written at creation time by the
 // dataRequired block in shops.js. Every value defaults to true except hotel_list.
+// The same reading the shop's own lib/presets.ts does: one key: value per line,
+// blank lines and # comments skipped. Splitting the whole file on ':' took the
+// template's comment block for the shop type ("fits a #   free   - Basic ...").
+function parsePresetFile(raw) {
+  const out = {};
+  for (const line of String(raw || '').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const i = t.indexOf(':');
+    if (i === -1) continue;
+    out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+  }
+  return out;
+}
+
 function readShopMode(slug) {
   const presets = path.join(SHOPS_DIR, slug, 'DATABASE', 'Presets');
   const typeRaw = readTextFile(path.join(presets, 'ShopType.txt')) || '';
-  const shopType = (typeRaw.split(':')[1] || '').trim() || 'standard';
+  const shopType = (parsePresetFile(typeRaw).type || '').toLowerCase() || 'standard';
 
   const drRaw = readTextFile(path.join(presets, 'DataRequired.txt')) || '';
   const dr = {};
-  for (const line of drRaw.split('\n')) {
-    const [k, v] = line.split(':');
-    if (!k || v === undefined) continue;
-    dr[k.trim()] = v.trim() === 'true';
+  for (const [k, v] of Object.entries(parsePresetFile(drRaw))) {
+    dr[k] = v.toLowerCase() === 'true';
   }
   return {
     shopType,
@@ -546,7 +559,7 @@ function checkCheckoutConfig(slug) {
 const PREFLIGHT_CHECKS = [
   ['database', 'Shop content is uploaded', checkDatabasePresent],
   ['variants', 'Product options are consistent', checkVariantGroups],
-  ['skus', 'Every product has a SKU', checkProductSkus],
+  ['skus', 'Every product has its own SKU', checkProductSkus],
   ['branding', 'Colors and fonts are set', checkBrandFiles],
   ['container', 'The shop is running', checkContainer],
   ['checkout', 'The checkout form is complete', checkCheckoutConfig],
@@ -1146,6 +1159,7 @@ module.exports = {
   router,
   publicRouter,
   preflight,
+  parsePresetFile,
   applyShopStage,
   injectStageBanner,
   writeStageToCompose,

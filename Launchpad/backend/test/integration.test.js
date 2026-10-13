@@ -383,6 +383,47 @@ async function main() {
     eq('whoami names the shop', who.json?.memberships?.[0]?.shop_slug, 'serhant');
 
     // ---------------------------------------------------------------------
+    // 5b. Access for someone who has never signed in waits for them
+    // ---------------------------------------------------------------------
+    const invite = await callMcp(7, 'POST', '/api/shops/serhant/members', {
+      body: { email: 'S.Sacks@lrparis.com', role: 'viewer' },
+    });
+    eq('an owner can give access to a colleague who never signed in', invite.status, 200);
+    ok('and is told it waits for their first sign in', invite.json?.invited === true, JSON.stringify(invite.json));
+    eq('with the role that will apply', invite.json?.role, 'viewer');
+    ok('the invitation is audited', Number.isInteger(invite.json?.audit_id));
+    eq('and no account row is written for an address nobody proved', countUsers('s.sacks@lrparis.com'), 0);
+    const waiting = await callMcp(7, 'GET', '/api/shops/serhant/members');
+    ok('the owner sees it waiting',
+      (waiting.json?.pending || []).some((p) => p.email === 's.sacks@lrparis.com' && p.role === 'viewer'),
+      JSON.stringify(waiting.json?.pending));
+    const offDomain = await callMcp(7, 'POST', '/api/shops/serhant/members', {
+      body: { email: 'someone@gmail.com', role: 'viewer' },
+    });
+    eq('an address outside lrparis.com cannot be given access', offDomain.status, 403);
+    eq('and is refused with a code', offDomain.json?.error?.code, 'NOT_PERMITTED');
+
+    await callMcp(0, 'POST', '/api/mcp/enroll', { body: { email: 's.sacks@lrparis.com' } });
+    const sacksSignIn = await callMcp(0, 'POST', '/api/mcp/enroll/verify', {
+      body: { email: 's.sacks@lrparis.com', code: pendingCode('s.sacks@lrparis.com') },
+    });
+    eq('her first sign in creates the account', sacksSignIn.status, 201);
+    const sacksWho = await callMcp(sacksSignIn.json?.user?.id, 'GET', '/api/mcp/whoami');
+    ok('and the access was waiting for her',
+      (sacksWho.json?.memberships || []).some((m) => m.shop_slug === 'serhant' && m.role === 'viewer'),
+      JSON.stringify(sacksWho.json?.memberships));
+    const afterSignIn = await callMcp(7, 'GET', '/api/shops/serhant/members');
+    ok('and it is no longer listed as waiting',
+      !(afterSignIn.json?.pending || []).some((p) => p.email === 's.sacks@lrparis.com'));
+
+    const memberTrail = await callMcp(7, 'GET', '/api/shops/serhant/audit', { query: { limit: 50 } });
+    ok('the audit trail names people by email, not only by username',
+      (memberTrail.json?.entries || []).some((e) => e.actor_email === 'r.loiseau@lrparis.com' && e.actor.includes('<r.loiseau@lrparis.com>')),
+      JSON.stringify((memberTrail.json?.entries || []).slice(0, 3)));
+    ok('and records that the waiting access was applied',
+      (memberTrail.json?.entries || []).some((e) => e.action === 'member_invite_applied'));
+
+    // ---------------------------------------------------------------------
     // 6. Health, the call the agent makes every turn
     // ---------------------------------------------------------------------
     const health = await callMcp(newUser, 'GET', '/api/shops/serhant/health');
@@ -394,6 +435,22 @@ async function main() {
       JSON.stringify(health.json?.checks?.[0]));
     ok('health returns suggestions computed by the backend', Array.isArray(health.json?.suggestions));
     ok('health gives the whole shop one word', typeof health.json?.status === 'string');
+    {
+      // The Shuttle template ships ShopType.txt with a comment block above
+      // the value. The checkout check used to report that block as the type.
+      const presetsDir = path.join(box.shopsDir, 'serhant', 'DATABASE', 'Presets');
+      fs.mkdirSync(presetsDir, { recursive: true });
+      fs.writeFileSync(path.join(presetsDir, 'ShopType.txt'),
+        '# Shop Type Configuration\n# Options:\n#   free   - Basic free shop.\n#   po     - Purchase Order shop.\n\ntype: po\n');
+      const commented = await callMcp(newUser, 'GET', '/api/shops/serhant/health');
+      const review = commented.json?.ready_for_review?.checks || [];
+      const checkoutCheck = review.find((c) => c.id === 'checkout');
+      ok('the checkout check reads the shop type past the template comments',
+        checkoutCheck && /fits a po shop/.test(checkoutCheck.detail || ''), JSON.stringify(checkoutCheck));
+      const skuCheck = review.find((c) => c.id === 'skus');
+      eq('the SKU check says what it checks', skuCheck && skuCheck.label, 'Every product has its own SKU');
+      fs.rmSync(presetsDir, { recursive: true, force: true });
+    }
     ok('every suggestion says why and what to do next',
       (health.json?.suggestions || []).every((sg) => typeof sg.why === 'string' && typeof sg.do === 'string'),
       JSON.stringify(health.json?.suggestions?.[0]));
@@ -406,6 +463,8 @@ async function main() {
     const rawTicket = ticket.json?.ticket;
     ok('the ticket is the credential, a string', typeof rawTicket === 'string' && rawTicket.length === 64);
     ok('the ticket issue is audited', Number.isInteger(ticket.json?.audit_id));
+    eq('the upload link is a whole address a person can open', ticket.json?.upload_url, `${BASE}/api/upload/${rawTicket}`);
+    eq('and it says how long it lasts', ticket.json?.expires_in_minutes, 15);
 
     const zip = buildDatabaseZip(AdmZip, [
       { name: 'Tote', sku: 'TOTE-1' },
@@ -496,16 +555,35 @@ async function main() {
     // ---------------------------------------------------------------------
     // 9. Shop creation: the permission, and the reserved slugs
     // ---------------------------------------------------------------------
+    const whoBefore = await callMcp(newUser, 'GET', '/api/mcp/whoami');
+    eq('whoami says when someone cannot create shops', whoBefore.json?.can_create_shops, false);
     const cannot = await callMcp(newUser, 'POST', '/api/shops', { body: { name: 'New Client' } });
     eq('a person without can_create_shops cannot create one', cannot.status, 403);
     eq('and is told which permission is missing', cannot.json?.error?.code, 'NOT_PERMITTED');
     ok('and who turns it on', /Gio/.test(cannot.json?.error?.resolution || ''));
+    const adminCannot = await callMcp(1, 'POST', '/api/shops', { body: { name: 'Admin Shop' } });
+    eq('over MCP an admin needs the switch too', adminCannot.status, 403);
+    ok('and is pointed at their own account instead of being told to ask Gio',
+      /your own account/i.test(adminCannot.json?.error?.resolution || ''), JSON.stringify(adminCannot.json));
 
     {
       const u = new Database(box.usersDbPath);
       u.prepare('UPDATE users SET can_create_shops = 1 WHERE id = ?').run(newUser);
       u.close();
     }
+    const whoAfter = await callMcp(newUser, 'GET', '/api/mcp/whoami');
+    eq('and says so once it is on', whoAfter.json?.can_create_shops, true);
+
+    const takenMine = await callMcp(newUser, 'POST', '/api/shops', { body: { name: 'Serhant', slug: 'serhant' } });
+    eq('an address that is taken is refused', takenMine.status, 409);
+    eq('with a code, not a platform fault', takenMine.json?.error?.code, 'NOT_PERMITTED');
+    ok('a member is told to carry on with the shop they already have',
+      /you are its editor/.test(takenMine.json?.error?.message || '') && /get_shop/.test(takenMine.json?.error?.resolution || ''),
+      JSON.stringify(takenMine.json));
+    const takenOther = await callMcp(newUser, 'POST', '/api/shops', { body: { name: 'Michael Kors', slug: 'michael-kors' } });
+    eq('another shop\'s address is refused with the same code', takenOther.json?.error?.code, 'NOT_PERMITTED');
+    ok('and points at request_access', /request_access/.test(takenOther.json?.error?.resolution || ''),
+      JSON.stringify(takenOther.json));
     const reserved = await callMcp(newUser, 'POST', '/api/shops', { body: { name: 'MCP', slug: 'mcp' } });
     eq('the slug "mcp" is refused', reserved.status, 409);
     ok('because it would break the nginx config for everyone',

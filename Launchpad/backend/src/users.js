@@ -434,6 +434,12 @@ router.post('/', requireRole('super_admin'), (req, res) => {
       }
     }
 
+    // Access an owner granted before this account existed (pending_grants).
+    // Required lazily: authz.js requires this file at load time.
+    try { require('./authz').applyPendingGrants(user); } catch (err) {
+      console.error(`[users] pending grants for ${user.email} failed: ${err.message}`);
+    }
+
     user.permissions = getAllUserPermissions(user.id);
     audit?.('user_created', { req, details: { userId: user.id, username: user.username, role: user.role } });
     res.status(201).json({ user });

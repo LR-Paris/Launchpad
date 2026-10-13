@@ -226,12 +226,21 @@ function auditRaw({ userId = null, username = null, slug = null, action, detail 
 // the tool handed back an audit id", and a rule nothing can satisfy is not a
 // rule. A null means the audit write itself failed, which belongs in the
 // response rather than swallowed.
+function detailSlug(detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  const s = detail.shop_slug || detail.slug;
+  return typeof s === 'string' && s ? s : null;
+}
+
 function audit(req, action, detail) {
   const user = req?.session?.user;
   const id = auditRaw({
     userId: user?.id ?? null,
     username: user?.username ?? null,
-    slug: req?.shop?.slug || req?.params?.slug || null,
+    // POST /api/shops has no :slug param, so without the detail fallback a
+    // shop's own creation was written with shop_slug NULL and never showed up
+    // in that shop's audit trail.
+    slug: req?.shop?.slug || req?.params?.slug || detailSlug(detail) || null,
     action,
     detail,
     via: req?.via || 'web',
@@ -844,20 +853,115 @@ accessRouter.post('/:slug/access-requests/:id/decide', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Waiting access for people who have not signed in yet (platform.db)
+// ---------------------------------------------------------------------------
+function pendingGrantRole(email, slug) {
+  try {
+    const row = platformDb
+      .prepare('SELECT role FROM pending_grants WHERE email = ? AND shop_slug = ?')
+      .get(String(email).toLowerCase(), slug);
+    return row ? row.role : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingGrant(email, slug, role, grantedBy) {
+  platformDb.prepare(`
+    INSERT INTO pending_grants (email, shop_slug, role, granted_by, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(email, shop_slug) DO UPDATE SET
+      role = excluded.role, granted_by = excluded.granted_by, created_at = excluded.created_at
+  `).run(String(email).toLowerCase(), slug, role, grantedBy ?? null, Date.now());
+}
+
+function pendingGrantsFor(slug) {
+  try {
+    return platformDb
+      .prepare('SELECT email, role, granted_by, created_at FROM pending_grants WHERE shop_slug = ? ORDER BY email')
+      .all(slug)
+      .map((r) => ({ email: r.email, role: r.role, granted_by: r.granted_by, since: new Date(r.created_at).toISOString() }));
+  } catch {
+    return [];
+  }
+}
+
+// Called wherever a users row is created. Returns the slugs it granted.
+function applyPendingGrants(user) {
+  if (!user || !user.id || !user.email) return [];
+  let rows = [];
+  try {
+    rows = platformDb
+      .prepare('SELECT shop_slug, role, granted_by FROM pending_grants WHERE email = ?')
+      .all(String(user.email).toLowerCase());
+  } catch (err) {
+    console.error(`[authz] pending grant read failed for ${user.email}: ${err.message}`);
+    return [];
+  }
+  const applied = [];
+  for (const row of rows) {
+    try {
+      if (!ROLES.includes(row.role)) continue;
+      setShopRole(user.id, row.shop_slug, row.role, row.granted_by);
+      platformDb.prepare('DELETE FROM pending_grants WHERE email = ? AND shop_slug = ?')
+        .run(String(user.email).toLowerCase(), row.shop_slug);
+      auditRaw({
+        userId: user.id, username: user.username || null, slug: row.shop_slug,
+        action: 'member_invite_applied', detail: { role: row.role, granted_by: row.granted_by }, via: 'system',
+      });
+      applied.push(row.shop_slug);
+    } catch (err) {
+      console.error(`[authz] pending grant for ${user.email} on ${row.shop_slug} failed: ${err.message}`);
+    }
+  }
+  return applied;
+}
+
 // GET /api/shops/:slug/members — owner
 accessRouter.get('/:slug/members', (req, res) => {
-  res.json({ members: shopMembers(req.shop.slug) });
+  res.json({ members: shopMembers(req.shop.slug), pending: pendingGrantsFor(req.shop.slug) });
 });
 
 // POST /api/shops/:slug/members — owner
 accessRouter.post('/:slug/members', (req, res) => {
   const slug = req.shop.slug;
+  const role = ROLES.includes(req.body?.role) ? req.body.role : 'viewer';
   const target = findUser(req.body || {});
   if (!target) {
-    return refuse(res, 404, 'NOT_PERMITTED', 'That person does not have a Launchpad account.',
-      'Ask Gio to create the account first, then grant access.', false);
+    // The plugin has always promised that a colleague who never signed in
+    // still gets the row and it waits for them. Keep that promise without
+    // writing an unproven users row (see pending_enrollments): the grant waits
+    // in platform.db and lands at their first sign in.
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) {
+      return refuse(res, 404, 'NOT_PERMITTED', 'That person does not have a Launchpad account.',
+        'Grant access by their LR Paris email address instead. It waits for their first sign in.', false);
+    }
+    if (!EMAIL_RE.test(email) || !enrollDomains().includes(email.split('@')[1])) {
+      return refuse(res, 403, 'NOT_PERMITTED',
+        `Access can only go to ${enrollDomains().join(' or ')} addresses.`,
+        'Use their LR Paris work address. If they do not have one, ask Gio.', false);
+    }
+    const previous_role = pendingGrantRole(email, slug);
+    try {
+      savePendingGrant(email, slug, role, req.session.user.id);
+    } catch (err) {
+      console.error(`[authz] pending grant failed for ${email} on ${slug}: ${err.message}`);
+      return refuse(res, 500, 'NOT_PERMITTED', 'That access could not be saved just now.',
+        'Try again in a moment. If it keeps happening, tell Gio.', true);
+    }
+    const audit_id = audit(req, 'member_invited', { slug, email, role, previous_role });
+    return res.json({
+      member: null,
+      invited: true,
+      email,
+      role,
+      previous_role: previous_role || null,
+      audit_id,
+      message: `${email} has not signed in to Launchpad yet. Their ${role} access to "${slug}" is saved and starts at their first sign in.`,
+    });
   }
-  const role = ROLES.includes(req.body?.role) ? req.body.role : 'viewer';
   const previous_role = membershipRole(target.id, slug);
   setShopRole(target.id, slug, role, req.session.user.id);
   const audit_id = audit(req, 'member_added', { slug, user_id: target.id, role, previous_role });
@@ -879,6 +983,18 @@ function revokeMember(req, res) {
   const slug = req.shop.slug;
   const target = findUser({ ...(req.body || {}), ...(req.query || {}) });
   if (!target) {
+    const email = String(req.body?.email || req.query?.email || '').trim().toLowerCase();
+    const waiting = email ? pendingGrantRole(email, slug) : null;
+    if (waiting) {
+      platformDb.prepare('DELETE FROM pending_grants WHERE email = ? AND shop_slug = ?').run(email, slug);
+      const audit_id = audit(req, 'member_invite_withdrawn', { slug, email, previous_role: waiting });
+      return res.json({
+        removed: true,
+        previous_role: waiting,
+        audit_id,
+        message: `${email} will not get ${waiting} access to "${slug}" when they first sign in.`,
+      });
+    }
     return refuse(res, 404, 'NOT_PERMITTED', 'That person does not have a Launchpad account.',
       'Check the email address and try again.', false);
   }
@@ -939,11 +1055,30 @@ shopAuditRouter.get('/:slug/audit', (req, res) => {
     console.error(`[authz] audit read failed for ${slug}: ${err.message}`);
   }
 
+  const emails = new Map();
+  try {
+    const ids = [...new Set(rows.map((r) => r.user_id).filter((id) => Number.isInteger(id)))];
+    if (ids.length) {
+      const found = usersDb()
+        .prepare(`SELECT id, email FROM users WHERE id IN (${ids.map(() => '?').join(',')})`)
+        .all(...ids);
+      for (const u of found) emails.set(u.id, u.email);
+    }
+  } catch (err) {
+    console.error(`[authz] audit actor lookup failed for ${slug}: ${err.message}`);
+  }
+  const actorOf = (r) => {
+    const email = emails.get(r.user_id) || null;
+    if (r.username && email && email.toLowerCase() !== String(r.username).toLowerCase()) return `${r.username} <${email}>`;
+    return r.username || email || (r.user_id ? `user ${r.user_id}` : 'system');
+  };
+
   res.json({
     entries: rows.map((r) => ({
       id: r.id,
       at: new Date(r.ts).toISOString(),
-      actor: r.username || (r.user_id ? `user ${r.user_id}` : 'system'),
+      actor: actorOf(r),
+      actor_email: emails.get(r.user_id) || null,
       action: r.action,
       via: r.via,
       detail: r.detail,
@@ -1129,6 +1264,7 @@ mcpPublicRouter.post('/enroll/verify', requireMcp, (req, res) => {
   if (existing) {
     if (!verifyOTP(existing.id, code)) return deny();
     auditRaw({ userId: existing.id, username: existing.username, action: 'mcp_sign_in', detail: { email, created: false }, via: 'mcp' });
+    applyPendingGrants(existing);
     return res.json({
       user: { id: existing.id, username: existing.username, email: existing.email, name: existing.name },
       created: false,
@@ -1154,6 +1290,7 @@ mcpPublicRouter.post('/enroll/verify', requireMcp, (req, res) => {
     // the UNIQUE(email) index. If the row is there, the sign in succeeded.
     const raced = userByEmail(email);
     if (raced) {
+      applyPendingGrants(raced);
       return res.json({
         user: { id: raced.id, username: raced.username, email: raced.email, name: raced.name },
         created: false,
@@ -1170,6 +1307,7 @@ mcpPublicRouter.post('/enroll/verify', requireMcp, (req, res) => {
   // "this person signed in". This one only ever follows a correct code, which
   // is what cleanup-probe-users.js reads it as.
   auditRaw({ userId: id, username, action: 'mcp_sign_in', detail: { email, created: true }, via: 'mcp' });
+  applyPendingGrants({ id, username, email });
   return res.status(201).json({ user: { id, username, email, name }, created: true });
 });
 
@@ -1216,9 +1354,19 @@ mcpRouter.get('/whoami', (req, res) => {
   } catch (err) {
     console.error(`[authz] whoami memberships failed: ${err.message}`);
   }
+  // Over MCP the admin bypass is off, so the column is the whole answer. The
+  // new-shop command reads this before it asks anyone for a slug.
+  let can_create_shops = false;
+  try {
+    const row = usersDb().prepare('SELECT can_create_shops FROM users WHERE id = ?').get(user.id);
+    can_create_shops = !!(row && row.can_create_shops);
+  } catch (err) {
+    console.error(`[authz] whoami can_create_shops failed: ${err.message}`);
+  }
   res.json({
     user: { id: user.id, username: user.username, email: user.email, name: user.name },
     memberships,
+    can_create_shops,
   });
 });
 
@@ -1314,6 +1462,8 @@ module.exports = {
   removeShopRole,
   shopMembers,
   shopOwners,
+  applyPendingGrants,
+  pendingGrantsFor,
   displayName,
   nameList,
   roleFromBooleans,
