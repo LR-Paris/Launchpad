@@ -12,6 +12,7 @@ const fs = require('fs');
 
 const Database = require('better-sqlite3');
 const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME, setUserFns } = require('./auth');
+const { publicRouter: passkeyPublicRouter, authedRouter: passkeyAuthedRouter } = require('./passkey');
 const {
   router: usersRouter,
   meRouter,
@@ -20,6 +21,7 @@ const {
   getUserCount,
   generateOTP,
   verifyOTP,
+  canIssueOTP,
   cleanupExpiredOTPs,
   getAllUserPermissions,
 } = require('./users');
@@ -144,6 +146,7 @@ setUserFns({
   getUserCount,
   generateOTP,
   verifyOTP,
+  canIssueOTP,
   getAllUserPermissions,
 });
 
@@ -331,6 +334,9 @@ app.use('/api/', globalLimiter);
 app.post('/api/auth/login-request', loginLimiter);
 app.post('/api/auth/login-verify', loginLimiter);
 app.use('/api/auth', authRouter);
+// Passkey (WebAuthn): pre-login ceremony is public; managing passkeys is authed + CSRF.
+app.use('/api/auth/passkey', passkeyPublicRouter);
+app.use('/api/auth/passkey', requireAuth, csrfProtection, passkeyAuthedRouter);
 
 // ---------------------------------------------------------------------------
 // The tool server's own routes. enroll and token/introspect are called with

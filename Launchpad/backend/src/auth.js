@@ -1,6 +1,8 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const geo = require('./security/geo');
+const authAlerts = require('./security/authAlerts');
 
 const router = express.Router();
 const SESSION_COOKIE_NAME = '__lp_sid';
@@ -12,7 +14,7 @@ function setUserFns(fns) { userFns = fns; }
 // ---------------------------------------------------------------------------
 // Email OTP sender — uses Mailgun (same pattern as email.js)
 // ---------------------------------------------------------------------------
-async function sendOTPEmail(email, code, username) {
+async function sendOTPEmail(email, code, username, meta) {
   const apiKey = process.env.MAILGUN_API_KEY;
   const domain = process.env.MAILGUN_DOMAIN;
 
@@ -32,6 +34,7 @@ async function sendOTPEmail(email, code, username) {
         <div style="font-size: 36px; font-weight: 700; letter-spacing: 8px; color: #0a0a0a; font-family: 'JetBrains Mono', monospace; margin: 0 0 16px;">${code}</div>
         <p style="font-size: 12px; color: #9ca3af; margin: 0;">This code expires in 10 minutes.</p>
       </div>
+      ${meta ? `<p style="font-size: 12px; color: #6b7280; text-align: center; margin: 16px 0 0;">Requested from ${meta.ip} — ${meta.location}.<br/>Not you? Ignore this email and tell Gio.</p>` : ''}
       <p style="font-size: 12px; color: #9ca3af; text-align: center; margin: 16px 0 0;">
         If you didn't request this code, you can safely ignore this email.
       </p>
@@ -88,46 +91,61 @@ function requireAuth(req, res, next) {
 // ---------------------------------------------------------------------------
 
 // POST /api/auth/login-request — request OTP code
-router.post('/login-request', (req, res) => {
+router.post('/login-request', async (req, res) => {
   const { identifier } = req.body; // username or email
   const audit = req.app.locals.auditLog;
 
-  if (!identifier) {
+  if (typeof identifier !== 'string' || !identifier.trim()) {
     return res.status(400).json({ error: 'Username or email is required' });
   }
 
+  const meta = await geo.requestMeta(req);
   const user = userFns.getUserByUsernameOrEmail(identifier.trim());
   if (!user) {
     audit?.('login_request_failed', { req, details: { identifier, reason: 'user_not_found' } });
+    authAlerts.notifyLogin({ event: 'login_request_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
     // Don't reveal if user exists — return success anyway
     return res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
   }
 
+  // Per-account brake: stops a burst of code requests for one account even when
+  // each request rides a different IP. Same generic reply eitherway.
+  const gate = userFns.canIssueOTP(user.id);
+  if (!gate.ok) {
+    audit?.('login_request_throttled', { req, details: { username: user.username, reason: gate.reason } });
+    authAlerts.notifyLogin({ event: 'login_request_throttled', actor: user.username, ip: meta.ip, location: meta.location, details: { reason: gate.reason } });
+    return res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
+  }
+
   const code = userFns.generateOTP(user.id);
-  sendOTPEmail(user.email, code, user.username);
+  sendOTPEmail(user.email, code, user.username, meta);
 
   audit?.('login_request', { req, details: { username: user.username } });
   res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
 });
 
 // POST /api/auth/login-verify — verify OTP and create session
-router.post('/login-verify', (req, res) => {
+router.post('/login-verify', async (req, res) => {
   const { identifier, code, rememberMe } = req.body;
   const audit = req.app.locals.auditLog;
 
-  if (!identifier || !code) {
+  if (typeof identifier !== 'string' || typeof code !== 'string' || !identifier.trim() || !code.trim()) {
     return res.status(400).json({ error: 'Identifier and code are required' });
   }
+
+  const meta = await geo.requestMeta(req);
 
   const user = userFns.getUserByUsernameOrEmail(identifier.trim());
   if (!user) {
     audit?.('login_failed', { req, details: { identifier, reason: 'user_not_found' } });
+    authAlerts.notifyLogin({ event: 'login_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
     return res.status(401).json({ error: 'Invalid code' });
   }
 
   const valid = userFns.verifyOTP(user.id, code.trim());
   if (!valid) {
     audit?.('login_failed', { req, details: { username: user.username, reason: 'invalid_otp' } });
+    authAlerts.notifyLogin({ event: 'login_failed', actor: user.username, ip: meta.ip, location: meta.location, details: { reason: 'invalid_otp' } });
     return res.status(401).json({ error: 'Invalid or expired code' });
   }
 
@@ -150,6 +168,7 @@ router.post('/login-verify', (req, res) => {
       return res.status(500).json({ error: 'Failed to save session' });
     }
     audit?.('login_success', { req, actor: user.username });
+    authAlerts.notifyLogin({ event: 'login_success', actor: user.username, email: user.email, ip: meta.ip, location: meta.location });
     res.json({
       user: {
         id: user.id,

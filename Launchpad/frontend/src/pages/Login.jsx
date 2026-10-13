@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { requestLoginCode, verifyLoginCode } from '../lib/api';
-import { Rocket, ArrowLeft, Mail, ShieldCheck } from 'lucide-react';
+import { loginWithPasskey } from '../lib/passkey';
+import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound } from 'lucide-react';
 
 const REMEMBER_OPTIONS = [
   { value: '1h', label: '1 hour' },
@@ -62,6 +63,24 @@ export default function Login() {
     }
   };
 
+  const handlePasskeyLogin = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const data = await loginWithPasskey(rememberMe);
+      queryClient.setQueryData(['auth'], data);
+      navigate('/');
+    } catch (err) {
+      // Canceling the OS passkey prompt throws NotAllowed/Abort — not a real error.
+      const name = err && err.name;
+      if (name !== 'NotAllowedError' && name !== 'AbortError') {
+        setError(err.response?.data?.error || 'Passkey sign-in failed');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex items-center justify-center min-h-[80vh]">
       <div className="w-full max-w-sm">
@@ -107,6 +126,21 @@ export default function Login() {
               className="w-full btn-launch rounded-md px-4 py-2.5 text-sm font-medium disabled:opacity-50 transition-all"
             >
               {loading ? 'Sending code...' : 'Send sign-in code'}
+            </button>
+
+            <div className="flex items-center gap-2 my-1">
+              <div className="flex-1 h-px bg-border/60" />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">or</span>
+              <div className="flex-1 h-px bg-border/60" />
+            </div>
+            <button
+              type="button"
+              onClick={handlePasskeyLogin}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-medium hover:bg-muted/40 disabled:opacity-50 transition-all"
+            >
+              <KeyRound className="h-4 w-4" />
+              Sign in with a passkey
             </button>
           </form>
         ) : (

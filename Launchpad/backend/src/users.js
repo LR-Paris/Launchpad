@@ -22,6 +22,20 @@ function initUsersDb() {
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
 
+  db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT UNIQUE NOT NULL,
+    public_key TEXT NOT NULL,
+    counter INTEGER NOT NULL DEFAULT 0,
+    transports TEXT,
+    device_type TEXT,
+    backed_up INTEGER DEFAULT 0,
+    nickname TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
+  )`);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +234,35 @@ function deleteUserShopPermissions(userId, shopSlug) {
 // ---------------------------------------------------------------------------
 // OTP helpers
 // ---------------------------------------------------------------------------
+// OTP pepper — codes are stored only as HMAC(code), never plaintext, so a read
+// of users.db yields nothing usable. Falls back to SESSION_SECRET if unset.
+const OTP_PEPPER = process.env.OTP_PEPPER || process.env.SESSION_SECRET || 'launchpad-otp';
+function hashOTP(code) {
+  return crypto.createHmac('sha256', OTP_PEPPER).update(String(code)).digest('hex');
+}
+
+// Per-account brake, independent of IP/identifier string. A burst of code
+// requests for one account (the Oct 2026 bot: 9 in 65s) all resolve to the same
+// user id and are stopped here even when every request rides a different IP.
+// Returns { ok } or { ok:false, reason, retryAfterSec }.
+function canIssueOTP(userId) {
+  const now = Date.now();
+  const TEN_MIN = 10 * 60 * 1000;
+  // expires_at = issue_time + 10min. The freshest code is unused and unexpired,
+  // so it survives cleanup and makes the cooldown reliable.
+  const maxExp = db.prepare('SELECT MAX(expires_at) AS e FROM otp_codes WHERE user_id = ?').get(userId).e;
+  if (maxExp && (maxExp - TEN_MIN) > now - 60 * 1000) {
+    return { ok: false, reason: 'cooldown', retryAfterSec: 60 };
+  }
+  // No more than 5 codes issued in the last 15 min for one account.
+  const issued = db.prepare('SELECT COUNT(*) AS n FROM otp_codes WHERE user_id = ? AND expires_at > ?')
+    .get(userId, now - 5 * 60 * 1000).n;
+  if (issued >= 5) {
+    return { ok: false, reason: 'too_many_codes', retryAfterSec: 900 };
+  }
+  return { ok: true };
+}
+
 function generateOTP(userId) {
   // Invalidate any existing unused OTPs for this user
   db.prepare('UPDATE otp_codes SET used = 1 WHERE user_id = ? AND used = 0').run(userId);
@@ -227,19 +270,27 @@ function generateOTP(userId) {
   const code = crypto.randomInt(100000, 999999).toString();
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
+  // Store only the HMAC of the code, never the code itself.
   db.prepare(
     'INSERT INTO otp_codes (user_id, code, expires_at) VALUES (?, ?, ?)'
-  ).run(userId, code, expiresAt);
+  ).run(userId, hashOTP(code), expiresAt);
 
   return code;
 }
 
 function verifyOTP(userId, code) {
+  // Compare against the stored HMAC, not plaintext. Fetch the live code for the
+  // user (generateOTP keeps at most one unused), then timing-safe compare.
   const row = db.prepare(
-    'SELECT id FROM otp_codes WHERE user_id = ? AND code = ? AND used = 0 AND expires_at > ?'
-  ).get(userId, code, Date.now());
+    'SELECT id, code FROM otp_codes WHERE user_id = ? AND used = 0 AND expires_at > ? ORDER BY id DESC LIMIT 1'
+  ).get(userId, Date.now());
 
   if (!row) return false;
+
+  const a = Buffer.from(String(row.code));
+  const b = Buffer.from(hashOTP(String(code).trim()));
+  const match = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!match) return false;
 
   // Mark as used
   db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(row.id);
@@ -588,6 +639,35 @@ meRouter.get('/', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// WebAuthn / passkey credential storage
+// ---------------------------------------------------------------------------
+function addCredential({ userId, credentialId, publicKey, counter, transports, deviceType, backedUp, nickname }) {
+  db.prepare(
+    `INSERT INTO webauthn_credentials
+       (user_id, credential_id, public_key, counter, transports, device_type, backed_up, nickname)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(userId, credentialId, publicKey, counter, transports, deviceType, backedUp, nickname);
+}
+
+function getCredentialsByUser(userId) {
+  return db.prepare('SELECT * FROM webauthn_credentials WHERE user_id = ? ORDER BY id').all(userId);
+}
+
+function getCredentialByCredentialId(credentialId) {
+  return db.prepare('SELECT * FROM webauthn_credentials WHERE credential_id = ?').get(credentialId);
+}
+
+function updateCredentialCounter(credentialId, counter) {
+  db.prepare("UPDATE webauthn_credentials SET counter = ?, last_used_at = datetime('now') WHERE credential_id = ?")
+    .run(counter, credentialId);
+}
+
+function deleteCredential(userId, credentialId) {
+  return db.prepare('DELETE FROM webauthn_credentials WHERE user_id = ? AND credential_id = ?')
+    .run(userId, credentialId).changes;
+}
+
 module.exports = {
   router,
   meRouter,
@@ -600,7 +680,13 @@ module.exports = {
   createUser,
   generateOTP,
   verifyOTP,
+  canIssueOTP,
   cleanupExpiredOTPs,
+  addCredential,
+  getCredentialsByUser,
+  getCredentialByCredentialId,
+  updateCredentialCounter,
+  deleteCredential,
   getAllUserPermissions,
   getUserShopPermissions,
   checkShopPermission,

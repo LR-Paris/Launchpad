@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { getSystemVersion, checkForUpdate, installUpdate, getShops, getSystemBranches } from '../lib/api';
 import { ArrowLeft, Sun, Moon, Palette, Server, RefreshCw, Download, CheckCircle, Database, ExternalLink, Settings, GitBranch, AlertTriangle } from 'lucide-react';
+import PasskeysCard from '../components/PasskeysCard';
 
 export default function GlobalSettings({ theme, toggleTheme }) {
   const [updateLog, setUpdateLog] = useState('');
@@ -133,6 +134,8 @@ export default function GlobalSettings({ theme, toggleTheme }) {
             </button>
           </div>
         </div>
+
+        <PasskeysCard />
 
         {/* Platform Info & Updates */}
         <div className="lp-card rounded-xl p-5">
