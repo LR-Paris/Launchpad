@@ -1,0 +1,6 @@
+[Unit]
+Description=Check Launchpad's nginx includes, promote them, reload nginx
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/launchpad-nginx-promote

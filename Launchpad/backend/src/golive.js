@@ -193,7 +193,7 @@ function applyShopStage(slug, stage, { rebuild = true } = {}) {
     clearBuildCache(slug);
     const composeFile = getComposeFilePath(slug);
     if (fs.existsSync(path.join(SHOPS_DIR, slug, 'docker-compose.yml'))) {
-      result.log += execSync(`docker compose -f ${composeFile} up -d 2>&1`, {
+      result.log += execSync(`launchpad-runner compose -f ${composeFile} up -d 2>&1`, {
         stdio: 'pipe', encoding: 'utf8',
       }) || '';
       result.rebuilt = true;
@@ -407,7 +407,7 @@ function checkBrandFiles(slug) {
 function checkContainer(slug) {
   try {
     const composeFile = getComposeFilePath(slug);
-    const out = execSync(`docker compose -f ${composeFile} ps --format json`, {
+    const out = execSync(`launchpad-runner compose -f ${composeFile} ps --format json`, {
       stdio: 'pipe', encoding: 'utf8',
     });
     const containers = out.trim().split('\n').map(line => {

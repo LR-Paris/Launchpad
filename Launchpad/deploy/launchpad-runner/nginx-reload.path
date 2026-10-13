@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch Launchpad's generated nginx includes
+
+[Path]
+PathChanged=/root/Launchpad/.nginx-reload-trigger
+PathChanged=/root/Launchpad/backend/nginx/conf.d/shops-locations.inc
+PathChanged=/root/Launchpad/backend/nginx/conf.d/mcp-locations.inc
+Unit=nginx-reload.service
+
+[Install]
+WantedBy=multi-user.target

@@ -282,16 +282,9 @@ router.post('/update', async (req, res) => {
       const hostDir = process.env.HOST_PROJECT_DIR;
       if (hostDir) {
         try {
-          // Spawn a helper container that mounts the host project at its REAL host path
-          // so docker compose can correctly resolve relative volume mounts
-          execSync(
-            `docker run -d --rm --name launchpad-updater ` +
-            `-v /var/run/docker.sock:/var/run/docker.sock ` +
-            `-v "${hostDir}":"${hostDir}" ` +
-            `-w "${hostDir}" ` +
-            `docker:cli sh -c "sleep 5 && docker compose up -d --build"`,
-            { stdio: 'pipe', encoding: 'utf8', timeout: 30000 }
-          );
+          // The backend has no Docker access. The host's launchpad-runner rebuilds
+          // Launchpad from its own compose file, which this container cannot edit.
+          execSync('launchpad-runner self-rebuild', { stdio: 'pipe', encoding: 'utf8', timeout: 30000 });
           log.push('Rebuild triggered — containers will restart in ~30 seconds.');
         } catch {
           log.push(`Auto-rebuild not available. Run on host: cd ${hostDir} && docker compose up -d --build`);

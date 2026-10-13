@@ -1,53 +1,29 @@
 #!/usr/bin/env node
-const readline = require('readline');
-const bcrypt = require('bcrypt');
-const path = require('path');
+// Create a Launchpad super admin. Sign-in is by emailed code or passkey,
+// so there is no password to set.
+//
+//   node scripts/create-admin.js <email> [username] [name]
+const { initUsersDb, getUserByEmail, createUser } = require('../src/users');
 
-const { loadUsers, saveUsers, BCRYPT_ROUNDS } = require('../src/auth');
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-function ask(question) {
-  return new Promise(resolve => rl.question(question, resolve));
-}
-
-async function main() {
-  const users = loadUsers();
-
-  if (users.length > 0) {
-    console.log('An admin user already exists.');
-    rl.close();
-    process.exit(0);
-  }
-
-  console.log('=== Shuttle Platform — Create Admin User ===\n');
-
-  const username = await ask('Username: ');
-  if (!username.trim()) {
-    console.error('Username cannot be empty.');
-    rl.close();
+function main() {
+  const [email, username, name] = process.argv.slice(2);
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    console.error('Usage: node scripts/create-admin.js <email> [username] [name]');
     process.exit(1);
   }
-
-  const password = await ask('Password: ');
-  if (password.length < 8) {
-    console.error('Password must be at least 8 characters.');
-    rl.close();
-    process.exit(1);
+  initUsersDb();
+  if (getUserByEmail(email)) {
+    console.log(`${email} already has an account.`);
+    return;
   }
-
-  const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-
-  saveUsers([{ username: username.trim(), password: hash }]);
-
-  console.log(`\nAdmin user "${username.trim()}" created successfully.`);
-  rl.close();
+  const user = createUser({
+    username: username || email.split('@')[0],
+    email,
+    name: name || '',
+    role: 'super_admin',
+    created_by: null,
+  });
+  console.log(`Created super_admin ${user.email} (id ${user.id}). Sign in with an emailed code.`);
 }
 
-main().catch(err => {
-  console.error('Error:', err.message);
-  process.exit(1);
-});
+main();

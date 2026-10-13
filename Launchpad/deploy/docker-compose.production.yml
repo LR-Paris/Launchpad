@@ -1,0 +1,85 @@
+# Launchpad production stack.
+#
+#   Build and start:   docker compose up -d --build
+#
+# Images are built from ./backend and ./frontend with pinned dependencies, so a
+# restart never installs anything from npm. The backend has no Docker socket:
+# docker actions go through the host service launchpad-runner, which checks
+# each request first (/usr/local/lib/launchpad-runner/runner.py).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  backend:
+    build: ./backend
+    image: launchpad-backend:local
+    init: true
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/logs:/app/logs
+      - ./backend/nginx:/app/nginx
+      - ./shops:/app/shops
+      # Read-only view of the project (version info). The one writable file is
+      # the nginx reload trigger; the host checks the includes before reloading.
+      - .:/host/project:ro
+      - ./.nginx-reload-trigger:/host/project/.nginx-reload-trigger
+      - /srv/launchpad-runner:/run/launchpad-runner
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "172.17.0.1:3001:3001"   # shops reach the API via the docker bridge gateway
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    env_file:
+      - .env
+    environment:
+      - SESSION_SECRET=${SESSION_SECRET}
+      - NODE_ENV=production
+      - FRONTEND_URL=https://lrparisstore.com
+      - BASE_DOMAIN=lrparisstore.com
+      - HOST_PROJECT_DIR=/root/Launchpad
+      - MAILGUN_DOMAIN=mg.lrparisstore.com
+      - PUBLIC_URL=https://lrparisstore.com
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [NET_RAW, MKNOD, SYS_CHROOT, SETFCAP, AUDIT_WRITE]
+    logging: *logging
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    image: launchpad-frontend:local
+    init: true
+    ports:
+      - "127.0.0.1:3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    logging: *logging
+    restart: unless-stopped
+
+  shuttle-mcp:
+    build: ./shuttle-mcp
+    # Loopback only. nginx is the only thing that may reach it, and nginx is on the host.
+    ports:
+      - "127.0.0.1:3002:3002"
+    environment:
+      # Inside the compose project the backend answers on its service name. On a host
+      # network deployment use http://127.0.0.1:3001 instead.
+      - LAUNCHPAD_API=http://backend:3001
+      - PUBLIC_URL=https://lrparisstore.com/mcp
+      - ALLOWED_EMAIL_DOMAIN=lrparis.com
+      - PORT=3002
+      - MCP_STATE_DIR=/data
+      # MCP_SHARED_SECRET comes from .env, the same file and the same value the backend reads.
+      - MCP_SHARED_SECRET=${MCP_SHARED_SECRET}
+    volumes:
+      - ./shuttle-mcp-data:/data
+    depends_on:
+      - backend
+    logging: *logging
+    restart: unless-stopped

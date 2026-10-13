@@ -66,7 +66,7 @@ function getContainerStatus(slug) {
   try {
     const composeFile = getComposeFilePath(slug);
     const result = execSync(
-      `docker compose -f ${composeFile} ps --format json`,
+      `launchpad-runner compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8', timeout: 5000 }
     );
     if (result.trim()) {
@@ -97,7 +97,7 @@ router.get('/overview', (req, res) => {
       try {
         const composeFile = getComposeFilePath(shop.slug);
         const logs = execSync(
-          `docker compose -f ${composeFile} logs --tail=200 2>&1`,
+          `launchpad-runner compose -f ${composeFile} logs --tail=200 2>&1`,
           { stdio: 'pipe', encoding: 'utf8', timeout: 5000 }
         );
         // Extract error lines
@@ -166,7 +166,7 @@ router.get('/logs/shop/:slug', (req, res) => {
     let logs = '';
     try {
       logs = execSync(
-        `docker compose -f ${composeFile} logs --tail=${lines} 2>&1`,
+        `launchpad-runner compose -f ${composeFile} logs --tail=${lines} 2>&1`,
         { stdio: 'pipe', encoding: 'utf8', timeout: 10000 }
       );
     } catch (logErr) {
@@ -195,7 +195,7 @@ router.get('/logs/all', (req, res) => {
       try {
         const composeFile = getComposeFilePath(shop.slug);
         const logs = execSync(
-          `docker compose -f ${composeFile} logs --tail=${lines} --timestamps 2>&1`,
+          `launchpad-runner compose -f ${composeFile} logs --tail=${lines} --timestamps 2>&1`,
           { stdio: 'pipe', encoding: 'utf8', timeout: 5000 }
         );
         if (logs.trim()) {

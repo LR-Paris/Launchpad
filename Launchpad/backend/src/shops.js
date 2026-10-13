@@ -224,7 +224,7 @@ function getContainerStatus(slug) {
   try {
     const composeFile = getComposeFilePath(slug);
     const result = execSync(
-      `docker compose -f ${composeFile} ps --format json`,
+      `launchpad-runner compose -f ${composeFile} ps --format json`,
       { stdio: 'pipe', encoding: 'utf8' }
     );
     if (result.trim()) {
@@ -877,10 +877,10 @@ router.post('/', (req, res) => {
 
     // Start the container using container-readable path
     const hostComposeFile = getComposeFilePath(slug);
-    log.push(`Starting container with: docker compose -f ${hostComposeFile} up -d`);
+    log.push(`Starting container with: launchpad-runner compose -f ${hostComposeFile} up -d`);
     try {
       const upOut = execSync(
-        `docker compose -f ${hostComposeFile} up -d 2>&1`,
+        `launchpad-runner compose -f ${hostComposeFile} up -d 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
       log.push(upOut || 'Container started.');
@@ -1098,7 +1098,7 @@ router.patch('/:slug', (req, res) => {
       // Stop container
       const oldCompose = getComposeFilePath(slug);
       if (fs.existsSync(path.join(oldDir, 'docker-compose.yml'))) {
-        try { execSync(`docker compose -f ${oldCompose} down 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+        try { execSync(`launchpad-runner compose -f ${oldCompose} down 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
       }
 
       // Rename directory
@@ -1137,7 +1137,7 @@ router.patch('/:slug', (req, res) => {
       const newDir2 = path.join(SHOPS_DIR, newSlug);
       clearBuildCache(newDir2, newSlug);
       const newCompose = getComposeFilePath(newSlug);
-      try { execSync(`docker compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
+      try { execSync(`launchpad-runner compose -f ${newCompose} up -d 2>&1`, { stdio: 'pipe' }); } catch { /* ok */ }
     }
 
     db.prepare(
@@ -1198,7 +1198,7 @@ router.get('/:slug/logs', (req, res) => {
     let logs = '';
     try {
       logs = execSync(
-        `docker compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
+        `launchpad-runner compose -f ${hostComposeFile} logs --tail=${lines} 2>&1`,
         { stdio: 'pipe', encoding: 'utf8' }
       );
     } catch (logErr) {
@@ -1242,7 +1242,7 @@ router.delete('/:slug', (req, res) => {
     const localComposeFile = path.join(SHOPS_DIR, slug, 'docker-compose.yml');
     if (fs.existsSync(localComposeFile)) {
       try {
-        execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
+        execSync(`launchpad-runner compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe' });
       } catch { /* container may not be running */ }
     }
 
@@ -1303,7 +1303,7 @@ router.post('/:slug/start', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
-      out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+      out = execSync(`launchpad-runner compose -f ${hostComposeFile} up -d 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -1349,7 +1349,7 @@ router.post('/:slug/stop', (req, res) => {
     const hostComposeFile = getComposeFilePath(slug);
     let out = '';
     try {
-      out = execSync(`docker compose -f ${hostComposeFile} down 2>&1`, {
+      out = execSync(`launchpad-runner compose -f ${hostComposeFile} down 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -1414,13 +1414,13 @@ router.post('/:slug/restart', (req, res) => {
     let out = '';
     try {
       // Try restart first; if it fails (container not created), fall back to up -d
-      out = execSync(`docker compose -f ${hostComposeFile} restart 2>&1`, {
+      out = execSync(`launchpad-runner compose -f ${hostComposeFile} restart 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
     } catch {
       try {
-        out = execSync(`docker compose -f ${hostComposeFile} up -d 2>&1`, {
+        out = execSync(`launchpad-runner compose -f ${hostComposeFile} up -d 2>&1`, {
           stdio: 'pipe',
           encoding: 'utf8',
         });
@@ -1515,8 +1515,8 @@ router.post('/:slug/deploy', (req, res) => {
 
     // Rebuild container
     try {
-      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      execSync(`launchpad-runner compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`launchpad-runner compose -f ${hostComposeFile} up -d --build 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });
@@ -1764,8 +1764,8 @@ router.post('/:slug/update-template', (req, res) => {
     clearBuildCache(shopDir, slug);
     log.push('Rebuilding container...');
     try {
-      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      execSync(`launchpad-runner compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`launchpad-runner compose -f ${hostComposeFile} up -d --build 2>&1`, {
         stdio: 'pipe', encoding: 'utf8',
       });
       log.push(upOut || 'Container rebuilt and started.');
@@ -1906,8 +1906,8 @@ router.post('/:slug/upgrade', (req, res) => {
     // Clear stale build cache and rebuild container
     clearBuildCache(shopDir, slug);
     try {
-      execSync(`docker compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
-      const upOut = execSync(`docker compose -f ${hostComposeFile} up -d --build 2>&1`, {
+      execSync(`launchpad-runner compose -f ${hostComposeFile} down 2>&1`, { stdio: 'pipe', encoding: 'utf8' });
+      const upOut = execSync(`launchpad-runner compose -f ${hostComposeFile} up -d --build 2>&1`, {
         stdio: 'pipe',
         encoding: 'utf8',
       });

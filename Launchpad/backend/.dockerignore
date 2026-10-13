@@ -1,0 +1,11 @@
+node_modules
+data
+shops
+logs
+nginx
+test
+Dockerfile*
+.dockerignore
+.env*
+*.bak*
+_create_*.js
