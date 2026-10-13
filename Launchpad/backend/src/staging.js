@@ -49,6 +49,28 @@ const LIMITS = {
 // to replace them, so we respect that and warn. Otherwise we carry them forward.
 const CARRY_FORWARD = ['Inventory', 'Presets', 'Checkout'];
 
+// Orders are different again. The shop writes DATABASE/Orders/orders.csv itself
+// at every checkout, and no zip can know about an order placed after it was
+// built. Every DATABASE built from the Shuttle template carries an empty
+// Orders/orders.csv, so "the zip carries it, so the uploader meant it" does not
+// hold here: it wiped the order history on every catalog update. The live
+// folder always wins, on apply and on rollback.
+const ALWAYS_LIVE = ['Orders'];
+
+function keepLiveFolders(liveDb, targetDb) {
+  const kept = [];
+  if (!fs.existsSync(liveDb)) return kept;
+  for (const name of ALWAYS_LIVE) {
+    const from = path.join(liveDb, name);
+    if (!fs.existsSync(from)) continue;
+    const to = path.join(targetDb, name);
+    fs.rmSync(to, { recursive: true, force: true });
+    fs.cpSync(from, to, { recursive: true });
+    kept.push(name);
+  }
+  return kept;
+}
+
 // Mirrors the slugify in inventory.js, which mirrors Shuttle's catalog.ts.
 // Product IDs have to match across all three or the inventory rows detach.
 function slugify(text) {
@@ -288,6 +310,7 @@ function scanDatabase(dbRoot) {
     hasColors: fs.existsSync(path.join(dbRoot, 'Design', 'Details', 'Colors.txt')),
     hasFonts: fs.existsSync(path.join(dbRoot, 'Design', 'Details', 'Fonts.txt')),
     hasInventory: fs.existsSync(path.join(dbRoot, 'Inventory', 'inventory.csv')),
+    hasOrders: fs.existsSync(path.join(dbRoot, 'Orders')),
     collections: [],
     products: new Map(),
   };
@@ -344,7 +367,16 @@ function validate(model, oldModel) {
     blocking.push('There is no Design folder at the top level of the zip. Every DATABASE has one, so this zip is almost certainly from the wrong folder level.');
   }
   if (model.hasShopCollections && model.collections.length === 0) {
-    blocking.push('ShopCollections has no collection folders in it, so the shop would have nothing to sell.');
+    // An empty catalog does not break the build: Shuttle renders a shop with
+    // no collections. It only costs something when the live shop has products
+    // to lose, and that case is blocked in buildDiff. On a shop that has none
+    // yet (every new shop now starts that way), a design-first upload is how a
+    // brand gets its logo, colors and password before the product list exists.
+    if (oldModel && oldModel.exists && oldModel.products && oldModel.products.size) {
+      blocking.push('ShopCollections has no collection folders in it, so the shop would have nothing to sell.');
+    } else {
+      warnings.push('ShopCollections has no collections yet. The shop shows its design with nothing to sell until a catalog with products is uploaded.');
+    }
   }
 
   if (model.hasDesign && !model.hasColors) {
@@ -595,6 +627,9 @@ function buildDiff(oldModel, newModel, willBackupTo) {
   if (newModel.hasInventory) {
     warnings.push('The zip includes Inventory/inventory.csv, so the stock counts currently on the shop will be replaced by the ones in the zip.');
   }
+  if (newModel.hasOrders && oldModel.hasOrders) {
+    warnings.push('The zip includes an Orders folder. It is ignored: the orders already placed on the shop are kept.');
+  }
 
   return {
     products: {
@@ -718,6 +753,7 @@ function carryForward(liveDb, stagedDb) {
     fs.cpSync(from, to, { recursive: true });
     carried.push(name);
   }
+  for (const name of keepLiveFolders(liveDb, stagedDb)) carried.push(name);
   return carried;
 }
 
@@ -921,11 +957,15 @@ function rollbackDatabase({ slug, backupId, shopsDir }) {
       zipDirectory(p.live, safetyPath);
     }
 
+    // A rollback restores the catalog, not the past: orders placed since that
+    // backup stay on the shop.
+    const keptLive = keepLiveFolders(p.live, restoreDb);
+
     swapInPlace(p.shopDir, restoreDb);
     fs.rmSync(restoreDir, { recursive: true, force: true });
     // Never prune the backup that was just restored from, or the safety copy.
     const pruned = pruneBackups(slug, shopsDir, target.id, safetyId);
-    return { restored_from: target.id, backup_id: safetyId, pruned_backups: pruned };
+    return { restored_from: target.id, backup_id: safetyId, pruned_backups: pruned, kept_live: keptLive };
   } catch (err) {
     fs.rmSync(restoreDir, { recursive: true, force: true });
     throw err;

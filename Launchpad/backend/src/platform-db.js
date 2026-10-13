@@ -253,6 +253,20 @@ const SCHEMA = `
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_pending_enroll_expiry ON pending_enrollments(expires_at);
+
+  -- An owner gave access to an address that has no Launchpad account yet.
+  -- Like pending_enrollments, this is not a user and it never appears in the
+  -- user admin. It is applied, then deleted, the moment a users row with this
+  -- email exists: a first sign in through the dev tool, or an admin creating
+  -- the account. So grant_access waits for the person instead of refusing.
+  CREATE TABLE IF NOT EXISTS pending_grants (
+    email      TEXT NOT NULL,
+    shop_slug  TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    granted_by INTEGER,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (email, shop_slug)
+  );
 `;
 
 // ---------------------------------------------------------------------------
