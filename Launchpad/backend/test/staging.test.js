@@ -710,5 +710,61 @@ test('discardStaging only deletes a real staging of this shop', (workspace) => {
   assert.ok(!fs.existsSync(path.join(stagingRoot, staged.staging_id)));
 });
 
+console.log('\ndesign first');
+
+test('a design-only upload is allowed on a shop with no products yet', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', []);
+  const zipPath = makeZip(Object.assign(databaseFiles('', []), { 'ShopCollections/README.md': '# Collections\n' }),
+    path.join(workspace, 'design.zip'));
+  const staged = staging.stageDatabase({ slug: 'demox', zipPath, shopsDir });
+  assert.deepStrictEqual(staged.diff.blocking, [], staged.diff.blocking.join(' | '));
+  assert.ok(staged.diff.warnings.some((w) => /no collections yet/.test(w)), staged.diff.warnings.join(' | '));
+  staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  assert.strictEqual(fs.readFileSync(path.join(shopsDir, 'demox', 'DATABASE', 'Design', 'Details', 'CompanyName.txt'), 'utf8'), 'Test Shop\n');
+});
+
+test('but never on a shop that has products to lose', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }]);
+  const zipPath = makeZip(Object.assign(databaseFiles('', []), { 'ShopCollections/README.md': '# Collections\n' }),
+    path.join(workspace, 'design.zip'));
+  const staged = staging.stageDatabase({ slug: 'demox', zipPath, shopsDir });
+  assert.ok(staged.diff.blocking.some((b) => /empty the shop/.test(b)), staged.diff.blocking.join(' | '));
+});
+
+console.log('\norders');
+
+test('a catalog update never wipes the orders the shop has taken', (workspace) => {
+  const ORDERS = 'Order ID,Date,Customer Name\nTRC-1,2026-10-13,Samantha\n';
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }], {
+    'DATABASE/Orders/orders.csv': ORDERS,
+  });
+  // Every DATABASE built from the template carries an empty orders.csv.
+  const zipPath = makeZip(databaseFiles('', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }], {
+    'Orders/orders.csv': 'Order ID,Date,Customer Name\n',
+  }), path.join(workspace, 'next.zip'));
+  const staged = staging.stageDatabase({ slug: 'demox', zipPath, shopsDir });
+  assert.ok(staged.diff.warnings.some((w) => /Orders folder/.test(w)), staged.diff.warnings.join(' | '));
+  const applied = staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  assert.ok(applied.carried_forward.includes('Orders'), JSON.stringify(applied.carried_forward));
+  const live = path.join(shopsDir, 'demox', 'DATABASE', 'Orders', 'orders.csv');
+  assert.strictEqual(fs.readFileSync(live, 'utf8'), ORDERS, 'the order history was replaced by the zip');
+});
+
+test('a rollback restores the catalog and keeps orders placed since the backup', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }], {
+    'DATABASE/Orders/orders.csv': 'Order ID\nOLD-1\n',
+  });
+  const zipPath = makeZip(databaseFiles('', [{ collection: 'Core', folder: 'Tote', sku: 'T1' }]), path.join(workspace, 'next.zip'));
+  const staged = staging.stageDatabase({ slug: 'demox', zipPath, shopsDir });
+  staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  const live = path.join(shopsDir, 'demox', 'DATABASE');
+  fs.writeFileSync(path.join(live, 'Orders', 'orders.csv'), 'Order ID\nOLD-1\nNEW-2\n');
+  const rolled = staging.rollbackDatabase({ slug: 'demox', shopsDir });
+  assert.ok(fs.existsSync(path.join(live, 'ShopCollections', 'Core', 'Mug')), 'the catalog was not restored');
+  assert.strictEqual(fs.readFileSync(path.join(live, 'Orders', 'orders.csv'), 'utf8'), 'Order ID\nOLD-1\nNEW-2\n',
+    'an order placed after the backup was lost');
+  assert.deepStrictEqual(rolled.kept_live, ['Orders']);
+});
+
 console.log(`\n${passed} passed, ${failures} failed\n`);
 process.exit(failures ? 1 : 0);
