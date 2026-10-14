@@ -17,7 +17,7 @@ const {
   authedRouter: passkeyAuthedRouter,
   mcpRouter: passkeyMcpRouter,
 } = require('./passkey');
-const { enforceMaxSessionAge } = require('./session-policy');
+const { sessionGuard } = require('./session-policy');
 const {
   router: usersRouter,
   meRouter,
@@ -29,6 +29,7 @@ const {
   canIssueOTP,
   cleanupExpiredOTPs,
   getAllUserPermissions,
+  getUserById,
 } = require('./users');
 
 // Minimal session store using better-sqlite3 (replaces connect-sqlite3 which
@@ -259,8 +260,9 @@ const sessionMiddleware = session({
   },
 });
 app.use((req, res, next) => (req.via === 'mcp' ? next() : sessionMiddleware(req, res, next)));
-// However active, a session ends SESSION_MAX_AGE_DAYS (180) after its sign in.
-app.use(enforceMaxSessionAge({ cookieName: SESSION_COOKIE_NAME, auditLog }));
+// However active, a session ends SESSION_MAX_AGE_DAYS (180) after its sign in,
+// and a deleted account or a changed role takes effect on the next request.
+app.use(sessionGuard({ cookieName: SESSION_COOKIE_NAME, auditLog, getUserById }));
 
 // ---------------------------------------------------------------------------
 // CSRF protection — double-submit cookie pattern
@@ -335,6 +337,12 @@ const globalLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 240,
   skip: (req) => req.method === 'GET',
+  // Every signed tool call arrives from the shuttle-mcp container, so keyed by
+  // IP they all shared one bucket: one busy person, or someone hammering the
+  // connector sign-in page, and everyone's tool writes got 429. Signed calls are
+  // counted per person instead (actor 0 is everyone not yet signed in).
+  keyGenerator: (req) => (req.via === 'mcp' ? `mcp:${req.mcpActorId}` : `ip:${req.ip || 'noip'}`),
+  validate: { ip: false },
   message: { error: 'Too many requests, please slow down' },
   standardHeaders: true,
   legacyHeaders: false,

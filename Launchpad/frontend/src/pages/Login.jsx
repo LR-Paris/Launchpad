@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { requestLoginCode, verifyLoginCode, getAuthConfig } from '../lib/api';
+import { requestLoginCode, verifyLoginCode, getAuthConfig, resetCsrfToken } from '../lib/api';
 import TurnstileWidget from '../components/TurnstileWidget';
 import { loginWithPasskey, passkeySupported, listPasskeys, registerPasskey } from '../lib/passkey';
 import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound, Fingerprint } from 'lucide-react';
@@ -97,6 +97,7 @@ export default function Login() {
 
     try {
       const data = await verifyLoginCode(identifier, code, rememberMe);
+      resetCsrfToken(); // the session is new, so is its CSRF token
       // Signed in. Before going in, offer a passkey if this browser can hold
       // one and the account has none yet. Setting the auth data is what leaves
       // this page, so it waits until the offer is answered.
@@ -154,6 +155,7 @@ export default function Login() {
     setLoading(true);
     try {
       const data = await loginWithPasskey(rememberMe);
+      resetCsrfToken();
       finishSignIn(data);
     } catch (err) {
       // Canceling the OS passkey prompt throws NotAllowed/Abort — not a real error.

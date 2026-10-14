@@ -48,7 +48,15 @@ function maxSessionAgeMs(env = process.env) {
 
 // Called at the moment a person has proved who they are, by email code or by
 // passkey. The caller saves the session afterwards.
-function startSignedInSession(req, rememberMe, user) {
+//
+// The session gets a new id first. Without that, whatever session existed
+// before sign in (the one the page opened to fetch a CSRF token, or one an
+// attacker planted) became the signed-in session: session fixation. The old
+// CSRF token stays with the old session, and the page asks for a new one.
+async function startSignedInSession(req, rememberMe, user) {
+  await new Promise((resolve, reject) => {
+    req.session.regenerate((err) => (err ? reject(err) : resolve()));
+  });
   const key = rememberKey(rememberMe);
   req.session.cookie.maxAge = REMEMBER_DURATIONS[key];
   req.session.remember = key;
@@ -63,25 +71,51 @@ function startSignedInSession(req, rememberMe, user) {
   return key;
 }
 
-// Ends a session that has outlived the absolute limit. A session from before
-// this file existed carries no signedInAt; its clock starts on its next
-// request, so nobody is signed out by the deploy that introduces it.
-function enforceMaxSessionAge({ cookieName, auditLog } = {}) {
-  return function maxSessionAge(req, res, next) {
+// Runs on every request with a signed-in session.
+//
+//  - Ends a session that has outlived the absolute limit. A session from before
+//    this file existed carries no signedInAt; its clock starts on its next
+//    request, so nobody is signed out by the deploy that introduces it.
+//  - Reads the account again. The session holds a copy of the user taken at
+//    sign in, and requireRole() reads the role from that copy. With sessions
+//    that renew for months, a deleted account or a lowered role has to take
+//    effect on the next request, not at the next sign in.
+//
+// A failed read of users.db is not a reason to sign anyone out, so it passes.
+function sessionGuard({ cookieName, auditLog, getUserById } = {}) {
+  return function guardSession(req, res, next) {
     if (req.via === 'mcp' || !req.session || !req.session.user) return next();
+
+    const end = (reason, message) => {
+      const username = req.session.user.username;
+      return req.session.destroy(() => {
+        if (cookieName) res.clearCookie(cookieName);
+        if (auditLog) auditLog('session_ended', { actor: username, req, details: { reason } });
+        res.status(401).json({ error: message });
+      });
+    };
+
     const now = Date.now();
     if (!req.session.signedInAt) {
       req.session.signedInAt = now;
-      return next();
+    } else if (now - req.session.signedInAt > maxSessionAgeMs()) {
+      return end('max_age', 'Your sign-in has expired. Sign in again.');
     }
-    if (now - req.session.signedInAt <= maxSessionAgeMs()) return next();
 
-    const username = req.session.user.username;
-    return req.session.destroy(() => {
-      if (cookieName) res.clearCookie(cookieName);
-      if (auditLog) auditLog('session_expired', { actor: username, req, details: { reason: 'max_age' } });
-      res.status(401).json({ error: 'Your sign-in has expired. Sign in again.' });
-    });
+    if (getUserById) {
+      let row;
+      try {
+        row = getUserById(req.session.user.id);
+      } catch {
+        return next();
+      }
+      if (!row) return end('account_removed', 'This account no longer exists. Ask Gio if that is a mistake.');
+      const u = req.session.user;
+      if (u.role !== row.role || u.username !== row.username || u.email !== row.email || u.name !== row.name) {
+        req.session.user = { ...u, role: row.role, username: row.username, email: row.email, name: row.name };
+      }
+    }
+    return next();
   };
 }
 
@@ -92,5 +126,5 @@ module.exports = {
   sessionDuration,
   maxSessionAgeMs,
   startSignedInSession,
-  enforceMaxSessionAge,
+  sessionGuard,
 };

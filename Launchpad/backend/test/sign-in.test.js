@@ -99,9 +99,9 @@ function makePasskey() {
   ]);
   return { id: b64url(crypto.randomBytes(16)), privateKey, coseB64: cose.toString('base64'), counter: 0 };
 }
-function assertion(pk, challenge, { origin = ORIGIN, rpId = RP_ID, userId = '' } = {}) {
+function assertion(pk, challenge, { origin = ORIGIN, rpId = RP_ID, userId = '', crossOrigin = false } = {}) {
   pk.counter += 1;
-  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin, crossOrigin: false }));
+  const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin, crossOrigin }));
   const counter = Buffer.alloc(4); counter.writeUInt32BE(pk.counter);
   const authData = Buffer.concat([
     crypto.createHash('sha256').update(rpId).digest(),
@@ -253,6 +253,41 @@ async function main() {
     ok('and its 180-day clock starts now', typeof stamped === 'number' && Math.abs(Date.now() - stamped) < 60 * 1000, String(stamped));
 
     // -----------------------------------------------------------------------
+    // 3b. A new session id at sign in, and the account read on every request
+    // -----------------------------------------------------------------------
+    const preRes = await fetch(`${BASE}/api/auth/csrf-token`);
+    const preCookie = sessionCookie(preRes);
+    ok('a visitor gets a session before signing in', !!preCookie);
+    { const u = usersDb(); u.prepare('DELETE FROM otp_codes WHERE user_id = 2').run(); u.close(); }
+    await fetch(`${BASE}/api/auth/login-request`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: preCookie.pair }, body: JSON.stringify({ identifier: 'marc@lrparis.com' }) });
+    { const u = usersDb(); const row = u.prepare('SELECT id FROM otp_codes WHERE user_id = 2 ORDER BY id DESC LIMIT 1').get(); u.prepare('UPDATE otp_codes SET code = ? WHERE id = ?').run(otpHash(KNOWN_CODE), row.id); u.close(); }
+    const fixed = await fetch(`${BASE}/api/auth/login-verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: preCookie.pair },
+      body: JSON.stringify({ identifier: 'marc@lrparis.com', code: KNOWN_CODE }),
+    });
+    const fixedCookie = sessionCookie(fixed);
+    eq('signing in from that session works', fixed.status, 200);
+    ok('and hands out a different session id', fixedCookie && sidOf(fixedCookie.pair) !== sidOf(preCookie.pair),
+      `before ${sidOf(preCookie.pair)} after ${fixedCookie && sidOf(fixedCookie.pair)}`);
+    eq('the session id from before sign in is not signed in', (await me(preCookie.pair)).status, 401);
+    eq('the new one is', (await me(fixedCookie.pair)).status, 200);
+
+    const adminIn = await webSignIn('g.lupo@lrparis.com', 1, '1m');
+    eq('Gio signs in as super_admin', (await (await me(adminIn.cookie.pair)).json()).user.role, 'super_admin');
+    { const u = usersDb(); u.prepare("UPDATE users SET role = 'user' WHERE id = 1").run(); u.close(); }
+    const demoted = await (await me(adminIn.cookie.pair)).json();
+    eq('a lowered role applies on the next request, not at the next sign in', demoted.user && demoted.user.role, 'user');
+    const adminOnly = await fetch(`${BASE}/api/users`, { headers: { Cookie: adminIn.cookie.pair } });
+    ok('and the admin pages refuse the old session', adminOnly.status === 403 || adminOnly.status === 401, `got ${adminOnly.status}`);
+    { const u = usersDb(); u.prepare("UPDATE users SET role = 'super_admin' WHERE id = 1").run(); u.close(); }
+
+    { const u = usersDb(); u.exec("INSERT INTO users (id, username, email, name, role) VALUES (21, 'leaver', 'leaver@lrparis.com', 'Leaver', 'user')"); u.close(); }
+    const leaver = await webSignIn('leaver@lrparis.com', 21, '3m');
+    eq('a colleague signs in', (await me(leaver.cookie.pair)).status, 200);
+    { const u = usersDb(); u.prepare('DELETE FROM users WHERE id = 21').run(); u.close(); }
+    eq('once their account is deleted, their session ends on the next request', (await me(leaver.cookie.pair)).status, 401);
+
+    // -----------------------------------------------------------------------
     // 4. Passkey on the web sign-in page
     // -----------------------------------------------------------------------
     const margotKey = makePasskey();
@@ -275,6 +310,29 @@ async function main() {
     const pkCookie = sessionCookie(webPk);
     ok('with a session cookie', !!pkCookie);
     if (pkCookie) near('that lasts the week she chose', pkCookie.expiresAt - Date.now(), 7 * DAY);
+
+    // One answer per challenge: a wrong answer burns it.
+    const burnOpt = await fetch(`${BASE}/api/auth/passkey/auth-options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const burnJson = await burnOpt.json();
+    const burnCookie = sessionCookie(burnOpt);
+    const wrongWeb = await fetch(`${BASE}/api/auth/passkey/auth-verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: burnCookie.pair },
+      body: JSON.stringify(assertion(margotKey, burnJson.challenge, { origin: 'https://evil.example', userId: 8 })),
+    });
+    ok('a wrong answer on the web page is refused', wrongWeb.status === 400 || wrongWeb.status === 401, `got ${wrongWeb.status}`);
+    const retryWeb = await fetch(`${BASE}/api/auth/passkey/auth-verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: burnCookie.pair },
+      body: JSON.stringify(assertion(margotKey, burnJson.challenge, { userId: 8 })),
+    });
+    eq('and the same challenge cannot be answered again', retryWeb.status, 400);
+
+    const framedOpt = await fetch(`${BASE}/api/auth/passkey/auth-options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const framedJson = await framedOpt.json();
+    const framed = await fetch(`${BASE}/api/auth/passkey/auth-verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: sessionCookie(framedOpt).pair },
+      body: JSON.stringify(assertion(margotKey, framedJson.challenge, { userId: 8, crossOrigin: true })),
+    });
+    eq('a passkey answer made inside another site\'s frame is refused', framed.status, 401);
 
     const noChoiceOpt = await fetch(`${BASE}/api/auth/passkey/auth-options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const noChoiceJson = await noChoiceOpt.json();
@@ -334,6 +392,12 @@ async function main() {
     eq('a passkey Launchpad has never seen is refused', s4.status, 401);
     eq('with the same words as every other failure', s4.json?.error?.message, wrongOrigin.json?.error?.message);
 
+    const s6 = await callMcp(0, 'POST', '/api/mcp/passkey/options', {});
+    const framedMcp = await callMcp(0, 'POST', '/api/mcp/passkey/verify', {
+      ceremony: s6.json.ceremony, response: assertion(margotKey, s6.json.options.challenge, { userId: 8, crossOrigin: true }),
+    });
+    eq('on the connector page too', framedMcp.status, 401);
+
     const noCeremony = await callMcp(0, 'POST', '/api/mcp/passkey/verify', {
       ceremony: 'not-a-ceremony', response: assertion(margotKey, b64url(crypto.randomBytes(32)), { userId: 8 }),
     });
@@ -368,6 +432,18 @@ async function main() {
     });
     const regJson = await regOpt.json();
     eq('new passkeys must be discoverable', regJson?.authenticatorSelection?.residentKey, 'required');
+
+    // Last, because it spends actor 0's budget for a minute. Every signed call
+    // comes from the one shuttle-mcp container; keyed by IP they shared one
+    // bucket, so a flood of sign-in attempts made everyone's tool writes 429.
+    let limited = 0;
+    for (let i = 0; i < 245; i += 1) {
+      const r = await callMcp(0, 'POST', '/api/mcp/passkey/options', {});
+      if (r.status === 429) limited += 1;
+    }
+    ok('a flood of sign-in calls is rate limited', limited > 0, `no 429 in 245 calls`);
+    const someoneElse = await callMcp(2, 'POST', '/api/mcp/passkey/options', {});
+    eq('without using up the budget of a signed-in person', someoneElse.status, 403);
   } catch (err) {
     failures.push(`crashed: ${err.message}`);
     console.log(`FAIL  the test crashed: ${err.stack}`);

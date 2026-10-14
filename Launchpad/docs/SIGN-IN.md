@@ -22,6 +22,14 @@ so a passkey and an email code always get the same lifetimes. Sessions created
 before this change have no sign-in time stored. Their 180-day clock starts on
 their next request, so the deploy signs nobody out.
 
+Signing in always starts a new session id. A session that existed before the
+sign-in never becomes the signed-in one. The page fetches a new CSRF token
+afterwards.
+
+Every request reads the account again (`sessionGuard()`). A deleted account
+loses its session on its next request. A changed role applies on the next
+request too, not at the next sign-in.
+
 ## Passkeys
 
 A passkey signs in with Face ID, Touch ID or the device PIN. No email code is
@@ -55,7 +63,8 @@ signed as actor 0.
    applies any waiting shop access. Then it returns the person.
 
 Every failure returns the same 401. The route reveals nothing about which
-passkeys or accounts exist. An account outside the allowed domains gets a 403.
+passkeys or accounts exist. Both passkey routes also refuse an answer made
+inside another site's frame (`crossOrigin` in the client data). An account outside the allowed domains gets a 403.
 The email-code route has the same rule.
 
 ## Tests
