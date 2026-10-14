@@ -9,6 +9,7 @@ not the version the UI reads.
 
 | Version | Date | What changed |
 |---------|------|--------------|
+| STS-4.2.1 | 2026-10-14 | Fix: `lib/version.ts` exports `getVersion()`, `getVersionInfo()`, `getMajorVersion()` and `getMinorVersion()` again, and `VERSION_INFO` carries `name` and `version`. The 4.2.0 copy exported only the two constants, so `components/Footer.tsx` and `app/api/version/route.ts` failed the type check and `next build` stopped. Every shop created from the pinned backend image failed to build. `test/shop-overrides.test.js` now checks every name the template imports. |
 | STS-4.2.0 | 2026-09-16 | Stage banner. A shop whose `SHOP_STAGE` is anything other than `in_production` renders a fixed, undismissable banner at the top of every page reading "Internal only. This store is not approved.", plus a `noindex,nofollow` robots tag in `<head>` and an `X-Robots-Tag: noindex,nofollow` header on every response. The banner is rendered by the root layout, so no page can leave it out, and the value is read at build time, so there is nothing to toggle at runtime. Launchpad passes `SHOP_STAGE` into the container and rebuilds the shop when the stage changes. |
 | STS-4.1.0 | 2026 | Shop display presets. `useShopPresets` reads `/presets` for whether prices show and whether the copy says request or order. |
 | STS-3.0.0 | 2026-04-29 | Product variant selector. Two level color and size picker, variant grouping in the catalog, variant chips on collection cards. |
