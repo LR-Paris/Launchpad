@@ -189,6 +189,7 @@ cp .env.example .env
 | `PORT` | No | `3001` | Backend API port |
 | `NODE_ENV` | No | `development` | Set to `production` for production deployments |
 | `COOKIE_SECURE` | No | `false` | Set to `true` when serving over HTTPS |
+| `SESSION_MAX_AGE_DAYS` | No | `180` | A sign-in ends this many days after it started, however active. The "Stay signed in for" choice counts from the last visit inside this limit. See `Launchpad/docs/SIGN-IN.md` |
 | `BASE_DOMAIN` | Yes (prod) | — | Your domain (e.g. `yourdomain.com`). Used for CORS and shop routing |
 | `HOST_PROJECT_DIR` | Auto | `$PWD` | Absolute path to the project on the host. Set automatically by Docker Compose |
 

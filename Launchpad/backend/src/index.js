@@ -12,7 +12,12 @@ const fs = require('fs');
 
 const Database = require('better-sqlite3');
 const { router: authRouter, requireAuth, loadUsers, SESSION_COOKIE_NAME, setUserFns } = require('./auth');
-const { publicRouter: passkeyPublicRouter, authedRouter: passkeyAuthedRouter } = require('./passkey');
+const {
+  publicRouter: passkeyPublicRouter,
+  authedRouter: passkeyAuthedRouter,
+  mcpRouter: passkeyMcpRouter,
+} = require('./passkey');
+const { enforceMaxSessionAge } = require('./session-policy');
 const {
   router: usersRouter,
   meRouter,
@@ -242,14 +247,20 @@ const sessionMiddleware = session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  // Renew the cookie and the stored row on every response, so "Stay signed in
+  // for one month" means one month after the last visit. Without it the cookie
+  // expired a fixed time after sign in however much the person used Launchpad.
+  rolling: true,
   cookie: {
     secure: process.env.COOKIE_SECURE === 'true',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours default (overridden per-session on login)
+    maxAge: 24 * 60 * 60 * 1000, // before sign in; startSignedInSession() sets the real one
     sameSite: 'lax',
   },
 });
 app.use((req, res, next) => (req.via === 'mcp' ? next() : sessionMiddleware(req, res, next)));
+// However active, a session ends SESSION_MAX_AGE_DAYS (180) after its sign in.
+app.use(enforceMaxSessionAge({ cookieName: SESSION_COOKIE_NAME, auditLog }));
 
 // ---------------------------------------------------------------------------
 // CSRF protection — double-submit cookie pattern
@@ -352,6 +363,9 @@ app.use('/api/auth/passkey', requireAuth, csrfProtection, passkeyAuthedRouter);
 app.post('/api/mcp/enroll', loginLimiter);
 app.post('/api/mcp/enroll/verify', loginLimiter);
 app.use('/api/mcp', mcpPublicRouter);
+// Passkey sign-in for the connector's /mcp/login page. Actor 0 only, like the
+// two enrollment routes above, so it also sits outside requireAuth.
+app.use('/api/mcp/passkey', passkeyMcpRouter);
 app.use('/api/mcp', requireAuth, mcpRouter);
 
 // User management routes (protected + CSRF, super_admin enforced inside router)
