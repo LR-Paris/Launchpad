@@ -1464,6 +1464,7 @@ module.exports = {
   shopOwners,
   applyPendingGrants,
   pendingGrantsFor,
+  enrollDomains,
   displayName,
   nameList,
   roleFromBooleans,

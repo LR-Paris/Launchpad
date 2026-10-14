@@ -3,21 +3,53 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { requestLoginCode, verifyLoginCode, getAuthConfig } from '../lib/api';
 import TurnstileWidget from '../components/TurnstileWidget';
-import { loginWithPasskey } from '../lib/passkey';
-import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound } from 'lucide-react';
+import { loginWithPasskey, passkeySupported, listPasskeys, registerPasskey } from '../lib/passkey';
+import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound, Fingerprint } from 'lucide-react';
 
+// The backend renews the session on every visit, so each choice counts from the
+// last time the person used Launchpad (backend/src/session-policy.js).
 const REMEMBER_OPTIONS = [
-  { value: '1h', label: '1 hour' },
   { value: '1d', label: '1 day' },
   { value: '1w', label: '1 week' },
   { value: '1m', label: '1 month' },
+  { value: '3m', label: '3 months' },
 ];
+const DEFAULT_REMEMBER = '1m';
+
+// After an email-code sign in, offer to add a passkey, at most once a month.
+const PASSKEY_OFFER_KEY = 'lp-passkey-offer-dismissed-at';
+const PASSKEY_OFFER_QUIET_MS = 30 * 24 * 60 * 60 * 1000;
+
+function passkeyOfferDismissedRecently() {
+  try {
+    const at = Number(localStorage.getItem(PASSKEY_OFFER_KEY) || 0);
+    return at > 0 && Date.now() - at < PASSKEY_OFFER_QUIET_MS;
+  } catch {
+    return false;
+  }
+}
+
+function rememberPasskeyOfferDismissed() {
+  try { localStorage.setItem(PASSKEY_OFFER_KEY, String(Date.now())); } catch { /* best effort */ }
+}
+
+// A readable default name for the new passkey, shown later under Settings.
+function deviceName() {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android phone';
+  if (/Macintosh|Mac OS X/.test(ua)) return 'Mac';
+  if (/Windows/.test(ua)) return 'Windows PC';
+  return 'This device';
+}
 
 export default function Login() {
-  const [step, setStep] = useState('identify'); // 'identify' | 'verify'
+  const [step, setStep] = useState('identify'); // 'identify' | 'verify' | 'passkey-offer'
   const [identifier, setIdentifier] = useState('');
   const [code, setCode] = useState('');
-  const [rememberMe, setRememberMe] = useState('1d');
+  const [rememberMe, setRememberMe] = useState(DEFAULT_REMEMBER);
+  const [signedIn, setSignedIn] = useState(null); // user payload held while the passkey offer shows
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -65,8 +97,15 @@ export default function Login() {
 
     try {
       const data = await verifyLoginCode(identifier, code, rememberMe);
-      queryClient.setQueryData(['auth'], data);
-      navigate('/');
+      // Signed in. Before going in, offer a passkey if this browser can hold
+      // one and the account has none yet. Setting the auth data is what leaves
+      // this page, so it waits until the offer is answered.
+      if (await shouldOfferPasskey()) {
+        setSignedIn(data);
+        setStep('passkey-offer');
+        return;
+      }
+      finishSignIn(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
     } finally {
@@ -74,13 +113,48 @@ export default function Login() {
     }
   };
 
+  const shouldOfferPasskey = async () => {
+    if (!passkeySupported() || passkeyOfferDismissedRecently()) return false;
+    try {
+      return (await listPasskeys()).length === 0;
+    } catch {
+      return false;
+    }
+  };
+
+  const finishSignIn = (data) => {
+    queryClient.setQueryData(['auth'], data);
+    navigate('/');
+  };
+
+  const handleAddPasskey = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await registerPasskey(deviceName());
+      finishSignIn(signedIn);
+    } catch (err) {
+      const name = err && err.name;
+      if (name === 'NotAllowedError' || name === 'AbortError') {
+        setLoading(false); // they closed the prompt; leave both buttons there
+        return;
+      }
+      setError(err.response?.data?.error || 'Could not add the passkey. You can add one later under Settings.');
+      setLoading(false);
+    }
+  };
+
+  const handleSkipPasskey = () => {
+    rememberPasskeyOfferDismissed();
+    finishSignIn(signedIn);
+  };
+
   const handlePasskeyLogin = async () => {
     setError('');
     setLoading(true);
     try {
       const data = await loginWithPasskey(rememberMe);
-      queryClient.setQueryData(['auth'], data);
-      navigate('/');
+      finishSignIn(data);
     } catch (err) {
       // Canceling the OS passkey prompt throws NotAllowed/Abort — not a real error.
       const name = err && err.name;
@@ -133,6 +207,30 @@ export default function Login() {
             {turnstileSiteKey && (
               <TurnstileWidget siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileReset} />
             )}
+            {/* Stay signed in: applies to the email code and to a passkey alike. */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5 text-muted-foreground">
+                Stay signed in for
+              </label>
+              <div className="flex rounded-lg border border-border/60 overflow-hidden">
+                {REMEMBER_OPTIONS.map((opt, i) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRememberMe(opt.value)}
+                    aria-pressed={rememberMe === opt.value}
+                    className={`flex-1 px-2 py-1.5 text-xs font-medium transition-all ${
+                      rememberMe === opt.value
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                    } ${i > 0 ? 'border-l border-border/60' : ''}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">Counted from your last visit.</p>
+            </div>
             {error && <p className="text-xs text-destructive font-mono">{error}</p>}
             <button
               type="submit"
@@ -157,6 +255,35 @@ export default function Login() {
               Sign in with a passkey
             </button>
           </form>
+        ) : step === 'passkey-offer' ? (
+          <div className="space-y-4 rounded-xl border bg-card p-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Fingerprint className="h-4 w-4 text-primary" />
+              <h2 className="text-sm font-semibold" style={{ fontFamily: 'Syne, sans-serif' }}>Skip the email code next time</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              You're signed in. Add a passkey and next time you sign in with Face ID, Touch ID or your
+              device PIN. It also works when you connect Claude to your shops.
+            </p>
+            {error && <p className="text-xs text-destructive font-mono">{error}</p>}
+            <button
+              type="button"
+              onClick={handleAddPasskey}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 btn-launch rounded-md px-4 py-2.5 text-sm font-medium disabled:opacity-50 transition-all"
+            >
+              <KeyRound className="h-4 w-4" />
+              {loading ? 'Waiting for your device...' : 'Add a passkey'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSkipPasskey}
+              disabled={loading}
+              className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1 disabled:opacity-50"
+            >
+              Not now
+            </button>
+          </div>
         ) : (
           <form onSubmit={handleVerifyCode} className="space-y-4 rounded-xl border bg-card p-6">
             <div className="flex items-center gap-2 mb-2">
@@ -188,28 +315,9 @@ export default function Login() {
               />
             </div>
 
-            {/* Remember me */}
-            <div>
-              <label className="block text-xs font-medium mb-1.5 text-muted-foreground">
-                Remember me for
-              </label>
-              <div className="flex rounded-lg border border-border/60 overflow-hidden">
-                {REMEMBER_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setRememberMe(opt.value)}
-                    className={`flex-1 px-2 py-1.5 text-xs font-medium transition-all ${
-                      rememberMe === opt.value
-                        ? 'bg-primary/15 text-primary'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
-                    } ${opt.value !== '1h' ? 'border-l border-border/60' : ''}`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <p className="text-[11px] text-muted-foreground">
+              You stay signed in for {REMEMBER_OPTIONS.find((o) => o.value === rememberMe)?.label} after your last visit.
+            </p>
 
             {error && <p className="text-xs text-destructive font-mono">{error}</p>}
 

@@ -4,6 +4,7 @@ const path = require('path');
 const geo = require('./security/geo');
 const turnstile = require('./security/turnstile');
 const authAlerts = require('./security/authAlerts');
+const { startSignedInSession } = require('./session-policy');
 
 const router = express.Router();
 const SESSION_COOKIE_NAME = '__lp_sid';
@@ -66,16 +67,6 @@ async function sendOTPEmail(email, code, username, meta) {
     console.log(`[auth] OTP for ${username} (${email}): ${code}  (email send failed)`);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Session duration mapping
-// ---------------------------------------------------------------------------
-const REMEMBER_DURATIONS = {
-  '1h': 60 * 60 * 1000,
-  '1d': 24 * 60 * 60 * 1000,
-  '1w': 7 * 24 * 60 * 60 * 1000,
-  '1m': 30 * 24 * 60 * 60 * 1000,
-};
 
 // ---------------------------------------------------------------------------
 // Auth middleware
@@ -160,19 +151,10 @@ router.post('/login-verify', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or expired code' });
   }
 
-  // Set session duration based on remember me
-  const duration = REMEMBER_DURATIONS[rememberMe] || REMEMBER_DURATIONS['1d'];
-  req.session.cookie.maxAge = duration;
-
-  // Build session user with all needed info
+  // How long this sign-in lasts: the "Stay signed in for" choice, renewed on
+  // every visit, inside the absolute limit (session-policy.js).
+  startSignedInSession(req, rememberMe, user);
   const permissions = userFns.getAllUserPermissions(user.id);
-  req.session.user = {
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-  };
 
   req.session.save((saveErr) => {
     if (saveErr) {
