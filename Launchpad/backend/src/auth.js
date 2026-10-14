@@ -141,7 +141,8 @@ router.post('/login-verify', async (req, res) => {
   if (!user) {
     audit?.('login_failed', { req, details: { identifier, reason: 'user_not_found' } });
     authAlerts.notifyLogin({ event: 'login_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
-    return res.status(401).json({ error: 'Invalid code' });
+    // The same words as a wrong code, so this answer does not say whether the account exists.
+    return res.status(401).json({ error: 'Invalid or expired code' });
   }
 
   const valid = userFns.verifyOTP(user.id, code.trim());
@@ -153,7 +154,12 @@ router.post('/login-verify', async (req, res) => {
 
   // How long this sign-in lasts: the "Stay signed in for" choice, renewed on
   // every visit, inside the absolute limit (session-policy.js).
-  startSignedInSession(req, rememberMe, user);
+  try {
+    await startSignedInSession(req, rememberMe, user);
+  } catch (err) {
+    console.error(`[auth] could not start a session for ${user.username}: ${err.message}`);
+    return res.status(500).json({ error: 'Failed to save session' });
+  }
   const permissions = userFns.getAllUserPermissions(user.id);
 
   req.session.save((saveErr) => {

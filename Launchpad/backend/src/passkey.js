@@ -36,6 +36,21 @@ const b64 = {
   dec: (s) => new Uint8Array(Buffer.from(s, 'base64')),
 };
 
+// A ceremony run inside a cross-origin frame says so in clientDataJSON. Nobody
+// signs in to Launchpad from inside another site, so such an answer is refused.
+// SimpleWebAuthn only checks this when the browser also sends topOrigin, and
+// Safari does not.
+function isCrossOrigin(response) {
+  try {
+    const raw = response && response.response && response.response.clientDataJSON;
+    if (typeof raw !== 'string') return false;
+    const data = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    return data.crossOrigin === true;
+  } catch {
+    return false;
+  }
+}
+
 function clientMeta(req) {
   try {
     if (geo && geo.clientIp) {
@@ -73,8 +88,14 @@ publicRouter.post('/auth-verify', async (req, res) => {
   try {
     const expectedChallenge = req.session.passkeyAuthChallenge;
     if (!expectedChallenge) return res.status(400).json({ error: 'No challenge in session' });
+    // One answer per challenge, right or wrong.
+    delete req.session.passkeyAuthChallenge;
 
     const body = req.body || {};
+    if (isCrossOrigin(body)) {
+      audit?.('login_failed', { req, details: { reason: 'passkey_cross_origin' } });
+      return res.status(401).json({ error: 'Passkey verification failed' });
+    }
     const cred = users.getCredentialByCredentialId(body.id);
     if (!cred) {
       audit?.('login_failed', { req, details: { reason: 'passkey_unknown' } });
@@ -96,8 +117,6 @@ publicRouter.post('/auth-verify', async (req, res) => {
       },
     });
 
-    delete req.session.passkeyAuthChallenge;
-
     if (!verification.verified) {
       audit?.('login_failed', { req, details: { username: cred.user_id, reason: 'passkey_bad_signature' } });
       authAlerts?.notifyLogin?.({ event: 'login_failed', ip: meta.ip, location: meta.location, details: { reason: 'passkey_bad_signature' } });
@@ -109,7 +128,7 @@ publicRouter.post('/auth-verify', async (req, res) => {
     const user = users.getUserById(cred.user_id);
     if (!user) return res.status(401).json({ error: 'Account not found' });
 
-    startSignedInSession(req, body.rememberMe, user);
+    await startSignedInSession(req, body.rememberMe, user);
     const permissions = users.getAllUserPermissions(user.id);
     req.session.save((saveErr) => {
       if (saveErr) return res.status(500).json({ error: 'Failed to save session' });
@@ -242,7 +261,7 @@ authedRouter.delete('/:credentialId', (req, res) => {
 // sign-in costs that person one more tap.
 // ---------------------------------------------------------------------------
 const MCP_CEREMONY_TTL_MS = 5 * 60 * 1000;
-const MCP_CEREMONY_MAX = 500;
+const MCP_CEREMONY_MAX = 5000;
 const mcpCeremonies = new Map(); // ceremony id -> { challenge, expiresAt }
 
 function sweepCeremonies(now = Date.now()) {
@@ -301,6 +320,10 @@ mcpRouter.post('/verify', requirePreIdentityMcp, async (req, res) => {
   const ceremony = takeCeremony(req.body?.ceremony);
   const response = req.body?.response;
   if (!ceremony || !response || typeof response !== 'object' || typeof response.id !== 'string') return deny();
+  if (isCrossOrigin(response)) {
+    auditRaw({ action: 'mcp_sign_in_failed', detail: { reason: 'passkey_cross_origin' }, via: 'mcp' });
+    return deny();
+  }
 
   const cred = users.getCredentialByCredentialId(response.id);
   if (!cred) {

@@ -6,9 +6,35 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// CSRF token cache + auto-inject on mutating requests
+let _csrfToken = null;
+async function getCsrfToken() {
+  if (_csrfToken) return _csrfToken;
+  const res = await api.get('/auth/csrf-token');
+  _csrfToken = res.data.csrfToken;
+  return _csrfToken;
+}
+
+// Signing in starts a new session (backend/src/session-policy.js), and the
+// CSRF token belongs to the old one. The sign-in page calls this afterwards.
+export function resetCsrfToken() {
+  _csrfToken = null;
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    // A stale CSRF token (new session after sign in, a backend restart, a
+    // second tab): fetch a fresh one and retry the request once.
+    const cfg = error.config;
+    if (error.response?.status === 403 && error.response?.data?.error === 'Invalid CSRF token' && cfg && !cfg._csrfRetried) {
+      cfg._csrfRetried = true;
+      resetCsrfToken();
+      try {
+        cfg.headers['x-csrf-token'] = await getCsrfToken();
+        return api.request(cfg);
+      } catch { /* fall through to the original error */ }
+    }
     if (
       error.response?.status === 401 &&
       !error.config?.url?.includes('/auth/')
@@ -18,15 +44,6 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-
-// CSRF token cache + auto-inject on mutating requests
-let _csrfToken = null;
-async function getCsrfToken() {
-  if (_csrfToken) return _csrfToken;
-  const res = await api.get('/auth/csrf-token');
-  _csrfToken = res.data.csrfToken;
-  return _csrfToken;
-}
 
 api.interceptors.request.use(async (config) => {
   if (['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase())) {
