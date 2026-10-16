@@ -64,6 +64,47 @@ function readShopFile(slug, filename) {
   try { return fs.readFileSync(filePath, 'utf8').trim(); } catch { return ''; }
 }
 
+// ---------------------------------------------------------------------------
+// Per-shop order confirmation wording, from DATABASE/Design/Details/OrderEmail.txt
+//
+//   subject: Your Bozzuto Capsule Collection Reservation
+//   heading: Reservation received          (optional, defaults to the subject)
+//
+//   First paragraph of the message.
+//
+//   Second paragraph. A blank line starts a new one.
+//
+// The lines before the first blank line are settings, everything after it is
+// the message. A file without a subject or without a message is ignored and
+// the standard wording goes out. The order number, items, delivery details
+// and cancel link are added the same way either way.
+// ---------------------------------------------------------------------------
+function parseOrderEmailCopy(text) {
+  if (!text || !String(text).trim()) return null;
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  const settings = {};
+  let i = 0;
+  for (; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) break;
+    if (line.startsWith('#')) continue;
+    const m = /^([A-Za-z]+)\s*:\s*(.*)$/.exec(line);
+    if (!m) break;
+    settings[m[1].toLowerCase()] = m[2].trim();
+  }
+  const body = lines.slice(i).join('\n').trim();
+  const paragraphs = body
+    ? body.split(/\n[ \t]*\n/).map((p) => p.trim()).filter(Boolean)
+    : [];
+  const subject = (settings.subject || '').slice(0, 200);
+  if (!subject || !paragraphs.length) return null;
+  return { subject, heading: (settings.heading || subject).slice(0, 200), paragraphs };
+}
+
+function getOrderEmailCopy(slug) {
+  return parseOrderEmailCopy(readShopFile(slug, 'OrderEmail.txt'));
+}
+
 /**
  * Read one named colour out of a Colors.txt, ignoring comments.
  *
@@ -597,6 +638,8 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   const hidePrices = shopHidesPrices(shopSlug);
   const brand = col(orderData, 'Brand', 'brand');
   const budget = col(orderData, 'Estimated Budget', 'estimated_budget');
+  // The shop's own wording, when its DATABASE carries an OrderEmail.txt.
+  const copy = getOrderEmailCopy(shopSlug);
 
   // Generate cancel token
   const { generateCancelToken } = require('./orders-webhook');
@@ -642,10 +685,10 @@ async function sendOrderConfirmation(orderData, shopSlug) {
   `;
 
   const body = `
-    <h2 style="margin-top:0;font-size:20px;color:#111;">${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + esc(orderId) : ''}</h2>
-    <p style="color:#666;font-size:14px;line-height:1.5;">${hidePrices
+    <h2 style="margin-top:0;font-size:20px;color:#111;">${copy ? esc(copy.heading) : `${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + esc(orderId) : ''}`}</h2>
+    ${copy ? copy.paragraphs.map((para) => `<p style="color:#444;font-size:14px;line-height:1.6;margin:0 0 12px;">${esc(para).replace(/\n/g, '<br>')}</p>`).join('') : `<p style="color:#666;font-size:14px;line-height:1.5;">${hidePrices
       ? `Hi ${esc(customerName)}, thank you for your request${companyName ? ' to <strong>' + esc(companyName) + '</strong>' : ''}. We have it and are reviewing it now. This is not an order confirmation &mdash; nothing is produced or shipped until we confirm specifications, pricing and lead time in writing.`
-      : `Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.`}</p>
+      : `Hi ${esc(customerName)}, thank you for your order${companyName ? ' with <strong>' + esc(companyName) + '</strong>' : ''}. We've received it and are processing it now.`}</p>`}
     ${orderHeader}
     <p style="margin:24px 0 8px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Order Items</p>
     ${buildReceipt(orderData, primaryColor, shopSlug, inline)}
@@ -663,13 +706,15 @@ async function sendOrderConfirmation(orderData, shopSlug) {
       </tr></table>
     </div>
     ` : ''}
-    <p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">${hidePrices
+    ${copy ? '' : `<p style="color:#999;font-size:12px;line-height:1.5;margin:24px 0 0;">${hidePrices
       ? 'A member of the team will follow up with pricing and lead time.'
-      : "You'll receive a shipping notification with tracking details when your order is on its way."}</p>
+      : "You'll receive a shipping notification with tracking details when your order is on its way."}</p>`}
   `;
 
   const html = emailShell({ companyName, primaryColor, body, slug: shopSlug, inline });
-  const subject = `${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + orderId : ''} | ${companyName}`;
+  const subject = copy
+    ? copy.subject
+    : `${hidePrices ? 'Request Received' : 'Order Confirmation'}${orderId ? ' — ' + orderId : ''} | ${companyName}`;
 
   if (customerEmail) {
     sendMail({ to: customerEmail, from: fromAddress, subject, html, inline }).catch(() => {});
@@ -958,6 +1003,8 @@ module.exports = {
   // building a second Mailgun path. Nothing else in this file changed.
   sendMail,
   sendOrderConfirmation,
+  // For test/order-email.test.js.
+  parseOrderEmailCopy,
   sendShippedNotification,
   sendCancellationEmail,
   getAdminEmail,

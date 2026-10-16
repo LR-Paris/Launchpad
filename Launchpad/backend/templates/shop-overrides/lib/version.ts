@@ -17,15 +17,15 @@
  * a shop created with an incomplete copy of this file never comes up.
  * test/shop-overrides.test.js checks the list above.
  */
-export const VERSION = 'STS-4.2.1';
+export const VERSION = 'STS-4.3.0';
 
 export const VERSION_INFO = {
   name: 'Shop Template System',
   version: VERSION,
   codename: 'Beacon',
-  releaseDate: '2026-10-14',
+  releaseDate: '2026-10-16',
   description:
-    'Stage banner. A store that is not in production shows a fixed internal-only banner on every page and is marked noindex, driven by SHOP_STAGE at build time.',
+    'Shop copy settings. The hero button label, the About heading and the hero tagline font come from the DATABASE, and a shop can word its own order confirmation email.',
   attribution: 'Built with LR Paris Shuttle',
 };
 

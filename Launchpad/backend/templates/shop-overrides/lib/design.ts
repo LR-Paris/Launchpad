@@ -23,6 +23,10 @@ export interface Descriptions {
   about: string;
   aboutParagraphs: string[];
   footer: string;
+  /** Label on the home page hero button. Empty: the template's own label. */
+  heroButton: string;
+  /** Heading of the About section and the About page. Empty: the template's own heading. */
+  aboutTitle: string;
 }
 
 export interface Fonts {
@@ -30,6 +34,9 @@ export interface Fonts {
   bodyFont: string;
   titleFontUrl: string;
   bodyFontUrl: string;
+  /** Font of the tagline on the home page hero. Defaults to the body font. */
+  taglineFont: string;
+  taglineFontUrl: string;
 }
 
 export interface Style {
@@ -136,6 +143,8 @@ export function getDescriptions(): Descriptions {
       about: aboutText,
       aboutParagraphs: aboutText.split('\n\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0),
       footer: parsed.footer || '© 2026 All rights reserved.',
+      heroButton: parsed.heroButton || '',
+      aboutTitle: parsed.aboutTitle || '',
     };
   } catch (error) {
     console.error('Error reading descriptions:', error);
@@ -144,6 +153,8 @@ export function getDescriptions(): Descriptions {
       about: 'We provide quality products for businesses.',
       aboutParagraphs: ['We provide quality products for businesses.'],
       footer: '© 2026 All rights reserved.',
+      heroButton: '',
+      aboutTitle: '',
     };
   }
 }
@@ -163,6 +174,8 @@ export function getFonts(): Fonts {
       bodyFont: `${bodyFont}, sans-serif`,
       titleFontUrl: parsed.titleFontUrl || '',
       bodyFontUrl: parsed.bodyFontUrl || '',
+      taglineFont: `${parsed.taglineFont || bodyFont}, sans-serif`,
+      taglineFontUrl: parsed.taglineFontUrl || '',
     };
   } catch (error) {
     console.error('Error reading fonts:', error);
@@ -171,6 +184,8 @@ export function getFonts(): Fonts {
       bodyFont: 'Inter, sans-serif',
       titleFontUrl: '',
       bodyFontUrl: '',
+      taglineFont: 'Inter, sans-serif',
+      taglineFontUrl: '',
     };
   }
 }
