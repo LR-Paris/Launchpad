@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-do
 import { useQuery } from '@tanstack/react-query';
 import { getMe, checkHealth } from './lib/api';
 import { PermissionsProvider, usePermissions } from './lib/permissions';
+import { ssoNext } from './lib/sso';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import NewShop from './pages/NewShop';
@@ -21,6 +22,27 @@ import { ShieldX } from 'lucide-react';
 function ProtectedRoute({ children, user }) {
   if (!user) return <Navigate to="/login" replace />;
   return children;
+}
+
+// /login for someone already signed in. Normally that is the dashboard. When
+// another LR Paris app sent them (/login?next=/api/auth/sso/authorize?...),
+// they go straight back through the authorize route instead (lib/sso.js).
+function SignedInLogin() {
+  const next = ssoNext(useLocation().search);
+  const sent = useRef(false);
+  useEffect(() => {
+    if (next && !sent.current) {
+      sent.current = true;
+      window.location.assign(next);
+    }
+  }, [next]);
+  if (!next) return <Navigate to="/" replace />;
+  return (
+    <div className="flex items-center justify-center min-h-[60vh] gap-2">
+      <span className="term-cursor" />
+      <p className="text-muted-foreground text-sm font-mono">Taking you back to the app...</p>
+    </div>
+  );
 }
 
 // Route-level permission gate — blocks access even if user navigates via URL
@@ -134,7 +156,7 @@ function AppContent({ user, theme, toggleTheme }) {
         <Routes>
           <Route
             path="/login"
-            element={user ? <Navigate to="/" replace /> : <Login />}
+            element={user ? <SignedInLogin /> : <Login />}
           />
           <Route
             path="/"

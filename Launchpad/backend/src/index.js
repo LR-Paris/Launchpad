@@ -19,6 +19,13 @@ const {
 } = require('./passkey');
 const { sessionGuard } = require('./session-policy');
 const {
+  authorizeRouter: ssoAuthorizeRouter,
+  tokenRouter: ssoTokenRouter,
+  tokenErrors: ssoTokenErrors,
+  isAuthorizeNavigation: isSsoAuthorizeNavigation,
+  describeClients: describeSsoClients,
+} = require('./sso');
+const {
   router: usersRouter,
   meRouter,
   initUsersDb,
@@ -127,6 +134,8 @@ initPlatformDb();
 if (mcpEnabled()) {
   console.log('[mcp] Signed tool access is enabled (X-Launchpad-Actor).');
 }
+// Reads SSO_CLIENTS now, so a broken value shows in the deploy log at once.
+describeSsoClients();
 
 // An apply that died between its two renames leaves the shop's DATABASE parked
 // under .DATABASE.replacing-*. Put it back at boot, before anything serves a
@@ -235,6 +244,18 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
+// "Sign in with Launchpad", step 2 (sso.js). Another app's server swaps a
+// one-time code for the person, authenticated by its client secret. It is
+// server to server: no cookie and no CSRF token. It sits after express.json
+// (it reads a JSON body) and BEFORE express-session, so it never reads, creates
+// or renews a session. The global limiter is further down and never sees it,
+// so sso.js rate limits it itself.
+app.use('/api/auth/sso', ssoTokenRouter);
+// A token body express.json() could not read skips the router above and comes
+// here, before the global error handler, which would log and echo the parser's
+// message (it quotes the body, so the client secret). Its own 400, nothing quoted.
+app.use('/api/auth/sso', ssoTokenErrors);
+
 // Signed tool requests authenticate with an HMAC header instead of a cookie,
 // and are resolved BEFORE express-session so they never write a session row.
 app.use(mcpActor);
@@ -262,7 +283,15 @@ const sessionMiddleware = session({
 app.use((req, res, next) => (req.via === 'mcp' ? next() : sessionMiddleware(req, res, next)));
 // However active, a session ends SESSION_MAX_AGE_DAYS (180) after its sign in,
 // and a deleted account or a changed role takes effect on the next request.
-app.use(sessionGuard({ cookieName: SESSION_COOKIE_NAME, auditLog, getUserById }));
+// An ended session gets 401 JSON, except on Sign in with Launchpad's authorize
+// step: a browser lands there from another app, so it carries on signed out and
+// authorize sends the person to sign in with a next that brings them back.
+app.use(sessionGuard({
+  cookieName: SESSION_COOKIE_NAME,
+  auditLog,
+  getUserById,
+  continueAfterEnd: isSsoAuthorizeNavigation,
+}));
 
 // ---------------------------------------------------------------------------
 // CSRF protection — double-submit cookie pattern
@@ -352,6 +381,12 @@ app.use('/api/', globalLimiter);
 // Routes
 app.post('/api/auth/login-request', loginLimiter);
 app.post('/api/auth/login-verify', loginLimiter);
+// "Sign in with Launchpad", step 1 (sso.js). The browser arrives from another
+// app. It must see the session as sessionGuard left it (expired ones ended and
+// let through signed out, the account read again), so it sits after both. It
+// is a GET that only redirects or shows a plain page, so it needs no CSRF
+// token; the global limiter skips GETs, so sso.js rate limits it itself.
+app.use('/api/auth/sso', ssoAuthorizeRouter);
 app.use('/api/auth', authRouter);
 // Passkey (WebAuthn): pre-login ceremony is public; managing passkeys is authed + CSRF.
 app.use('/api/auth/passkey', passkeyPublicRouter);
