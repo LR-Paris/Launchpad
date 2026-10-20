@@ -10,7 +10,10 @@
 //     it wants to come back to, then:
 //       - nobody signed in: off to the sign-in page, with a `next` that brings
 //         the browser back to this exact URL once the email code or the passkey
-//         has done its job (frontend/src/lib/sso.js);
+//         has done its job (frontend/src/lib/sso.js). That includes a session
+//         sessionGuard has just ended (too old, or its account deleted): for
+//         this route the guard carries on signed out instead of answering 401
+//         JSON (isAuthorizeNavigation, below);
 //       - signed in, account in one of the app's allowed domains: back to the
 //         app with ?code=<one time>&state=<state, unchanged>;
 //       - signed in, any other domain: a plain 403 page.
@@ -21,7 +24,8 @@
 //  2. POST /api/auth/sso/token  {client_id, client_secret, code, redirect_uri}
 //     The app's SERVER swaps the code for the person. No cookie, no CSRF token:
 //     the client secret is the credential. Answers {user: {id, username, email,
-//     name, role}}, or 401 invalid_client, or 400 invalid_grant.
+//     name, role}}, or 401 invalid_client, or 400 invalid_grant, or 400
+//     invalid_request for a body that is not JSON (tokenErrors, below).
 //
 // Codes are 32 random bytes, base64url. Only their SHA-256 is kept, for 60
 // seconds, and the first attempt to use one ends it, right or wrong. They live
@@ -39,6 +43,8 @@
 //
 // Mounted in index.js as:
 //   app.use('/api/auth/sso', tokenRouter);       // before express-session
+//   app.use('/api/auth/sso', tokenErrors);       // right after it
+//   sessionGuard({ ..., continueAfterEnd: isAuthorizeNavigation })
 //   app.use('/api/auth/sso', authorizeRouter);   // after sessionGuard
 // ---------------------------------------------------------------------------
 
@@ -55,6 +61,13 @@ const DEFAULT_ALLOWED_DOMAINS = ['lrparis.com'];
 const MIN_SECRET_LENGTH = 32;
 const MAX_STATE_LENGTH = 1024;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+// Where index.js mounts authorize. Express routes it without regard to letter
+// case or one trailing slash, so /authorize/ and /SSO/Authorize land on it too.
+// The sign-in page only follows a next that starts with exactly this path and
+// a "?" (frontend/src/lib/sso.js), so the next is always written with it.
+const AUTHORIZE_PATH = '/api/auth/sso/authorize';
+const AUTHORIZE_PATH_RE = /^\/api\/auth\/sso\/authorize\/?$/i;
 
 // ---------------------------------------------------------------------------
 // Clients
@@ -259,6 +272,28 @@ const tokenLimiter = rateLimit({
 // ---------------------------------------------------------------------------
 // Step 1 — the browser
 // ---------------------------------------------------------------------------
+
+// True for a browser landing on authorize, in any spelling Express routes
+// there. index.js gives it to sessionGuard as continueAfterEnd: when the guard
+// ends a session on this route (past SESSION_MAX_AGE_DAYS, or its account
+// deleted), the request carries on signed out and comes here, rather than the
+// person seeing the guard's 401 JSON as the whole page with no way back.
+function isAuthorizeNavigation(req) {
+  return (req.method === 'GET' || req.method === 'HEAD')
+    && AUTHORIZE_PATH_RE.test(`${req.baseUrl || ''}${req.path || ''}`);
+}
+
+// The sign-in page, with a next that brings the browser back here once the
+// person has signed in. The query string goes back unchanged; the path is
+// always AUTHORIZE_PATH, whatever spelling this request used.
+function toSignIn(req, res) {
+  const url = req.originalUrl || '';
+  const q = url.indexOf('?');
+  const back = `${AUTHORIZE_PATH}?${q >= 0 ? url.slice(q + 1) : ''}`;
+  res.set('Cache-Control', 'no-store');
+  return res.redirect(302, `/login?next=${encodeURIComponent(back)}`);
+}
+
 const authorizeRouter = express.Router();
 
 authorizeRouter.get('/authorize', authorizeLimiter, (req, res) => {
@@ -289,13 +324,12 @@ authorizeRouter.get('/authorize', authorizeLimiter, (req, res) => {
     return plainPage(res, 400, NOT_VALID);
   }
 
-  // sessionGuard has already run: an expired session is gone, and this is the
-  // account as it is now, not as it was at sign in.
+  // sessionGuard has already run. A session it ended on this request, too old
+  // or with its account deleted, arrives here signed out (continueAfterEnd in
+  // index.js) and goes to sign in like any other. A session it let through is
+  // the account as it is now, not as it was at sign in.
   const user = req.session && req.session.user;
-  if (!user) {
-    res.set('Cache-Control', 'no-store');
-    return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl)}`);
-  }
+  if (!user) return toSignIn(req, res);
 
   if (!client.allowedDomains.includes(emailDomain(user.email))) {
     audit?.('sso_denied', { req, details: { client: client.id, reason: 'domain_not_allowed', domain: emailDomain(user.email) } });
@@ -358,9 +392,27 @@ tokenRouter.post('/token', tokenLimiter, (req, res) => {
   });
 });
 
+// express.json() runs before tokenRouter, for the whole app. A body it cannot
+// read never reaches the route: Express skips the router and hands the error
+// on, and the global handler in index.js would write err.message to
+// launchpad.log (which Mission Control shows) and send it back. For a body that
+// is not JSON that message is V8's, and it quotes the text around the mistake:
+// in a hand-written call whose quotes got lost, the start of the client
+// secret. This handler sits right after tokenRouter and answers first, in the
+// route's own shape, and logs only the kind of problem, never the message.
+function tokenErrors(err, req, res, next) {
+  if (!err || typeof err.type !== 'string' || !(err.status >= 400 && err.status < 500)) return next(err);
+  console.warn(`[sso] ${req.method} ${req.baseUrl}${req.path}: request body refused (${err.type}).`);
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  return res.status(err.status).json({ error: 'invalid_request' });
+}
+
 module.exports = {
   authorizeRouter,
   tokenRouter,
+  tokenErrors,
+  isAuthorizeNavigation,
   describeClients,
   CODE_TTL_MS,
 };

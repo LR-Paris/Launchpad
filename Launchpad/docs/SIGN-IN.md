@@ -83,7 +83,9 @@ It is a small authorization-code flow in `backend/src/sso.js`.
      registered: a plain 400 page. No redirect, signed in or not.
    - Nobody signed in: a redirect to `/login?next=<this authorize URL>`. After
      an email code or a passkey, the sign-in page goes back to `next`. Someone
-     already signed in who lands on that page goes back at once.
+     already signed in who lands on that page goes back at once. A sign-in that
+     ends on this request (past `SESSION_MAX_AGE_DAYS`, or its account deleted)
+     counts as nobody signed in: the same redirect, not a 401.
    - Signed in, account in one of the app's `allowedDomains`: a redirect to
      `redirect_uri?code=<one-time code>&state=<state, unchanged>`.
    - Signed in, any other domain: a plain 403 page.
@@ -93,6 +95,8 @@ It is a small authorization-code flow in `backend/src/sso.js`.
    - Wrong client or secret: `401 {error: 'invalid_client'}`.
    - Unknown, expired or used code, or a code issued to another app or for
      another `redirect_uri`: `400 {error: 'invalid_grant'}`.
+   - A body that is not JSON: `400 {error: 'invalid_request'}`. Neither the
+     answer nor the log quotes the body, so a secret in it stays out of both.
 
 The rules behind it:
 
@@ -115,11 +119,19 @@ The rules behind it:
   `MCP_SHARED_SECRET` cannot be turned into a sign-in to another app.
 - **The sign-in page** follows a `next` only when it starts with
   `/api/auth/sso/authorize?` (`frontend/src/lib/sso.js`). Anything else is
-  ignored, so the page cannot be used as an open redirect.
+  ignored, so the page cannot be used as an open redirect. Express also routes
+  `/api/auth/sso/authorize/` and other letter cases to authorize, so the backend
+  always writes `next` with that exact path and the query string unchanged.
 - **Placement** (`backend/src/index.js`). The token route sits before
-  express-session, so it never reads, creates or renews a session. The
-  authorize route sits after `sessionGuard()`, so an expired session or a
-  deleted account is already handled. Each has its own rate limit per IP:
+  express-session, so it never reads, creates or renews a session. Right after
+  it, `tokenErrors` answers a body `express.json()` could not read, before the
+  global error handler can log or echo the parser's message. The authorize
+  route sits after `sessionGuard()`, so it sees the account as it is now. When
+  the guard ends a session (past `SESSION_MAX_AGE_DAYS`, or its account
+  deleted), every other route gets 401 JSON. For authorize, the guard still
+  ends the session, clears the cookie and records `session_ended`, then lets
+  the request carry on signed out (`continueAfterEnd`), so the person goes to
+  the sign-in page and comes back. Each route has its own rate limit per IP:
   authorize 60 a minute, token 120 a minute.
 - **Audit.** `data/audit.log` records `sso_authorize`, `sso_token` and
   `sso_denied` (with a reason) with the client id. Never the code or the
@@ -165,9 +177,11 @@ with software passkeys made with `node:crypto`.
 
 `backend/test/sso.test.js` boots the backend with two apps in `SSO_CLIENTS` and
 checks every rule of Sign in with Launchpad, through both email codes and
-passkeys. It also boots it once with `SSO_CLIENTS` that is not JSON. For the
-60-second expiry it moves the backend's clock with a small preload, not with a
-setting in `src/`.
+passkeys. That includes authorize with a session that `sessionGuard()` ends on
+the way in, authorize spelled `/authorize/` or `/Authorize`, and a token body
+that is not JSON. It also boots it once with `SSO_CLIENTS` that is not JSON.
+For the 60-second expiry it moves the backend's clock with a small preload,
+not with a setting in `src/`.
 
 Run each file with plain node, from `backend/`:
 

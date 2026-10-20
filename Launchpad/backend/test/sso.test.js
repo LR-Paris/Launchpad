@@ -12,9 +12,15 @@
 //     email code or by passkey;
 //   - authorize, signed in: back to the app with a fresh one-time code and the
 //     state unchanged; an account outside the app's domains gets a plain 403;
+//   - authorize with a session that sessionGuard ends on the way in (past
+//     SESSION_MAX_AGE_DAYS, or its account deleted): to /login with the same
+//     `next`, never a 401 JSON page; /authorize/ and /Authorize, which Express
+//     also routes there, get a `next` the sign-in page will follow;
 //   - token: the code and the client secret give the person; a wrong secret is
 //     401 invalid_client; a used, unknown, expired or mismatched code is 400
-//     invalid_grant; no cookie and no CSRF token are needed or touched;
+//     invalid_grant; no cookie and no CSRF token are needed or touched; a body
+//     that is not JSON is 400 invalid_request, and neither the answer nor the
+//     log quotes any of the secret in it;
 //   - a signed tool-server request, which names a person without a browser,
 //     never gets a code;
 //   - the audit log has sso_authorize, sso_token and sso_denied with the client
@@ -40,7 +46,11 @@ const KNOWN_CODE = '424242';
 const RP_ID = 'lrparisstore.com';
 const ORIGIN = 'https://lrparisstore.com';
 
-const PARROT_SECRET = crypto.randomBytes(32).toString('hex');
+// Starts with "a" on purpose. Sent unquoted, in a body that is then not JSON,
+// a secret starting with a-e is what Node's parser quotes in its error message
+// (section 6). One starting with a digit or "f" (read as the start of false)
+// gives a message without the quote, and the check would prove nothing.
+const PARROT_SECRET = `a${crypto.randomBytes(32).toString('hex').slice(1)}`;
 const NOTES_SECRET = crypto.randomBytes(32).toString('hex');
 const PARROT_CB = 'https://parrot.lrparis.com/auth/callback';
 const PARROT_CB2 = 'https://parrot-staging.lrparis.com/auth/callback';
@@ -69,6 +79,15 @@ function sessionCookie(res) {
   const all = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
   const raw = all.find((c) => c.startsWith('__lp_sid='));
   return raw ? { pair: raw.split(';')[0], raw } : null;
+}
+function sidOf(cookie) {
+  const value = decodeURIComponent(cookie.pair.split('=').slice(1).join('='));
+  return value.replace(/^s:/, '').replace(/\.[^.]+$/, '');
+}
+// The answer cleared the session cookie, and set no new one.
+function clearsSession(setCookie) {
+  const ours = setCookie.filter((c) => c.startsWith('__lp_sid='));
+  return ours.length === 1 && ours[0].startsWith('__lp_sid=;') && /Expires=Thu, 01 Jan 1970/.test(ours[0]);
 }
 
 // --- a software passkey (as in sign-in.test.js) ------------------------------
@@ -187,8 +206,10 @@ async function authorize(target, cookie) {
     text,
     type: res.headers.get('content-type') || '',
     cacheControl: res.headers.get('cache-control') || '',
+    setCookie: res.headers.getSetCookie ? res.headers.getSetCookie() : [],
   };
 }
+const nextOf = (location) => new URLSearchParams((location || '').split('?')[1] || '').get('next');
 async function token(body, headers = {}) {
   const res = await fetch(`${BASE}/api/auth/sso/token`, {
     method: 'POST',
@@ -219,10 +240,21 @@ async function main() {
   sql("INSERT INTO users (id, username, email, name, role) VALUES (20, 'outside', 'someone@example.com', 'Outside Person', 'user')");
   sql("INSERT INTO users (id, username, email, name, role) VALUES (21, 'leaver', 'leaver@lrparis.com', 'Leaver', 'user')");
   sql("INSERT INTO users (id, username, email, name, role) VALUES (22, 'mover', 'mover@lrparis.com', 'Mover', 'user')");
+  sql("INSERT INTO users (id, username, email, name, role) VALUES (23, 'gone', 'gone@lrparis.com', 'Gone', 'user')");
+  const sessionsDb = () => new Database(path.join(box.dataDir, 'sessions.db'));
+  const auditEntries = () => {
+    const file = path.join(box.dataDir, 'audit.log');
+    const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    return text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return {}; } });
+  };
+  const launchpadLog = () => {
+    const file = path.join(box.backend, 'logs', 'launchpad.log');
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  };
 
   const port = 4500 + Math.floor(Math.random() * 400);
   BASE = `http://127.0.0.1:${port}`;
-  let server = startServer(box, port, { SSO_CLIENTS });
+  let server = startServer(box, port, { SSO_CLIENTS, SESSION_MAX_AGE_DAYS: '180' });
 
   async function webSignIn(identifier, userId) {
     sql('DELETE FROM otp_codes WHERE user_id = ?', userId);
@@ -338,6 +370,24 @@ async function main() {
     eq('and the code names Margot', margotUser.json && margotUser.json.user && margotUser.json.user.email, 'm.drevno@lrparis.com');
 
     // -----------------------------------------------------------------------
+    // 3b. Express also routes /authorize/ and /Authorize to authorize
+    // -----------------------------------------------------------------------
+    // It ignores a trailing slash and letter case. The sign-in page follows a
+    // next only when it starts with exactly /api/auth/sso/authorize?
+    // (frontend/src/lib/sso.js), so next is written that way whatever spelling
+    // the app used. Otherwise the person signs in and lands on the dashboard.
+    for (const [label, pathname] of [
+      ['a trailing slash', '/api/auth/sso/authorize/'],
+      ['a capital in the route', '/api/auth/sso/Authorize'],
+      ['a capital in the mount', '/api/auth/SSO/authorize'],
+    ]) {
+      const r = await authorize(`${pathname}${askUrl.search}`);
+      const n = nextOf(r.location);
+      ok(`signed out, authorize with ${label} gets the usual next, which the sign-in page follows`,
+        r.status === 302 && n === asked && n.startsWith('/api/auth/sso/authorize?'), `status ${r.status}, next ${n}`);
+    }
+
+    // -----------------------------------------------------------------------
     // 4. Signed in: a fresh code every time, state echoed or left out
     // -----------------------------------------------------------------------
     const a1 = await authorize({ client_id: 'parrot', redirect_uri: PARROT_CB, state: 'one' }, marc);
@@ -379,6 +429,60 @@ async function main() {
     eq('the rule reads the account as it is now, not as it was at sign in', moved.status, 403);
 
     // -----------------------------------------------------------------------
+    // 5b. A session that sessionGuard ends on the way in
+    // -----------------------------------------------------------------------
+    // authorize sits after sessionGuard (index.js). When the guard ends a
+    // session, past SESSION_MAX_AGE_DAYS or with its account deleted, an API
+    // route answers 401 JSON. authorize is a page the browser lands on from the
+    // other app, so it carries on signed out instead: off to sign in, with the
+    // next that brings the person back.
+    const goneTab = await webSignIn('gone@lrparis.com', 23);
+    const goneOtherTab = await webSignIn('gone@lrparis.com', 23);
+    sql('DELETE FROM users WHERE id = 23');
+    const goneAsk = await authorize(asked, goneTab);
+    ok('a deleted account on authorize is sent to sign in, with next = this authorize URL, not a 401',
+      goneAsk.status === 302 && goneAsk.location === `/login?next=${encodeURIComponent(asked)}`,
+      `status ${goneAsk.status}, location ${goneAsk.location}, type ${goneAsk.type}, body ${goneAsk.text.slice(0, 120)}`);
+    ok('with its session cookie cleared', clearsSession(goneAsk.setCookie), JSON.stringify(goneAsk.setCookie));
+    ok('not cached', /no-store/.test(goneAsk.cacheControl), goneAsk.cacheControl);
+    ok('and the guard recorded session_ended for account_removed',
+      auditEntries().some((e) => e.event === 'session_ended' && e.actor === 'gone' && e.details && e.details.reason === 'account_removed'));
+    const goneApi = await fetch(`${BASE}/api/auth/me`, { headers: { Cookie: goneOtherTab.pair } });
+    const goneApiBody = await goneApi.json().catch(() => null);
+    ok('any other route still answers a deleted account with 401 JSON',
+      goneApi.status === 401 && !!goneApiBody && /no longer exists/.test(goneApiBody.error || ''), `${goneApi.status} ${JSON.stringify(goneApiBody)}`);
+
+    // Past the absolute limit. The stored row stays alive, as it does for
+    // someone who uses Launchpad every week; only the sign-in is old. (Moving
+    // the clock 181 days in one go would not test this: the row would expire
+    // in the store first, and the guard would never see the session.)
+    const DAY = 24 * 60 * 60 * 1000;
+    const aged = [];
+    for (let i = 0; i < 3; i += 1) aged.push(await webSignIn('r.loiseau@lrparis.com', 7));
+    { const d = sessionsDb();
+      for (const cookie of aged) {
+        const row = d.prepare('SELECT sess FROM sessions WHERE sid = ?').get(sidOf(cookie));
+        const sess = JSON.parse(row.sess);
+        sess.signedInAt = Date.now() - 181 * DAY;
+        d.prepare('UPDATE sessions SET sess = ? WHERE sid = ?').run(JSON.stringify(sess), sidOf(cookie));
+      }
+      d.close(); }
+    const agedAsk = await authorize(asked, aged[0]);
+    ok('a sign-in past 180 days, kept alive by use, on authorize is sent to sign in with the same next',
+      agedAsk.status === 302 && agedAsk.location === `/login?next=${encodeURIComponent(asked)}`,
+      `status ${agedAsk.status}, location ${agedAsk.location}, type ${agedAsk.type}, body ${agedAsk.text.slice(0, 120)}`);
+    ok('with its session cookie cleared', clearsSession(agedAsk.setCookie), JSON.stringify(agedAsk.setCookie));
+    ok('and the guard recorded session_ended for max_age',
+      auditEntries().some((e) => e.event === 'session_ended' && e.actor === 'rachael' && e.details && e.details.reason === 'max_age'));
+    const agedSlash = await authorize(`/api/auth/sso/authorize/${askUrl.search}`, aged[1]);
+    ok('so is one that arrives on /authorize/, with the usual next',
+      agedSlash.status === 302 && nextOf(agedSlash.location) === asked, `status ${agedSlash.status}, location ${agedSlash.location}`);
+    const agedApi = await fetch(`${BASE}/api/auth/me`, { headers: { Cookie: aged[2].pair } });
+    const agedApiBody = await agedApi.json().catch(() => null);
+    ok('any other route still answers an expired sign-in with 401 JSON',
+      agedApi.status === 401 && !!agedApiBody && agedApiBody.error === 'Your sign-in has expired. Sign in again.', `${agedApi.status} ${JSON.stringify(agedApiBody)}`);
+
+    // -----------------------------------------------------------------------
     // 6. Token: the app's server swaps the code for the person
     // -----------------------------------------------------------------------
     const t1 = await parrotToken(a1.back.code);
@@ -414,6 +518,21 @@ async function main() {
     }
     const afterBadSecrets = await parrotToken(forSecret.back.code);
     eq('a caller without the secret cannot use up the code', afterBadSecrets.status, 200);
+
+    // A body that is not JSON never reaches the token route: express.json()
+    // refuses it first. Node's parser quotes the text around the mistake, and
+    // in a hand-written call whose quotes got lost, that is the start of the
+    // secret. The answer is the route's own, and neither it nor the log quotes
+    // any of the secret.
+    const notJson = await token(`{"client_id":"parrot","client_secret":${PARROT_SECRET},"code":"x","redirect_uri":"${PARROT_CB}"}`);
+    ok('a body that is not JSON is 400 invalid_request', notJson.status === 400 && notJson.json && notJson.json.error === 'invalid_request',
+      `${notJson.status} ${notJson.text}`);
+    ok('not cached', /no-store/.test(notJson.cacheControl), notJson.cacheControl);
+    const secretSlices = (secret) => Array.from({ length: 25 }, (_, i) => secret.slice(i, i + 8));
+    ok('the answer quotes none of the secret', !secretSlices(PARROT_SECRET).some((s) => notJson.text.includes(s)), notJson.text);
+    const logAfterNotJson = launchpadLog();
+    ok('nor does launchpad.log', !secretSlices(PARROT_SECRET).some((s) => logAfterNotJson.includes(s)),
+      logAfterNotJson.split('\n').filter((l) => /sso\/token/.test(l)).join('\n').slice(0, 300));
 
     const unknown = await parrotToken(b64url(crypto.randomBytes(32)));
     ok('a code Launchpad never issued is 400 invalid_grant', unknown.status === 400 && unknown.json.error === 'invalid_grant');
@@ -480,8 +599,8 @@ async function main() {
     ok('codes were issued for the next check', issuedCodes.length >= 10, String(issuedCodes.length));
     const leaked = issuedCodes.filter((c) => auditText.includes(c) || serverLogs.includes(c));
     ok('no code appears in the audit log or the server log', leaked.length === 0, `${leaked.length} leaked`);
-    ok('no secret appears in the audit log or the server log',
-      ![PARROT_SECRET, NOTES_SECRET].some((s) => auditText.includes(s) || serverLogs.includes(s)));
+    ok('no secret, nor any 8 characters of one, appears in the audit log or the server log',
+      ![PARROT_SECRET, NOTES_SECRET].some((secret) => secretSlices(secret).some((s) => auditText.includes(s) || serverLogs.includes(s))));
 
     // -----------------------------------------------------------------------
     // 9. Rate limits, last, because they spend this IP's budget

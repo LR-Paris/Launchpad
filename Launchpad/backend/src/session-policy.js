@@ -82,7 +82,14 @@ async function startSignedInSession(req, rememberMe, user) {
 //    effect on the next request, not at the next sign in.
 //
 // A failed read of users.db is not a reason to sign anyone out, so it passes.
-function sessionGuard({ cookieName, auditLog, getUserById } = {}) {
+//
+// Ending a session answers 401 JSON, which is right for the API the frontend
+// calls. A page the browser navigates to would show that JSON as the whole
+// page. continueAfterEnd(req) names those: for them the session is still ended
+// (destroyed, cookie cleared, recorded), then the request carries on signed out
+// and the route sends the person to sign in itself. Today that is only Sign in
+// with Launchpad's authorize step (sso.js isAuthorizeNavigation).
+function sessionGuard({ cookieName, auditLog, getUserById, continueAfterEnd } = {}) {
   return function guardSession(req, res, next) {
     if (req.via === 'mcp' || !req.session || !req.session.user) return next();
 
@@ -91,7 +98,8 @@ function sessionGuard({ cookieName, auditLog, getUserById } = {}) {
       return req.session.destroy(() => {
         if (cookieName) res.clearCookie(cookieName);
         if (auditLog) auditLog('session_ended', { actor: username, req, details: { reason } });
-        res.status(401).json({ error: message });
+        if (continueAfterEnd && continueAfterEnd(req)) return next();
+        return res.status(401).json({ error: message });
       });
     };
 
