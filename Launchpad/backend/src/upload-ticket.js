@@ -345,6 +345,54 @@ function acceptBody(req, res, next) {
   return req.pipe(out);
 }
 
+// Look a ticket up without using it, for the page below. Same checks as
+// claimTicket, minus the UPDATE that burns it.
+function peekTicket(raw) {
+  if (typeof raw !== 'string' || !TICKET_RE.test(raw)) return { ok: false, code: 'TICKET_INVALID' };
+  const id = hashTicket(raw);
+  const row = db().prepare('SELECT * FROM upload_tickets WHERE id = ?').get(id);
+  if (!row || !sameHash(row.id, id)) return { ok: false, code: 'TICKET_INVALID' };
+  if (row.used_at) return { ok: false, code: 'TICKET_USED', row };
+  if (row.expires_at <= Date.now()) return { ok: false, code: 'TICKET_EXPIRED', row };
+  return { ok: true, row };
+}
+
+const pageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// GET /api/upload/:ticket — the page a person opens. request_upload always
+// promised a browser link, but only the POST below existed, so the link gave
+// a 404 and people were stuck (NASCAR and the Ritz, Oct 20). Opening the page
+// leaves the ticket unused. It shows the shop and the expiry, and posts the
+// dropped zip back to this address as multipart, which acceptBody handles.
+uploadRouter.get('/:ticket', pageLimiter, (req, res) => {
+  const { uploadPage } = require('./upload-page');
+  res.set({
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+    'Referrer-Policy': 'no-referrer',
+  });
+  const peek = peekTicket(req.params.ticket);
+  if (!peek.ok) {
+    const state = peek.code === 'TICKET_USED' ? 'used' : peek.code === 'TICKET_EXPIRED' ? 'expired' : 'invalid';
+    return res.status(state === 'invalid' ? 404 : 410).type('html').send(uploadPage({
+      state,
+      slug: peek.row ? peek.row.shop_slug : null,
+      stagingId: peek.row ? peek.row.staging_id : null,
+    }));
+  }
+  return res.type('html').send(uploadPage({
+    state: 'ready',
+    slug: peek.row.shop_slug,
+    expiresAt: peek.row.expires_at,
+    maxBytes: MAX_UPLOAD_BYTES,
+  }));
+});
+
 // POST /api/upload/:ticket — no session, no CSRF. The ticket is the credential.
 uploadRouter.post('/:ticket', uploadLimiter, resolveTicket, acceptBody, async (req, res) => {
   const { refuse, audit, withShopLock } = authz();

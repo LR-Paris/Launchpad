@@ -474,6 +474,18 @@ async function main() {
     eq('the upload link is a whole address a person can open', ticket.json?.upload_url, `${BASE}/api/upload/${rawTicket}`);
     eq('and it says how long it lasts', ticket.json?.expires_in_minutes, 15);
 
+    // The link is for a person: opening it gives a page, and does not use it up.
+    const page = await fetch(`${BASE}/api/upload/${rawTicket}`);
+    const pageHtml = await page.text();
+    eq('opening the upload link gives a page, not a 404', page.status, 200);
+    ok('the page names the shop and takes a zip',
+      /Upload the DATABASE for serhant/.test(pageHtml) && /id="drop"/.test(pageHtml) && /accept=".zip,application\/zip"/.test(pageHtml),
+      pageHtml.slice(0, 200));
+    ok('the page is not cached or indexed',
+      /no-store/.test(page.headers.get('cache-control') || '') && /noindex/.test(page.headers.get('x-robots-tag') || ''));
+    const badPage = await fetch(`${BASE}/api/upload/${'0'.repeat(64)}`);
+    eq('an unknown link says so', badPage.status, 404);
+
     const zip = buildDatabaseZip(AdmZip, [
       { name: 'Tote', sku: 'TOTE-1' },
       { name: 'Scarf', sku: 'SCARF-1' },
@@ -498,6 +510,21 @@ async function main() {
       method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: zip,
     });
     ok('a ticket cannot be used twice', replay.status === 401, `got ${replay.status}`);
+
+    const usedPage = await fetch(`${BASE}/api/upload/${rawTicket}`);
+    const usedHtml = await usedPage.text();
+    eq('a used link says it was used', usedPage.status, 410);
+    ok('and that the zip is waiting for review', /waiting for review/.test(usedHtml), usedHtml.slice(0, 300));
+
+    // What the page does in a browser: multipart, field "file".
+    const ticket2 = await callMcp(newUser, 'POST', '/api/shops/serhant/database/upload-ticket', { body: {} });
+    const form = new FormData();
+    form.append('file', new Blob([zip], { type: 'application/zip' }), 'DATABASE.zip');
+    const browserUpload = await fetch(`${BASE}/api/upload/${ticket2.json?.ticket}`, { method: 'POST', body: form });
+    const browserJson = await browserUpload.json();
+    eq('a drop from the page stages too', browserUpload.status, 200);
+    ok('with its own staging id', typeof browserJson.staging_id === 'string' && browserJson.staging_id !== uploadJson.staging_id,
+      JSON.stringify(browserJson).slice(0, 300));
 
     const before = fs.readdirSync(path.join(serhantDir, 'DATABASE', 'ShopCollections', 'Spring'));
     eq('the live shop is untouched until apply', before.length, 1);
