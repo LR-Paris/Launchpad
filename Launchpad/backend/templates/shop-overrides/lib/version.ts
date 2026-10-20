@@ -17,15 +17,15 @@
  * a shop created with an incomplete copy of this file never comes up.
  * test/shop-overrides.test.js checks the list above.
  */
-export const VERSION = 'STS-4.3.0';
+export const VERSION = 'STS-4.3.1';
 
 export const VERSION_INFO = {
   name: 'Shop Template System',
   version: VERSION,
   codename: 'Beacon',
-  releaseDate: '2026-10-16',
+  releaseDate: '2026-10-20',
   description:
-    'Shop copy settings. The hero button label, the About heading and the hero tagline font come from the DATABASE, and a shop can word its own order confirmation email.',
+    'Product photos. main.* is always the first photo of a product, and the rest follow in natural name order.',
   attribution: 'Built with LR Paris Shuttle',
 };
 

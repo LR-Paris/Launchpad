@@ -2,13 +2,13 @@ const express = require('express');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, exec } = require('child_process');
 const Database = require('better-sqlite3');
 const slugify = require('slugify');
 const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx');
 
 const { checkShopPermission, isAdminOrAbove } = require('./users');
-const { acquire: lockAcquire, release: lockRelease, isLocked } = require('./lock');
+const { acquire: lockAcquire, release: lockRelease, isLocked, readLock } = require('./lock');
 const { requireShopAccess, audit, membershipRole, setShopRole, refuse, currentLock } = require('./authz');
 const { writeStarterDatabase } = require('./starter-database');
 const {
@@ -256,6 +256,70 @@ function probeShopPort(port, timeoutMs = 1000) {
   });
 }
 
+// The build check. Shop ports listen on 127.0.0.1 on the host, which this
+// container cannot reach, so the TCP probe above never connects there and a
+// shop used to stay "building", its .db.lock held, for good. The shop's own
+// log is the other signal: Next prints "Ready in" once `next start` is up.
+// Only a line stamped after the build started counts, so the previous
+// boot's "Ready" cannot end a fresh build early.
+const READY_LINE = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?Z\b.*\bReady in\b/;
+function shopLogsShowReady(text, sinceMs) {
+  if (!text) return false;
+  const since = Number(sinceMs) || 0;
+  for (const line of String(text).split('\n')) {
+    const m = READY_LINE.exec(line);
+    if (!m) continue;
+    // Docker stamps nanoseconds. Date.parse wants milliseconds at most.
+    const at = Date.parse(`${m[1]}${(m[2] || '.0').slice(0, 4)}Z`);
+    if (Number.isFinite(at) && at >= since - 2000) return true;
+  }
+  return false;
+}
+
+function readShopLogs(slug, lines = 80) {
+  return new Promise((resolve) => {
+    exec(
+      `launchpad-runner compose -f ${getComposeFilePath(slug)} logs --tail=${lines} --timestamps 2>&1`,
+      { encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024 },
+      (err, stdout) => resolve(err ? '' : stdout),
+    );
+  });
+}
+
+async function isShopReady(shop) {
+  if (await probeShopPort(shop.port)) return true;
+  return shopLogsShowReady(await readShopLogs(shop.slug), shop.build_started_at);
+}
+
+// Builds the check never saw finish, and build locks nobody released. A shop
+// still flagged as building after BUILD_TIMEOUT_MS is treated as running, as
+// resolveLiveStatus always did, and now its lock goes too. A .db.lock older
+// than the same window on a shop that is not building is left over: authz
+// already ignores it, but requireUnlocked (catalog and stock edits) did not,
+// so it blocked those for good. Returns the slugs it released.
+function settleStaleBuilds(now = Date.now()) {
+  const released = [];
+  const db = getDb();
+  try {
+    const shops = db.prepare('SELECT slug, is_building, build_started_at FROM shops').all();
+    for (const s of shops) {
+      const building = Number(s.is_building) || 0;
+      const startedAt = Number(s.build_started_at) || 0;
+      if (building) {
+        if (!startedAt || now - startedAt <= BUILD_TIMEOUT_MS) continue;
+        db.prepare('UPDATE shops SET is_building = 0 WHERE slug = ?').run(s.slug);
+      }
+      if (!isLocked(s.slug)) continue;
+      const since = Number((readLock(s.slug) || {}).acquired_at) || 0;
+      if (now - since <= BUILD_TIMEOUT_MS) continue;
+      lockRelease(s.slug);
+      released.push(s.slug);
+      console.log(`[shops] ${s.slug}: released a build lock from ${since ? new Date(since).toISOString() : 'an unknown time'}`);
+    }
+  } finally { db.close(); }
+  return released;
+}
+
 // Resolve a shop's effective live status, taking is_building into account.
 // Backwards-compatible: shops with NULL/0 is_building get the legacy behavior.
 function resolveLiveStatus(shop) {
@@ -274,6 +338,7 @@ function resolveLiveStatus(shop) {
         db.prepare('UPDATE shops SET is_building = 0 WHERE slug = ?').run(shop.slug);
       } finally { db.close(); }
     } catch { /* ignore */ }
+    lockRelease(shop.slug);
     return 'running';
   }
   return 'building';
@@ -297,7 +362,7 @@ function startBuildingPoller() {
       } finally { db.close(); }
 
       for (const s of buildingShops) {
-        const ready = await probeShopPort(s.port);
+        const ready = await isShopReady(s);
         if (ready) {
           const db2 = getDb();
           try {
@@ -307,6 +372,7 @@ function startBuildingPoller() {
           console.log(`[shops] ${s.slug} is now reachable — cleared is_building flag`);
         }
       }
+      settleStaleBuilds();
     } catch (err) {
       console.error('[shops] building poller error:', err.message);
     }
@@ -1983,3 +2049,6 @@ function initDb() {
 module.exports = router;
 module.exports.router = router;
 module.exports.initDb = initDb;
+// For test/build-check.test.js.
+module.exports.shopLogsShowReady = shopLogsShowReady;
+module.exports.settleStaleBuilds = settleStaleBuilds;
