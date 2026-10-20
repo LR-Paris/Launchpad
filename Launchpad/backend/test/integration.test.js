@@ -598,6 +598,29 @@ async function main() {
     ok('an unknown field says which fields exist', ceBadField.status === 400 && /units_per_box/.test(ceBadField.json?.error?.message || ''),
       JSON.stringify(ceBadField.json));
 
+    // Shop settings, the same way: no zip.
+    const designDir = path.join(serhantDir, 'DATABASE', 'Design', 'Details');
+    fs.mkdirSync(designDir, { recursive: true });
+    fs.writeFileSync(path.join(designDir, 'Style.txt'), '# corners\ncornerRadius: 0\nstyle: sharp\n');
+    const ceSettings = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
+      body: { settings: { style: { mainPrice: 'unit' }, colors: { primary: '#0A2240' }, order_email: 'subject: Your request\n\nThank you.' } },
+    });
+    eq('settings change with no zip too', ceSettings.status, 200);
+    ok('each setting comes back from and to',
+      JSON.stringify(ceSettings.json?.edits || []).includes('"setting":"style.mainPrice","from":"","to":"unit"'),
+      JSON.stringify(ceSettings.json?.edits));
+    eq('a color change says the shop needs a restart to show it', ceSettings.json?.needs_restart, true);
+    const ceSettingsApply = await callMcp(newUser, 'POST', '/api/shops/serhant/database/apply', { body: { staging_id: ceSettings.json?.staging_id } });
+    eq('and applies like any staging', ceSettingsApply.status, 200);
+    eq('the other lines and the comment stay as they were',
+      fs.readFileSync(path.join(designDir, 'Style.txt'), 'utf8'), '# corners\ncornerRadius: 0\nstyle: sharp\nmainPrice: unit\n');
+    ok('the order email is written', /^subject: Your request/.test(fs.readFileSync(path.join(designDir, 'OrderEmail.txt'), 'utf8')));
+    const ceBadColor = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { colors: { primary: 'navy' } } } });
+    ok('a color that is not hex is refused, and says the format', ceBadColor.status === 400 && /hex/.test(ceBadColor.json?.error?.message || ''),
+      JSON.stringify(ceBadColor.json));
+    const ceBadKey = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { password: 'x' } } });
+    ok('a setting it does not manage is refused', ceBadKey.status === 400, JSON.stringify(ceBadKey.json));
+
     // ---------------------------------------------------------------------
     // 7c. report_issue: a platform problem goes to the queue, not to Gio
     // ---------------------------------------------------------------------

@@ -915,12 +915,135 @@ function normalizeEditValue(field, value) {
   return text;
 }
 
-function stageEdits({ slug, userId, edits, shopsDir }) {
+
+// Shop settings in Design/Details, by the names the files use. A person used to
+// need the whole DATABASE as a zip to change one line here, and nobody but Gio
+// had it. Values are checked the way the template reads them.
+const SETTING_GROUPS = {
+  descriptions: { file: 'Descriptions.txt', keys: ['tagline', 'about', 'footer', 'heroButton', 'aboutTitle'] },
+  fonts: { file: 'Fonts.txt', keys: ['titleFont', 'bodyFont', 'titleFontUrl', 'bodyFontUrl', 'taglineFont', 'taglineFontUrl'] },
+  style: { file: 'Style.txt', keys: ['cornerRadius', 'style', 'mainPrice'] },
+  colors: { file: 'Colors.txt', keys: ['primary', 'secondary', 'accent', 'background', 'text', 'textLight', 'border', 'success'] },
+};
+const SETTING_FILES = {
+  company_name: { file: 'CompanyName.txt', kind: 'line', max: 80 },
+  about_text: { file: 'About.txt', kind: 'text', max: 5000 },
+  order_email: { file: 'OrderEmail.txt', kind: 'text', max: 5000 },
+};
+// Read by the shop layout when it builds, so a change shows after restart_shop.
+const BUILD_TIME_SETTINGS = new Set([
+  'colors', 'fonts', 'company_name', 'descriptions.tagline', 'descriptions.footer', 'style.cornerRadius', 'style.style',
+]);
+
+function normalizeSetting(group, key, value) {
+  const text = String(value ?? '').replace(/\r\n?/g, '\n').trim();
+  if (text === '') return '';
+  if (text.includes('\n')) throw editError(`${group}.${key} is one line.`);
+  if (group === 'colors') {
+    if (!/^#[0-9a-fA-F]{6}$/.test(text)) throw editError(`colors.${key} is a six-digit hex color, for example #1a1a1a.`);
+    return text.toLowerCase();
+  }
+  if (group === 'style') {
+    if (key === 'cornerRadius') {
+      const n = Number(text);
+      if (!Number.isInteger(n) || n < 0 || n > 64) throw editError('style.cornerRadius is a whole number of pixels, 0 to 64.');
+      return String(n);
+    }
+    if (key === 'style' && !['rounded', 'sharp'].includes(text)) throw editError('style.style is rounded or sharp.');
+    if (key === 'mainPrice' && !['box', 'unit'].includes(text)) throw editError('style.mainPrice is box or unit.');
+    return text;
+  }
+  if (group === 'fonts' && /Url$/.test(key)) {
+    if (!/^(https:\/\/|\/)[^\s"'<>]{1,300}$/.test(text)) throw editError(`fonts.${key} is an https:// stylesheet link, such as a Google Fonts link.`);
+    return text;
+  }
+  const max = group === 'descriptions' && key === 'about' ? 2000 : 300;
+  if (text.length > max) throw editError(`${group}.${key} is at most ${max} characters.`);
+  return text;
+}
+
+// Set or remove one "key: value" line, keeping every other line as it was.
+function setKeyLine(content, key, value) {
+  const lines = content.split('\n');
+  const idx = lines.findIndex((line) => {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) return false;
+    const colon = t.indexOf(':');
+    return colon > 0 && t.slice(0, colon).trim() === key;
+  });
+  if (idx >= 0) {
+    if (value === '') lines.splice(idx, 1);
+    else lines[idx] = `${key}: ${value}`;
+  } else if (value !== '') {
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+    lines.push(`${key}: ${value}`);
+  }
+  return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+function readKeyLine(content, key) {
+  for (const line of content.split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const colon = t.indexOf(':');
+    if (colon > 0 && t.slice(0, colon).trim() === key) return t.slice(colon + 1).trim();
+  }
+  return '';
+}
+
+function applySettings(db, settings, changes) {
+  const details = path.join(db, 'Design', 'Details');
+  fs.mkdirSync(details, { recursive: true });
+  let needsRestart = false;
+  for (const name of Object.keys(settings)) {
+    const value = settings[name];
+    if (SETTING_GROUPS[name]) {
+      const { file, keys } = SETTING_GROUPS[name];
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw editError(`settings.${name} is an object of ${keys.join(', ')}.`);
+      const target = path.join(details, file);
+      let content = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
+      for (const key of Object.keys(value)) {
+        if (!keys.includes(key)) throw editError(`settings.${name} takes ${keys.join(', ')}. "${key}" is not one of them.`);
+        const to = normalizeSetting(name, key, value[key]);
+        const from = readKeyLine(content, key);
+        if (from === to) continue;
+        content = setKeyLine(content, key, to);
+        changes.push({ setting: `${name}.${key}`, from, to });
+        if (BUILD_TIME_SETTINGS.has(name) || BUILD_TIME_SETTINGS.has(`${name}.${key}`)) needsRestart = true;
+      }
+      fs.writeFileSync(target, content);
+      continue;
+    }
+    if (SETTING_FILES[name]) {
+      const { file, kind, max } = SETTING_FILES[name];
+      const text = String(value ?? '').replace(/\r\n?/g, '\n').trim();
+      if (text.length > max) throw editError(`settings.${name} is at most ${max} characters.`);
+      if (kind === 'line' && (text.includes('\n') || !text)) throw editError(`settings.${name} is one line.`);
+      if (name === 'order_email' && text && !/^(\s*#[^\n]*\n)*\s*subject\s*:/i.test(text)) {
+        throw editError('settings.order_email starts with "subject: ...", then a blank line, then the message.');
+      }
+      const target = path.join(details, file);
+      const from = readTrimmed(target);
+      if (from === text) continue;
+      if (text) fs.writeFileSync(target, `${text}\n`);
+      else fs.rmSync(target, { force: true });
+      changes.push({ setting: name, from, to: text });
+      if (BUILD_TIME_SETTINGS.has(name)) needsRestart = true;
+      continue;
+    }
+    throw editError(`settings takes ${[...Object.keys(SETTING_GROUPS), ...Object.keys(SETTING_FILES)].join(', ')}. "${name}" is not one of them.`);
+  }
+  return needsRestart;
+}
+
+function stageEdits({ slug, userId, edits, settings, shopsDir }) {
   const p = shopPaths(slug, shopsDir);
   recoverInterruptedApply(slug, shopsDir);
   if (!fs.existsSync(p.live)) throw editError(`"${slug}" has no catalog yet. Upload a DATABASE first.`);
-  if (!Array.isArray(edits) || !edits.length) throw editError('Name at least one product to change.');
-  if (edits.length > MAX_EDITS) throw editError(`At most ${MAX_EDITS} products in one change. Split it.`);
+  const productEdits = Array.isArray(edits) ? edits : [];
+  const hasSettings = settings && typeof settings === 'object' && !Array.isArray(settings) && Object.keys(settings).length > 0;
+  if (!productEdits.length && !hasSettings) throw editError('Name at least one product or one setting to change.');
+  if (productEdits.length > MAX_EDITS) throw editError(`At most ${MAX_EDITS} products in one change. Split it.`);
 
   const model = scanDatabase(p.live);
   const byId = new Map();
@@ -940,7 +1063,8 @@ function stageEdits({ slug, userId, edits, shopsDir }) {
     });
 
     const changes = [];
-    for (const edit of edits) {
+    const needsRestart = hasSettings ? applySettings(db, settings, changes) : false;
+    for (const edit of productEdits) {
       const ref = String((edit && edit.product) || '').trim();
       const product = byId.get(ref) || model.products.get(ref);
       if (!product) {
@@ -972,7 +1096,7 @@ function stageEdits({ slug, userId, edits, shopsDir }) {
     if (!changes.length) throw editError('Every value is already what was asked for. There is nothing to stage.');
 
     const result = stageDatabase({ slug, fromDir: db, userId, ticketId: null, shopsDir, edits: changes });
-    return { ...result, edits: changes };
+    return { ...result, edits: changes, needs_restart: needsRestart };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
@@ -1312,17 +1436,20 @@ router.post('/:slug/database/stage', guardShop, requireRole('editor'), async (re
 router.post('/:slug/catalog/edit', guardShop, requireRole('editor'), async (req, res) => {
   const { audit, withShopLock } = authz();
   const { slug } = req.params;
-  const edits = (req.body || {}).edits;
+  const { edits, settings } = req.body || {};
   try {
     const result = await withShopLock(slug, req.session.user.id, 'edit_catalog', () => (
-      stageEdits({ slug, userId: req.session.user.id, edits })
+      stageEdits({ slug, userId: req.session.user.id, edits, settings })
     ));
     recordStagingRow({ stagingId: result.staging_id, slug, userId: req.session.user.id, ticketId: null, diff: result.diff });
     const audit_id = audit(req, 'catalog_edit_staged', {
       shop_slug: slug, staging_id: result.staging_id, edits: result.edits.length,
       blocking: result.diff.blocking.length, warnings: result.diff.warnings.length,
     });
-    return res.json({ shop: slug, staging_id: result.staging_id, edits: result.edits, diff: result.diff, audit_id });
+    return res.json({
+      shop: slug, staging_id: result.staging_id, edits: result.edits, diff: result.diff,
+      needs_restart: result.needs_restart, audit_id,
+    });
   } catch (err) {
     return handleFailure(res, slug, err);
   }
