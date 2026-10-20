@@ -60,6 +60,10 @@ function db() {
       CREATE INDEX IF NOT EXISTS idx_upload_tickets_shop ON upload_tickets(shop_slug);
       CREATE INDEX IF NOT EXISTS idx_upload_tickets_expiry ON upload_tickets(expires_at);
     `);
+    // replace (the whole catalog) or merge (only what changes). Added after
+    // the table shipped, so an older table gets the column here.
+    const cols = handle.prepare('PRAGMA table_info(upload_tickets)').all().map((c) => c.name);
+    if (!cols.includes('mode')) handle.exec('ALTER TABLE upload_tickets ADD COLUMN mode TEXT');
     _tablesReady = true;
   }
   return handle;
@@ -83,6 +87,7 @@ function sameHash(a, b) {
 }
 
 const TICKET_RE = /^[0-9a-f]{64}$/;
+const UPLOAD_MODES = ['replace', 'merge'];
 
 // The link goes to a person, so it has to work when pasted. A path like
 // /api/upload/<ticket> made every agent guess the host. Same base as shopUrl().
@@ -90,17 +95,18 @@ function publicBase() {
   return (process.env.SHOP_BASE_URL || process.env.FRONTEND_URL || '').replace(/\/+$/, '');
 }
 
-function issueTicket(slug, userId, via) {
+function issueTicket(slug, userId, via, mode = 'replace') {
   const raw = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = now + TICKET_TTL_MS;
   db().prepare(`
-    INSERT INTO upload_tickets (id, shop_slug, user_id, via, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(hashTicket(raw), slug, userId, via || 'web', now, expiresAt);
+    INSERT INTO upload_tickets (id, shop_slug, user_id, via, created_at, expires_at, mode)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(hashTicket(raw), slug, userId, via || 'web', now, expiresAt, mode);
   return {
     ticket: raw,
     shop: slug,
+    mode,
     expires_at: new Date(expiresAt).toISOString(),
     max_bytes: MAX_UPLOAD_BYTES,
     upload_url: `${publicBase()}/api/upload/${raw}`,
@@ -199,14 +205,20 @@ const issueLimiter = rateLimit({
 
 // POST /api/shops/:slug/database/upload-ticket
 ticketRouter.post('/:slug/database/upload-ticket', issueLimiter, (req, res) => {
-  const { audit } = authz();
+  const { audit, refuse } = authz();
   const { slug } = req.params;
 
   if (isLegacyShop(slug)) return refuseLegacy(res, slug);
 
-  const ticket = issueTicket(slug, req.session.user.id, req.via || 'web');
+  const mode = (req.body && req.body.mode) || 'replace';
+  if (!UPLOAD_MODES.includes(mode)) {
+    return refuse(res, 400, 'PREFLIGHT_FAILED', `"${String(mode).slice(0, 40)}" is not an upload mode.`,
+      'Use replace for a whole catalog, or merge to add to the live one.', true);
+  }
+  const ticket = issueTicket(slug, req.session.user.id, req.via || 'web', mode);
   const audit_id = audit(req, 'upload_ticket_issued', {
     shop_slug: slug,
+    mode,
     expires_at: ticket.expires_at,
     max_bytes: MAX_UPLOAD_BYTES,
   });
@@ -390,6 +402,7 @@ uploadRouter.get('/:ticket', pageLimiter, (req, res) => {
     slug: peek.row.shop_slug,
     expiresAt: peek.row.expires_at,
     maxBytes: MAX_UPLOAD_BYTES,
+    mode: peek.row.mode === 'merge' ? 'merge' : 'replace',
   }));
 });
 
@@ -421,8 +434,11 @@ uploadRouter.post('/:ticket', uploadLimiter, resolveTicket, acceptBody, async (r
     // await matters twice here. Without it `result` is a Promise, and the
     // finally below deletes the uploaded zip out from under stageDatabase
     // while it is still reading it.
+    const merge = row.mode === 'merge';
     const result = await withShopLock(slug, row.user_id, 'stage_database', () => (
-      staging.stageDatabase({ slug, zipPath: req.uploadPath, userId: row.user_id, ticketId: row.id })
+      merge
+        ? staging.stageMerge({ slug, zipPath: req.uploadPath, userId: row.user_id, ticketId: row.id })
+        : staging.stageDatabase({ slug, zipPath: req.uploadPath, userId: row.user_id, ticketId: row.id })
     ));
     recordStaging(row.id, result.staging_id);
     staging.recordStagingRow({
@@ -436,10 +452,14 @@ uploadRouter.post('/:ticket', uploadLimiter, resolveTicket, acceptBody, async (r
       shop_slug: slug,
       user_id: row.user_id,
       staging_id: result.staging_id,
+      mode: merge ? 'merge' : 'replace',
       blocking: result.diff.blocking.length,
       warnings: result.diff.warnings.length,
     });
-    return res.json({ shop: slug, staging_id: result.staging_id, diff: result.diff, audit_id });
+    return res.json({
+      shop: slug, mode: merge ? 'merge' : 'replace', staging_id: result.staging_id, diff: result.diff,
+      ...(merge ? { merge: result.merge } : {}), audit_id,
+    });
   } catch (err) {
     if (err && err.code === 'SHOP_BUSY') {
       return refuse(res, 409, 'SHOP_BUSY',
@@ -455,7 +475,7 @@ uploadRouter.post('/:ticket', uploadLimiter, resolveTicket, acceptBody, async (r
     // and the caller gets nothing at all. Answer it.
     console.error(`[upload] staging ${slug} failed: ${err && err.message}`);
     return refuse(res, 500, 'NOT_PERMITTED', 'That upload could not be staged.',
-      'Try again in a moment. If it keeps happening, tell Gio.', true);
+      'Try again with a new link. If it fails again, the assistant logs it with report_issue.', true);
   } finally {
     try { fs.unlinkSync(req.uploadPath); } catch { /* best-effort */ }
   }

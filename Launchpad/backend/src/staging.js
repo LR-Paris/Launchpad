@@ -821,7 +821,7 @@ function copyDatabaseDir(fromDir, destDir) {
   return { fileCount, bytes };
 }
 
-function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edits }) {
+function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edits, merge }) {
   const p = shopPaths(slug, shopsDir);
   recoverInterruptedApply(slug, shopsDir);
   if (!fs.existsSync(p.shopDir)) {
@@ -855,6 +855,7 @@ function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edi
       files: extracted.fileCount,
       bytes: extracted.bytes,
       ...(edits ? { edits } : {}),
+      ...(merge ? { merge } : {}),
       diff,
     };
     fs.writeFileSync(path.join(stagingDir, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -862,6 +863,113 @@ function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edi
   } catch (err) {
     fs.rmSync(stagingDir, { recursive: true, force: true });
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Merge uploads: a zip that adds to the catalog instead of replacing it.
+//
+// A replace zip has to hold the whole catalog. The people adding three
+// products rarely have the whole live folder, least of all after edit_catalog
+// changed it on the server, and a stale full copy quietly undoes those edits.
+// A merge zip holds only what changes: new product folders, a product's new
+// photos, one Design file. The server lays it over a copy of the live catalog
+// and stages the result, so the diff, the backup and apply_database work as
+// they do for a replace.
+//
+// The rules, in the order a person would guess them:
+//   - A file in the zip replaces the file at the same place.
+//   - A Photos folder in the zip replaces that Photos folder, so an old photo
+//     cannot outlive a new set. The same goes for Design/ShowcasePhotos.
+//   - Nothing the zip leaves out changes, and nothing is removed.
+//   - Inventory, Presets, Checkout and Orders in the zip are ignored. Stock,
+//     checkout settings and orders come from the live shop.
+// ---------------------------------------------------------------------------
+const MERGE_IGNORED = new Set([...CARRY_FORWARD, ...ALWAYS_LIVE]);
+const MERGE_TOP = new Set(['Design', 'ShopCollections']);
+
+function isPhotoSet(rel) {
+  const parts = rel.split('/');
+  return (parts.length === 4 && parts[0] === 'ShopCollections' && parts[3] === 'Photos')
+    || (parts.length === 2 && parts[0] === 'Design' && parts[1] === 'ShowcasePhotos');
+}
+
+function mergeOver(liveDb, zipDir, mergedDb) {
+  const tops = fs.readdirSync(zipDir, { withFileTypes: true }).filter((e) => !JUNK.has(e.name));
+  const stray = tops.filter((e) => !MERGE_TOP.has(e.name) && !MERGE_IGNORED.has(e.name)).map((e) => e.name);
+  if (stray.length) {
+    throw new PreflightError(
+      `A merge zip mirrors the DATABASE folder: ShopCollections/<collection>/<product>/..., or Design/.... `
+      + `This one has ${stray.slice(0, 3).map((n) => `"${n}"`).join(', ')} at the top.`);
+  }
+
+  // The live catalog, minus what apply carries forward from the live shop.
+  fs.cpSync(liveDb, mergedDb, {
+    recursive: true,
+    filter: (src) => !MERGE_IGNORED.has(path.relative(liveDb, src).split(path.sep)[0]),
+  });
+
+  const summary = { products_added: [], products_updated: [], photo_sets_replaced: 0, files_written: 0, ignored: [] };
+  const touched = new Set();
+  const walk = (dir, rel) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (JUNK.has(entry.name)) continue;
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+      const top = childRel.split('/')[0];
+      if (MERGE_IGNORED.has(top)) {
+        if (!summary.ignored.includes(top)) summary.ignored.push(top);
+        continue;
+      }
+      const from = path.join(dir, entry.name);
+      const to = path.join(mergedDb, ...childRel.split('/'));
+      const parts = childRel.split('/');
+      if (entry.isDirectory()) {
+        if (isPhotoSet(childRel)) {
+          fs.rmSync(to, { recursive: true, force: true });
+          summary.photo_sets_replaced += 1;
+        }
+        fs.mkdirSync(to, { recursive: true });
+        if (parts[0] === 'ShopCollections' && parts.length === 3) touched.add(`${parts[1]}/${parts[2]}`);
+        walk(from, childRel);
+      } else if (entry.isFile()) {
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.copyFileSync(from, to);
+        summary.files_written += 1;
+        if (parts[0] === 'ShopCollections' && parts.length >= 4) touched.add(`${parts[1]}/${parts[2]}`);
+      }
+    }
+  };
+  walk(zipDir, '');
+  summary.ignored.sort();
+  if (!summary.files_written) {
+    throw new PreflightError('That zip adds nothing: every file in it sits in a folder the shop keeps live (Inventory, Presets, Checkout or Orders).');
+  }
+
+  const liveCollections = path.join(liveDb, 'ShopCollections');
+  for (const key of [...touched].sort()) {
+    const [collection, folder] = key.split('/');
+    if (fs.existsSync(path.join(liveCollections, collection, folder))) summary.products_updated.push(key);
+    else summary.products_added.push(key);
+  }
+  return summary;
+}
+
+function stageMerge({ slug, zipPath, userId, ticketId, shopsDir }) {
+  const p = shopPaths(slug, shopsDir);
+  recoverInterruptedApply(slug, shopsDir);
+  if (!fs.existsSync(p.live)) {
+    throw new PreflightError(`"${slug}" has no catalog yet, so there is nothing to add to. Upload the whole DATABASE with a replace link instead.`);
+  }
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-merge-'));
+  try {
+    const zipDir = path.join(work, 'zip');
+    extractZip(zipPath, zipDir);
+    const merged = path.join(work, 'DATABASE');
+    const merge = mergeOver(p.live, zipDir, merged);
+    const result = stageDatabase({ slug, fromDir: merged, userId, ticketId, shopsDir, merge });
+    return { ...result, merge };
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -1406,7 +1514,12 @@ router.post('/:slug/database/stage', guardShop, requireRole('editor'), async (re
   }
   if (row.staging_id) {
     const meta = getStaging({ slug, stagingId: row.staging_id });
-    if (meta) return res.json({ shop: slug, staging_id: meta.staging_id, diff: meta.diff });
+    if (meta) {
+      return res.json({
+        shop: slug, staging_id: meta.staging_id, diff: meta.diff,
+        ...(meta.merge ? { mode: 'merge', merge: meta.merge } : {}),
+      });
+    }
   }
   if (!row.upload_path || !fs.existsSync(row.upload_path)) {
     return refuse(res, 400, 'PREFLIGHT_FAILED', 'Nothing was uploaded against that ticket, or the upload has already been cleaned up.',
@@ -1417,8 +1530,11 @@ router.post('/:slug/database/stage', guardShop, requireRole('editor'), async (re
     // withShopLock is async. Without the await, `result` is a Promise, the
     // spread below produces an empty object and the staged upload is recorded
     // with an undefined id while the work is still running.
+    const merge = row.mode === 'merge';
     const result = await withShopLock(slug, req.session.user.id, 'stage_database', () => (
-      stageDatabase({ slug, zipPath: row.upload_path, userId: row.user_id, ticketId: row.id })
+      merge
+        ? stageMerge({ slug, zipPath: row.upload_path, userId: row.user_id, ticketId: row.id })
+        : stageDatabase({ slug, zipPath: row.upload_path, userId: row.user_id, ticketId: row.id })
     ));
     require('./upload-ticket').recordStaging(row.id, result.staging_id);
     recordStagingRow({ stagingId: result.staging_id, slug, userId: row.user_id, ticketId: row.id, diff: result.diff });
@@ -1426,7 +1542,10 @@ router.post('/:slug/database/stage', guardShop, requireRole('editor'), async (re
       shop_slug: slug, staging_id: result.staging_id,
       blocking: result.diff.blocking.length, warnings: result.diff.warnings.length,
     });
-    return res.json({ shop: slug, staging_id: result.staging_id, diff: result.diff, audit_id });
+    return res.json({
+      shop: slug, staging_id: result.staging_id, diff: result.diff,
+      ...(merge ? { mode: 'merge', merge: result.merge } : {}), audit_id,
+    });
   } catch (err) {
     return handleFailure(res, slug, err);
   }
@@ -1541,6 +1660,7 @@ module.exports = {
   router,
   // pipeline
   stageDatabase,
+  stageMerge,
   stageEdits,
   applyDatabase,
   rollbackDatabase,

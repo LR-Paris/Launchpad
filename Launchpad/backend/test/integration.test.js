@@ -462,6 +462,21 @@ async function main() {
     ok('every suggestion says why and what to do next',
       (health.json?.suggestions || []).every((sg) => typeof sg.why === 'string' && typeof sg.do === 'string'),
       JSON.stringify(health.json?.suggestions?.[0]));
+    {
+      // Shuttle versions are platform upkeep. Over the connector an old build
+      // reads as information, and no suggestion sends anyone to Gio.
+      const versionFile = path.join(serhantDir, 'lib', 'version.ts');
+      const savedVersion = fs.readFileSync(versionFile);
+      fs.rmSync(versionFile);
+      const oldBuild = await callMcp(newUser, 'GET', '/api/shops/serhant/health');
+      fs.writeFileSync(versionFile, savedVersion);
+      const legacyCheck = (oldBuild.json?.checks || []).find((c) => c.id === 'legacy');
+      ok('over the connector, an old Shuttle build reads as information',
+        legacyCheck && legacyCheck.ok === true && legacyCheck.info === true, JSON.stringify(legacyCheck));
+      ok('and no suggestion sends anyone to Gio',
+        !(oldBuild.json?.suggestions || []).some((sg) => /Gio/.test(`${sg.do} ${sg.why}`)),
+        JSON.stringify(oldBuild.json?.suggestions));
+    }
 
     // ---------------------------------------------------------------------
     // 7. The DATABASE round trip: ticket, upload, stage, apply, roll back
@@ -620,6 +635,56 @@ async function main() {
       JSON.stringify(ceBadColor.json));
     const ceBadKey = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { password: 'x' } } });
     ok('a setting it does not manage is refused', ceBadKey.status === 400, JSON.stringify(ceBadKey.json));
+
+    // ---------------------------------------------------------------------
+    // 7d. Merge uploads: a zip of only what changes, laid over the live catalog
+    // ---------------------------------------------------------------------
+    const toteDir = path.join(serhantDir, 'DATABASE', 'ShopCollections', 'Spring', 'Tote');
+    fs.mkdirSync(path.join(toteDir, 'Photos'), { recursive: true });
+    fs.writeFileSync(path.join(toteDir, 'Photos', 'old.jpg'), 'old-photo');
+    const mgTicket = await callMcp(newUser, 'POST', '/api/shops/serhant/database/upload-ticket', { body: { mode: 'merge' } });
+    eq('an editor can ask for a merge link', mgTicket.status, 200);
+    eq('the link says it merges', mgTicket.json?.mode, 'merge');
+    const mgPage = await (await fetch(`${BASE}/api/upload/${mgTicket.json?.ticket}`)).text();
+    ok('the page says it adds to the catalog', /Add to the catalog for serhant/.test(mgPage), mgPage.slice(0, 300));
+    const mgZip = new AdmZip();
+    mgZip.addFile('DATABASE/ShopCollections/Spring/Scarf/Details/Name.txt', Buffer.from('Scarf'));
+    mgZip.addFile('DATABASE/ShopCollections/Spring/Scarf/Details/SKU.txt', Buffer.from('SCARF-9'));
+    mgZip.addFile('DATABASE/ShopCollections/Spring/Scarf/Photos/main.jpg', Buffer.from('jpeg'));
+    mgZip.addFile('DATABASE/ShopCollections/Spring/Tote/Photos/main.jpg', Buffer.from('new-photo'));
+    mgZip.addFile('DATABASE/Inventory/inventory.csv', Buffer.from('sku,stock\nSCARF-9,999\n'));
+    const mgUpload = await fetch(`${BASE}/api/upload/${mgTicket.json?.ticket}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: mgZip.toBuffer(),
+    });
+    const mgJson = await mgUpload.json();
+    eq('a merge upload stages', mgUpload.status, 200);
+    eq('and says it merged', mgJson.mode, 'merge');
+    eq('the new product is added', JSON.stringify(mgJson.merge?.products_added), JSON.stringify(['Spring/Scarf']));
+    eq('the product it touched is updated', JSON.stringify(mgJson.merge?.products_updated), JSON.stringify(['Spring/Tote']));
+    eq('stock in the zip is ignored', JSON.stringify(mgJson.merge?.ignored), JSON.stringify(['Inventory']));
+    eq('nothing is removed', (mgJson.diff?.products?.removed || []).length, 0);
+    const mgStage = await callMcp(newUser, 'POST', '/api/shops/serhant/database/stage', { body: { ticket: mgTicket.json?.ticket } });
+    eq('stage_database on a merge ticket returns the same staging', mgStage.json?.staging_id, mgJson.staging_id);
+    eq('and says it merged', mgStage.json?.mode, 'merge');
+    const mgApply = await callMcp(newUser, 'POST', '/api/shops/serhant/database/apply', { body: { staging_id: mgJson.staging_id } });
+    eq('a merge applies like any staging', mgApply.status, 200);
+    eq('the live product stays and the new one joins it',
+      fs.readdirSync(path.join(serhantDir, 'DATABASE', 'ShopCollections', 'Spring')).sort().join(','), 'Scarf,Tote');
+    eq('the SKU changed on the server survives the merge', fs.readFileSync(ceSku, 'utf8').trim(), 'TOTE-2');
+    eq('a Photos folder in the zip replaces that set', fs.readdirSync(path.join(toteDir, 'Photos')).join(','), 'main.jpg');
+    ok('the settings applied earlier are still there', /mainPrice: unit/.test(fs.readFileSync(path.join(designDir, 'Style.txt'), 'utf8')));
+    const mgBadMode = await callMcp(newUser, 'POST', '/api/shops/serhant/database/upload-ticket', { body: { mode: 'append' } });
+    ok('an unknown mode is refused', mgBadMode.status === 400 && mgBadMode.json?.error?.code === 'PREFLIGHT_FAILED', JSON.stringify(mgBadMode.json));
+    const mgTicket2 = await callMcp(newUser, 'POST', '/api/shops/serhant/database/upload-ticket', { body: { mode: 'merge' } });
+    const strayZip = new AdmZip();
+    strayZip.addFile('Gloves/Details/SKU.txt', Buffer.from('GLOVE-1'));
+    strayZip.addFile('Gloves/Photos/main.jpg', Buffer.from('jpeg'));
+    const stray = await fetch(`${BASE}/api/upload/${mgTicket2.json?.ticket}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: strayZip.toBuffer(),
+    });
+    const strayJson = await stray.json();
+    ok('a merge zip that does not mirror the DATABASE is refused, and says the layout',
+      stray.status === 400 && /ShopCollections/.test(strayJson.error?.message || ''), JSON.stringify(strayJson));
 
     // ---------------------------------------------------------------------
     // 7c. report_issue: a platform problem goes to the queue, not to Gio

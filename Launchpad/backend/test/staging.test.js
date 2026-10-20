@@ -766,5 +766,88 @@ test('a rollback restores the catalog and keeps orders placed since the backup',
   assert.deepStrictEqual(rolled.kept_live, ['Orders']);
 });
 
+// ---------------------------------------------------------------------------
+// Merge uploads
+// ---------------------------------------------------------------------------
+
+console.log('\nmerge uploads');
+
+test('a merge adds new products and removes nothing', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [
+    { collection: 'Core', folder: 'Mug', sku: 'A1' },
+    { collection: 'Core', folder: 'Cap', sku: 'C1' },
+  ]);
+  const zipPath = makeZip({
+    'ShopCollections/Core/Tote/Details/Name.txt': 'Tote',
+    'ShopCollections/Core/Tote/Details/SKU.txt': 'T1',
+    'ShopCollections/Core/Tote/Photos/main.jpg': 'jpeg',
+  }, path.join(workspace, 'add.zip'));
+  const staged = staging.stageMerge({ slug: 'demox', zipPath, shopsDir });
+  assert.deepStrictEqual(staged.merge.products_added, ['Core/Tote']);
+  assert.deepStrictEqual(staged.merge.products_updated, []);
+  assert.strictEqual(staged.diff.products.removed.length, 0, JSON.stringify(staged.diff.products));
+  assert.strictEqual(staged.diff.blocking.length, 0, staged.diff.blocking.join(' | '));
+  staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  const core = fs.readdirSync(path.join(shopsDir, 'demox', 'DATABASE', 'ShopCollections', 'Core')).sort();
+  assert.deepStrictEqual(core, ['Cap', 'Mug', 'Tote']);
+});
+
+test('a Photos folder in a merge replaces that set, and the details stay', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }], {
+    'DATABASE/ShopCollections/Core/Mug/Photos/2.jpg': 'old-second',
+  });
+  const zipPath = makeZip({ 'DATABASE/ShopCollections/Core/Mug/Photos/main.png': 'new-main' }, path.join(workspace, 'photos.zip'));
+  const staged = staging.stageMerge({ slug: 'demox', zipPath, shopsDir });
+  assert.deepStrictEqual(staged.merge.products_updated, ['Core/Mug']);
+  assert.strictEqual(staged.merge.photo_sets_replaced, 1);
+  staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  const mug = path.join(shopsDir, 'demox', 'DATABASE', 'ShopCollections', 'Core', 'Mug');
+  assert.deepStrictEqual(fs.readdirSync(path.join(mug, 'Photos')), ['main.png']);
+  assert.strictEqual(fs.readFileSync(path.join(mug, 'Details', 'SKU.txt'), 'utf8'), 'A1');
+});
+
+test('a merge keeps live stock and orders, whatever the zip carries', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }], {
+    'DATABASE/Inventory/inventory.csv': 'sku,stock\nA1,12\n',
+    'DATABASE/Orders/orders.csv': 'Order ID\nO-1\n',
+  });
+  const zipPath = makeZip({
+    'Design/Details/CompanyName.txt': 'New Name\n',
+    'Inventory/inventory.csv': 'sku,stock\nA1,0\n',
+    'Orders/orders.csv': 'Order ID\n',
+  }, path.join(workspace, 'design.zip'));
+  const staged = staging.stageMerge({ slug: 'demox', zipPath, shopsDir });
+  assert.deepStrictEqual(staged.merge.ignored, ['Inventory', 'Orders']);
+  staging.applyDatabase({ slug: 'demox', stagingId: staged.staging_id, shopsDir });
+  const live = path.join(shopsDir, 'demox', 'DATABASE');
+  assert.strictEqual(fs.readFileSync(path.join(live, 'Inventory', 'inventory.csv'), 'utf8'), 'sku,stock\nA1,12\n');
+  assert.strictEqual(fs.readFileSync(path.join(live, 'Orders', 'orders.csv'), 'utf8'), 'Order ID\nO-1\n');
+  assert.strictEqual(fs.readFileSync(path.join(live, 'Design', 'Details', 'CompanyName.txt'), 'utf8'), 'New Name\n');
+});
+
+test('a merge zip that does not mirror the DATABASE is refused', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }]);
+  const zipPath = makeZip({
+    'Tote/Details/SKU.txt': 'T1',
+    'Tote/Photos/main.jpg': 'jpeg',
+  }, path.join(workspace, 'stray.zip'));
+  expectPreflight(() => staging.stageMerge({ slug: 'demox', zipPath, shopsDir }), 'ShopCollections');
+  const stagings = path.join(shopsDir, 'demox', '.staging');
+  assert.ok(!fs.existsSync(stagings) || fs.readdirSync(stagings).length === 0, 'a refused merge left a staging behind');
+});
+
+test('a merge on a shop with no catalog says to upload the whole DATABASE', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', null);
+  const zipPath = makeZip({ 'ShopCollections/Core/Tote/Details/SKU.txt': 'T1' }, path.join(workspace, 'first.zip'));
+  expectPreflight(() => staging.stageMerge({ slug: 'demox', zipPath, shopsDir }), 'whole DATABASE');
+});
+
+test('a merge still goes through the zip hardening', (workspace) => {
+  const shopsDir = makeShop(workspace, 'demox', [{ collection: 'Core', folder: 'Mug', sku: 'A1' }]);
+  const zipPath = makeZip({ 'ShopCollections/../../escape.txt': 'x' }, path.join(workspace, 'slip.zip'));
+  expectPreflight(() => staging.stageMerge({ slug: 'demox', zipPath, shopsDir }));
+  assert.ok(!fs.existsSync(path.join(shopsDir, 'escape.txt')));
+});
+
 console.log(`\n${passed} passed, ${failures} failed\n`);
 process.exit(failures ? 1 : 0);

@@ -522,7 +522,7 @@ async function buildChecks(shop) {
     sts.legacy
       ? 'There is no lib/version.ts, so this shop predates the Shuttle template. Template tools will not work on it.'
       : `Shop reports ${sts.version || 'an unreadable version'}.`,
-    sts.legacy ? ['Ask Gio to rebuild this shop from the current Shuttle template, or leave it as it is and edit it by hand.'] : [],
+    sts.legacy ? ['Rebuild this shop from the current Shuttle template, or leave it as it is and edit it by hand.'] : [],
     null, 'owner',
     { shop_version: sts.version },
   ));
@@ -559,7 +559,7 @@ async function buildChecks(shop) {
         : `This shop is on ${sts.version}, which is current.`,
       // Moving a shop to a newer Shuttle rebuilds it from the template, which is
       // Gio's job on the server. No tool does it, and none should pretend to.
-      behind ? [`Ask Gio to move this shop to ${latest}, then check the storefront once it has rebuilt.`] : [],
+      behind ? [`Update this shop to ${latest} from the Launchpad console, then check the storefront once it has rebuilt.`] : [],
       null, 'owner',
       { shop_version: sts.version, latest_version: latest }));
   }
@@ -607,6 +607,23 @@ function readyForReview(slug) {
 // resolveShopAndRole + requireShopAccess('viewer') are applied by the shop
 // scope mounted ahead of this router in index.js.
 // ---------------------------------------------------------------------------
+// Shuttle versions are platform upkeep. Nobody outside the admin console can
+// act on them, and a red check there sent every assistant to Gio with "move
+// this shop to the newest Shuttle". Outside the console they read as
+// information: the check passes, keeps its numbers, and has no next step.
+const PLATFORM_CHECKS = new Set(['legacy', 'sts_current']);
+
+function asPlatformInfo(c) {
+  if (c.ok || !PLATFORM_CHECKS.has(c.id)) return c;
+  return {
+    ...c,
+    ok: true,
+    info: true,
+    why: `${c.why} The platform team moves shops to new Shuttle versions, so there is nothing to do here.`,
+    how: [],
+  };
+}
+
 router.get('/:slug/health', async (req, res) => {
   const shop = req.shop;
   if (!shop) {
@@ -617,6 +634,7 @@ router.get('/:slug/health', async (req, res) => {
   let checks;
   try {
     checks = await buildChecks(shop);
+    if (!req.isAdminBypass) checks = checks.map(asPlatformInfo);
   } catch (err) {
     console.error(`[health] ${shop.slug} failed: ${err.message}`);
     return refuse(res, 500, 'NOT_PERMITTED', 'The health check could not finish.',
@@ -676,4 +694,4 @@ module.exports.router = router;
 module.exports.STAGES = STAGES;
 module.exports.MCP_TOOLS = MCP_TOOLS;
 module.exports.VARIANT_RE = VARIANT_RE;
-module.exports._internals = { scanCollections, lonelyVariants, countUnfulfilled, readShopSts, parseStsVersion, compareVersions, latestSts };
+module.exports._internals = { scanCollections, lonelyVariants, countUnfulfilled, readShopSts, parseStsVersion, compareVersions, latestSts, asPlatformInfo };

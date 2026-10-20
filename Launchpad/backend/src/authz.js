@@ -70,9 +70,14 @@ function _useDatabases({ users, shops }) {
 // The refusal payload. Identical everywhere, because the MCP server and the
 // plugin both parse it and neither should need a special case.
 // ---------------------------------------------------------------------------
+// Over the connector, a fault names the issue queue instead of a person.
+// mcp-wording.js says why. The web console keeps its own wording.
+const { forConnector } = require('./mcp-wording');
+
 function refuse(res, status, code, message, resolution, possible = false) {
+  const viaConnector = !!(res && res.req && res.req.via === 'mcp');
   return res.status(status).json({
-    error: { code, message, resolution, possible: !!possible },
+    error: { code, message, resolution: viaConnector ? forConnector(resolution) : resolution, possible: !!possible },
   });
 }
 

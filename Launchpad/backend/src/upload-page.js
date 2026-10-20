@@ -88,10 +88,15 @@ ${stagingId
 <p>Check that the whole address was copied. Otherwise, ask your assistant for a new link.</p>`);
 }
 
-function readyPage({ slug, expiresAt, maxBytes }) {
+function readyPage({ slug, expiresAt, maxBytes, mode }) {
   const maxMb = Math.round(maxBytes / 1024 / 1024);
+  const merge = mode === 'merge';
+  const heading = merge ? `Add to the catalog for ${esc(slug)}` : `Upload the DATABASE for ${esc(slug)}`;
+  const hint = merge
+    ? `Zip only what changes, in the same folders as the DATABASE: ShopCollections, then the collection, then the product. Up to ${maxMb} MB. Nothing on the shop is removed, and nothing changes until someone reviews the changes and applies them.`
+    : `Zip the whole DATABASE folder, up to ${maxMb} MB. It replaces the catalog. Nothing on the shop changes until someone reviews the changes and applies them.`;
   const body = `
-<h1>Upload the DATABASE for ${esc(slug)}</h1>
+<h1>${heading}</h1>
 <p class="muted">This link takes one zip and works until <span id="expiry">${esc(new Date(expiresAt).toISOString())}</span>.</p>
 
 <div id="pick">
@@ -101,7 +106,7 @@ function readyPage({ slug, expiresAt, maxBytes }) {
     <button type="button" id="choose">Choose a zip</button>
     <input type="file" id="file" accept=".zip,application/zip" class="hidden">
   </div>
-  <p class="muted">Zip the whole DATABASE folder, up to ${maxMb} MB. Nothing on the shop changes until someone reviews the changes and applies them.</p>
+  <p class="muted">${hint}</p>
 </div>
 
 <div id="progress" class="hidden" aria-live="polite">
@@ -209,7 +214,11 @@ function readyPage({ slug, expiresAt, maxBytes }) {
     done.appendChild(el('h1', blocking.length ? 'bad' : 'ok', blocking.length ? 'Uploaded, but it cannot be applied yet' : 'Uploaded'));
     done.appendChild(el('p', '', 'Nothing on the shop changed yet.'));
     var counts = el('div', 'counts');
-    [['added', p.added], ['removed', p.removed], ['renamed', p.renamed]].forEach(function (c) {
+    var m = data.merge;
+    var rows = m
+      ? [['added', m.products_added], ['updated', m.products_updated]]
+      : [['added', p.added], ['removed', p.removed], ['renamed', p.renamed]];
+    rows.forEach(function (c) {
       var box = el('div');
       box.appendChild(el('b', '', String((c[1] || []).length)));
       box.appendChild(document.createTextNode('products ' + c[0]));
@@ -235,7 +244,7 @@ function readyPage({ slug, expiresAt, maxBytes }) {
 })();
 </script>`;
 
-  return shell(`Upload the DATABASE for ${slug}`, body, script);
+  return shell(merge ? `Add to the catalog for ${slug}` : `Upload the DATABASE for ${slug}`, body, script);
 }
 
 function uploadPage(opts) {
