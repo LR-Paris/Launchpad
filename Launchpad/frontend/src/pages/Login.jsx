@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { requestLoginCode, verifyLoginCode, getAuthConfig, resetCsrfToken } from '../lib/api';
 import TurnstileWidget from '../components/TurnstileWidget';
 import { loginWithPasskey, passkeySupported, listPasskeys, registerPasskey } from '../lib/passkey';
+import { ssoNext } from '../lib/sso';
 import { Rocket, ArrowLeft, Mail, ShieldCheck, KeyRound, Fingerprint } from 'lucide-react';
 
 // The backend renews the session on every visit, so each choice counts from the
@@ -59,6 +60,9 @@ export default function Login() {
   const [turnstileReset, setTurnstileReset] = useState(0);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Set when another LR Paris app sent the person here to sign in
+  // (lib/sso.js). After sign in the page goes back there instead of to '/'.
+  const sso = ssoNext(useLocation().search);
 
   useEffect(() => {
     getAuthConfig()
@@ -100,8 +104,10 @@ export default function Login() {
       resetCsrfToken(); // the session is new, so is its CSRF token
       // Signed in. Before going in, offer a passkey if this browser can hold
       // one and the account has none yet. Setting the auth data is what leaves
-      // this page, so it waits until the offer is answered.
-      if (await shouldOfferPasskey()) {
+      // this page, so it waits until the offer is answered. Someone on their
+      // way back to another app goes straight there; the offer can wait for
+      // their next sign-in on Launchpad itself.
+      if (!sso && await shouldOfferPasskey()) {
         setSignedIn(data);
         setStep('passkey-offer');
         return;
@@ -124,6 +130,10 @@ export default function Login() {
   };
 
   const finishSignIn = (data) => {
+    if (sso) {
+      window.location.assign(sso);
+      return;
+    }
     queryClient.setQueryData(['auth'], data);
     navigate('/');
   };
@@ -190,6 +200,11 @@ export default function Login() {
             <p className="text-xs text-muted-foreground">
               Enter your username or email. We'll send a sign-in code to your email.
             </p>
+            {sso && (
+              <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
+                After you sign in, you go back to the app that sent you here.
+              </p>
+            )}
             <div>
               <label className="block text-xs font-medium mb-1.5 text-muted-foreground" htmlFor="identifier">
                 Username or Email
