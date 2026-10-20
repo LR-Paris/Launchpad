@@ -563,6 +563,68 @@ async function main() {
       (trail.json?.entries || []).some((e) => e.id === apply.json.audit_id));
 
     // ---------------------------------------------------------------------
+    // 7b. edit_catalog: a field change with no zip, staged and applied
+    // ---------------------------------------------------------------------
+    const ceSku = path.join(serhantDir, 'DATABASE', 'ShopCollections', 'Spring', 'Tote', 'Details', 'SKU.txt');
+    const ceEdit = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
+      body: { edits: [{ product: 'spring-tote', set: { sku: 'TOTE-2', box_cost: '$1,200' } }] },
+    });
+    eq('an editor can stage a field edit without a zip', ceEdit.status, 200);
+    ok('it comes back as a staging id', typeof ceEdit.json?.staging_id === 'string', JSON.stringify(ceEdit.json).slice(0, 300));
+    eq('with every change, from and to', JSON.stringify(ceEdit.json?.edits), JSON.stringify([
+      { product: 'spring-tote', field: 'sku', from: 'TOTE-1', to: 'TOTE-2' },
+      { product: 'spring-tote', field: 'box_cost', from: '', to: '1200.00' },
+    ]));
+    ok('and the diff an upload gets', Array.isArray(ceEdit.json?.diff?.blocking) && ceEdit.json.diff.blocking.length === 0,
+      JSON.stringify(ceEdit.json?.diff).slice(0, 300));
+    eq('the live file is untouched until apply', fs.readFileSync(ceSku, 'utf8').trim(), 'TOTE-1');
+    const ceApply = await callMcp(newUser, 'POST', '/api/shops/serhant/database/apply', {
+      body: { staging_id: ceEdit.json?.staging_id },
+    });
+    eq('the edit applies like any staging', ceApply.status, 200);
+    eq('and the new SKU is live', fs.readFileSync(ceSku, 'utf8').trim(), 'TOTE-2');
+    const ceBad = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
+      body: { edits: [{ product: 'spring-nope', set: { sku: 'X-1' } }] },
+    });
+    eq('an unknown product is refused', ceBad.status, 400);
+    eq('with a code an agent can act on', ceBad.json?.error?.code, 'PREFLIGHT_FAILED');
+    const ceNoop = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
+      body: { edits: [{ product: 'Spring/Tote', set: { sku: 'TOTE-2' } }] },
+    });
+    eq('an edit that changes nothing is refused, by path too', ceNoop.status, 400);
+    const ceBadField = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
+      body: { edits: [{ product: 'spring-tote', set: { colour: 'red' } }] },
+    });
+    ok('an unknown field says which fields exist', ceBadField.status === 400 && /units_per_box/.test(ceBadField.json?.error?.message || ''),
+      JSON.stringify(ceBadField.json));
+
+    // ---------------------------------------------------------------------
+    // 7c. report_issue: a platform problem goes to the queue, not to Gio
+    // ---------------------------------------------------------------------
+    const issRep = await callMcp(newUser, 'POST', '/api/issues', {
+      body: { title: 'Upload link opens a 404', details: 'Opened the link in a browser.', shop_slug: 'serhant', tool: 'request_upload', error_code: 'TICKET_INVALID' },
+    });
+    eq('anyone signed in can report a platform problem', issRep.status, 200);
+    ok('the report gets a number', Number.isInteger(issRep.json?.issue_id), JSON.stringify(issRep.json));
+    ok('and the agent is told to carry on', /Carry on/.test(issRep.json?.next || ''));
+    ok('the report is audited', Number.isInteger(issRep.json?.audit_id));
+    const issAgain = await callMcp(newUser, 'POST', '/api/issues', { body: { title: 'Upload link opens a 404', shop_slug: 'serhant' } });
+    eq('the same report twice in an hour stays one report', issAgain.json?.issue_id, issRep.json?.issue_id);
+    const issMine = await callMcp(newUser, 'GET', '/api/issues');
+    ok('the reporter sees it', (issMine.json?.issues || []).some((i) => i.issue_id === issRep.json?.issue_id), JSON.stringify(issMine.json));
+    const issOwner = await callMcp(7, 'GET', '/api/issues');
+    ok('an owner of the shop sees it', (issOwner.json?.issues || []).some((i) => i.issue_id === issRep.json?.issue_id),
+      JSON.stringify(issOwner.json));
+    const issOutsider = await callMcp(2, 'GET', '/api/issues');
+    ok('someone who does not own the shop does not', !(issOutsider.json?.issues || []).some((i) => i.issue_id === issRep.json?.issue_id),
+      JSON.stringify(issOutsider.json));
+    const issClose = await callMcp(7, 'POST', `/api/issues/${issRep.json?.issue_id}/resolve`, { body: { resolution: 'Upload links open a page now.' } });
+    eq('an owner can close it', issClose.json?.status, 'resolved');
+    const issClosed = await callMcp(newUser, 'GET', '/api/issues', { query: { status: 'resolved' } });
+    ok('and it reads back as resolved, with what fixed it',
+      (issClosed.json?.issues || []).some((i) => i.issue_id === issRep.json?.issue_id && /page now/.test(i.resolution)));
+
+    // ---------------------------------------------------------------------
     // 8. The cap that the whole ADR rests on
     // ---------------------------------------------------------------------
     // Rachael is an owner but not an admin.

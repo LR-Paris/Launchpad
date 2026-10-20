@@ -460,6 +460,11 @@ app.use('/api/shops', analyticsTrackRouter);
 // written to disk.
 app.use('/api/upload', uploadRouter);
 
+// Platform problem reports from the connector and the web. Any signed-in
+// person may report. Reading is scoped inside the router: your own reports,
+// plus every report on a shop you own.
+app.use('/api/issues', requireAuth, csrfProtection, require('./issues').router);
+
 // Client site review — a token in the URL is the only credential, so this
 // cannot sit behind requireAuth. golive.js applies its own read and write rate
 // limiters and every response is scoped to the one shop the token points at.

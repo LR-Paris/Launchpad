@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const AdmZip = require('adm-zip');
 // Reading an entry's bytes with a hard output cap, instead of believing the
 // size the zip declares about itself. See safe-zip.js.
@@ -803,7 +804,24 @@ function resolveStagingDir({ slug, stagingId, shopsDir }) {
 
 // stage_database: unzip into shops/<slug>/.staging/<id>/, validate, return the
 // diff. NEVER into the live DATABASE.
-function stageDatabase({ slug, zipPath, userId, ticketId, shopsDir }) {
+// Copy a prepared DATABASE folder into a staging, with the counts extractZip
+// reports for a zip. Used by stageEdits, which builds its folder on the server.
+function copyDatabaseDir(fromDir, destDir) {
+  fs.cpSync(fromDir, destDir, { recursive: true });
+  let fileCount = 0;
+  let bytes = 0;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) { fileCount += 1; bytes += fs.statSync(full).size; }
+    }
+  };
+  walk(destDir);
+  return { fileCount, bytes };
+}
+
+function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edits }) {
   const p = shopPaths(slug, shopsDir);
   recoverInterruptedApply(slug, shopsDir);
   if (!fs.existsSync(p.shopDir)) {
@@ -821,7 +839,7 @@ function stageDatabase({ slug, zipPath, userId, ticketId, shopsDir }) {
   fs.mkdirSync(stagingDir, { recursive: true });
 
   try {
-    const extracted = extractZip(zipPath, stagedDb);
+    const extracted = fromDir ? copyDatabaseDir(fromDir, stagedDb) : extractZip(zipPath, stagedDb);
     const oldModel = scanDatabase(p.live);
     const newModel = scanDatabase(stagedDb);
     const willBackupTo = path.posix.join('shops', slug, '.backups', `${backupStamp(now)}.zip`);
@@ -836,6 +854,7 @@ function stageDatabase({ slug, zipPath, userId, ticketId, shopsDir }) {
       backup_id: `${backupStamp(now)}.zip`,
       files: extracted.fileCount,
       bytes: extracted.bytes,
+      ...(edits ? { edits } : {}),
       diff,
     };
     fs.writeFileSync(path.join(stagingDir, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -843,6 +862,119 @@ function stageDatabase({ slug, zipPath, userId, ticketId, shopsDir }) {
   } catch (err) {
     fs.rmSync(stagingDir, { recursive: true, force: true });
     throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// edit_catalog: field edits to products that already exist, staged like an
+// upload. The caller names a product and the fields to change. The server
+// copies the live catalog, writes the fields and stages that copy, so the
+// change gets the same diff, the same backup and the same apply_database as
+// a zip. Nobody has to build or move a file, which is where people got stuck.
+// ---------------------------------------------------------------------------
+const EDIT_FILES = {
+  name: 'Name.txt',
+  sku: 'SKU.txt',
+  description: 'Description.txt',
+  item_cost: 'ItemCost.txt',
+  box_cost: 'BoxCost.txt',
+  units_per_box: 'UnitsPerBox.txt',
+};
+const MAX_EDITS = 300;
+
+function editError(message) {
+  const err = new Error(message);
+  err.code = 'PREFLIGHT_FAILED';
+  return err;
+}
+
+function normalizeEditValue(field, value) {
+  if (field === 'hidden') {
+    if (typeof value !== 'boolean') throw editError('hidden is true or false.');
+    return value;
+  }
+  if (field === 'item_cost' || field === 'box_cost') {
+    const n = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
+    if (!Number.isFinite(n) || n < 0 || n > 10000000) throw editError(`${field} is a price in dollars, for example 46.33.`);
+    return n.toFixed(2);
+  }
+  if (field === 'units_per_box') {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 1000000) throw editError('units_per_box is a whole number, 1 or more.');
+    return String(n);
+  }
+  if (!Object.prototype.hasOwnProperty.call(EDIT_FILES, field)) {
+    throw editError(`"${field}" is not a field edit_catalog changes. Use name, sku, description, item_cost, box_cost, units_per_box or hidden.`);
+  }
+  const text = String(value ?? '').replace(/\r\n?/g, '\n').trim();
+  if (field === 'description') {
+    if (text.length > 5000) throw editError('description is at most 5,000 characters.');
+    return text;
+  }
+  if (!text || text.includes('\n') || text.length > 120) throw editError(`${field} is one line of 1 to 120 characters.`);
+  return text;
+}
+
+function stageEdits({ slug, userId, edits, shopsDir }) {
+  const p = shopPaths(slug, shopsDir);
+  recoverInterruptedApply(slug, shopsDir);
+  if (!fs.existsSync(p.live)) throw editError(`"${slug}" has no catalog yet. Upload a DATABASE first.`);
+  if (!Array.isArray(edits) || !edits.length) throw editError('Name at least one product to change.');
+  if (edits.length > MAX_EDITS) throw editError(`At most ${MAX_EDITS} products in one change. Split it.`);
+
+  const model = scanDatabase(p.live);
+  const byId = new Map();
+  for (const product of model.products.values()) byId.set(product.productId, product);
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-edit-'));
+  try {
+    const db = path.join(work, 'DATABASE');
+    // Inventory, Presets and Checkout carry forward from the live shop at
+    // apply, and Orders always stay live, so they stay out of the copy.
+    fs.cpSync(p.live, db, {
+      recursive: true,
+      filter: (src) => {
+        const top = path.relative(p.live, src).split(path.sep)[0];
+        return !(CARRY_FORWARD.includes(top) || top === 'Orders');
+      },
+    });
+
+    const changes = [];
+    for (const edit of edits) {
+      const ref = String((edit && edit.product) || '').trim();
+      const product = byId.get(ref) || model.products.get(ref);
+      if (!product) {
+        throw editError(`There is no product "${ref}" in ${slug}. Use a product id from get_inventory, or the Collection/Folder path.`);
+      }
+      const set = (edit && edit.set) || {};
+      const fields = Object.keys(set);
+      if (!fields.length) throw editError(`Nothing to change for "${ref}".`);
+      const details = path.join(db, 'ShopCollections', product.collection, product.folder, 'Details');
+      fs.mkdirSync(details, { recursive: true });
+      for (const field of fields) {
+        const value = normalizeEditValue(field, set[field]);
+        if (field === 'hidden') {
+          const file = path.join(details, 'Hidden.txt');
+          const from = readTrimmed(file).toLowerCase() === 'true';
+          if (from === value) continue;
+          if (value) fs.writeFileSync(file, 'true\n');
+          else fs.rmSync(file, { force: true });
+          changes.push({ product: product.productId, field, from, to: value });
+          continue;
+        }
+        const file = path.join(details, EDIT_FILES[field]);
+        const from = readTrimmed(file);
+        if (from === value) continue;
+        fs.writeFileSync(file, `${value}\n`);
+        changes.push({ product: product.productId, field, from, to: value });
+      }
+    }
+    if (!changes.length) throw editError('Every value is already what was asked for. There is nothing to stage.');
+
+    const result = stageDatabase({ slug, fromDir: db, userId, ticketId: null, shopsDir, edits: changes });
+    return { ...result, edits: changes };
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -1176,6 +1308,26 @@ router.post('/:slug/database/stage', guardShop, requireRole('editor'), async (re
   }
 });
 
+// POST /api/shops/:slug/catalog/edit  { edits: [{ product, set: { field: value } }] }
+router.post('/:slug/catalog/edit', guardShop, requireRole('editor'), async (req, res) => {
+  const { audit, withShopLock } = authz();
+  const { slug } = req.params;
+  const edits = (req.body || {}).edits;
+  try {
+    const result = await withShopLock(slug, req.session.user.id, 'edit_catalog', () => (
+      stageEdits({ slug, userId: req.session.user.id, edits })
+    ));
+    recordStagingRow({ stagingId: result.staging_id, slug, userId: req.session.user.id, ticketId: null, diff: result.diff });
+    const audit_id = audit(req, 'catalog_edit_staged', {
+      shop_slug: slug, staging_id: result.staging_id, edits: result.edits.length,
+      blocking: result.diff.blocking.length, warnings: result.diff.warnings.length,
+    });
+    return res.json({ shop: slug, staging_id: result.staging_id, edits: result.edits, diff: result.diff, audit_id });
+  } catch (err) {
+    return handleFailure(res, slug, err);
+  }
+});
+
 // GET /api/shops/:slug/database/stagings
 router.get('/:slug/database/stagings', requireRole('viewer'), (req, res) => {
   res.json({ shop: req.params.slug, stagings: listStagings({ slug: req.params.slug }) });
@@ -1262,6 +1414,7 @@ module.exports = {
   router,
   // pipeline
   stageDatabase,
+  stageEdits,
   applyDatabase,
   rollbackDatabase,
   listBackups,
