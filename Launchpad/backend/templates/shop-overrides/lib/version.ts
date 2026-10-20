@@ -17,7 +17,7 @@
  * a shop created with an incomplete copy of this file never comes up.
  * test/shop-overrides.test.js checks the list above.
  */
-export const VERSION = 'STS-4.3.1';
+export const VERSION = 'STS-4.4.0';
 
 export const VERSION_INFO = {
   name: 'Shop Template System',
@@ -25,7 +25,7 @@ export const VERSION_INFO = {
   codename: 'Beacon',
   releaseDate: '2026-10-20',
   description:
-    'Product photos. main.* is always the first photo of a product, and the rest follow in natural name order.',
+    'Unit price first. Style.txt mainPrice: unit shows the unit price large on product cards and the product page, and the box price under it.',
   attribution: 'Built with LR Paris Shuttle',
 };
 

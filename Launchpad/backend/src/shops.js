@@ -160,6 +160,19 @@ function syncShopVersion(shopDir, slug, templateVersion) {
   }
 }
 
+// The stage banner is a create-time patch to app/layout.tsx. update-template
+// and upgrade stash every local patch before they pull, so a shop that had
+// the banner lost it on its next template update. They note it first and
+// put it back. A shop created before the banner existed stays without one.
+function layoutHasStageBanner(shopDir) {
+  for (const name of ['layout.tsx', 'layout.jsx']) {
+    try {
+      if (fs.readFileSync(path.join(shopDir, 'app', name), 'utf8').includes('StageBanner')) return true;
+    } catch { /* no layout by that name */ }
+  }
+  return false;
+}
+
 // Clear stale .next/ build cache so the container always rebuilds on next boot.
 // This prevents serving an outdated bundle after source files have been updated.
 function clearBuildCache(shopDir, slug) {
@@ -1795,6 +1808,7 @@ router.post('/:slug/update-template', (req, res) => {
       log.push('Backed up DATABASE folder.');
     }
 
+    const hadStageBanner = layoutHasStageBanner(shopDir);
     try {
       // Stash any local changes (patches) before pulling
       const stash = execSync('git stash 2>&1', {
@@ -1858,6 +1872,7 @@ router.post('/:slug/update-template', (req, res) => {
 
     const analyticsPatchCount2 = patchShopAnalytics(shopDir);
     if (analyticsPatchCount2 > 0) log.push('Injected analytics tracker into shop layout.');
+    if (hadStageBanner && injectStageBanner(shopDir) > 0) log.push('Put the stage banner back into the shop layout.');
 
     // Ensure shop package.json version reflects the updated template
     const templateVer = readShopVersion(shopDir);
@@ -1942,6 +1957,7 @@ router.post('/:slug/upgrade', (req, res) => {
       log.push('Backed up DATABASE folder.');
     }
 
+    const hadStageBanner = layoutHasStageBanner(shopDir);
     try {
       const stash = execSync('git stash 2>&1', {
         cwd: shopDir, stdio: 'pipe', encoding: 'utf8',
@@ -2001,6 +2017,7 @@ router.post('/:slug/upgrade', (req, res) => {
 
     const analyticsPatchCount3 = patchShopAnalytics(shopDir);
     if (analyticsPatchCount3 > 0) log.push('Injected analytics tracker into shop layout.');
+    if (hadStageBanner && injectStageBanner(shopDir) > 0) log.push('Put the stage banner back into the shop layout.');
 
     // Ensure shop package.json version reflects the updated template
     const templateVer = readShopVersion(shopDir);
@@ -2052,3 +2069,5 @@ module.exports.initDb = initDb;
 // For test/build-check.test.js.
 module.exports.shopLogsShowReady = shopLogsShowReady;
 module.exports.settleStaleBuilds = settleStaleBuilds;
+// For test/stage-banner-update.test.js.
+module.exports.layoutHasStageBanner = layoutHasStageBanner;
