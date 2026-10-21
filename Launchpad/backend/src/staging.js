@@ -1030,7 +1030,7 @@ function normalizeEditValue(field, value) {
 const SETTING_GROUPS = {
   descriptions: { file: 'Descriptions.txt', keys: ['tagline', 'about', 'footer', 'heroButton', 'aboutTitle'] },
   fonts: { file: 'Fonts.txt', keys: ['titleFont', 'bodyFont', 'titleFontUrl', 'bodyFontUrl', 'taglineFont', 'taglineFontUrl'] },
-  style: { file: 'Style.txt', keys: ['cornerRadius', 'style', 'mainPrice'] },
+  style: { file: 'Style.txt', keys: ['cornerRadius', 'style', 'mainPrice', 'quantityLabel'] },
   colors: { file: 'Colors.txt', keys: ['primary', 'secondary', 'accent', 'background', 'text', 'textLight', 'border', 'success'] },
 };
 const SETTING_FILES = {
@@ -1059,6 +1059,7 @@ function normalizeSetting(group, key, value) {
     }
     if (key === 'style' && !['rounded', 'sharp'].includes(text)) throw editError('style.style is rounded or sharp.');
     if (key === 'mainPrice' && !['box', 'unit'].includes(text)) throw editError('style.mainPrice is box or unit.');
+    if (key === 'quantityLabel' && !['box', 'moq'].includes(text)) throw editError('style.quantityLabel is box or moq.');
     return text;
   }
   if (group === 'fonts' && /Url$/.test(key)) {

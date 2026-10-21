@@ -9,6 +9,7 @@ not the version the UI reads.
 
 | Version | Date | What changed |
 |---------|------|--------------|
+| STS-4.5.0 | 2026-10-21 | `Style.txt` takes `quantityLabel: moq`: "MOQ 1000 units" instead of "Box of 1000 units", lots instead of boxes, and a lot priced at the MOQ times the unit price (`BoxCost.txt` is not read). Default `box`, unchanged. The pages and `lib/catalog.ts` are Shuttle main, this set reads the key in `lib/design.ts`. |
 | STS-4.4.0 | 2026-10-20 | `Style.txt` takes `mainPrice: unit`: product cards and the product page show the unit price large and the box price on the small line. Default `box`, unchanged. The pages are Shuttle main, this set reads the key in `lib/design.ts`. |
 | STS-4.3.1 | 2026-10-20 | Product photos: `main.*` is always the first photo, the rest follow in natural name order, whatever order the disk lists them in. The change is in Shuttle main (`lib/catalog.ts`). This set only carries the version. |
 | STS-4.3.0 | 2026-10-16 | Shop copy settings, all optional. `Descriptions.txt` takes `heroButton:` (the home page hero button, default "Browse Collections", or "Shop All" for a single-collection shop) and `aboutTitle:` (the About heading on the home page and the About page). `Fonts.txt` takes `taglineFont:` and `taglineFontUrl:` for the hero tagline, which otherwise uses the body font. Launchpad reads `Design/Details/OrderEmail.txt` for the order confirmation subject, heading and message. Needs Shuttle main at or after the matching home page change. A shop without these keys looks the same as on STS-4.2.1. |

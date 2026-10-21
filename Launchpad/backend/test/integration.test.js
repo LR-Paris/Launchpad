@@ -618,7 +618,7 @@ async function main() {
     fs.mkdirSync(designDir, { recursive: true });
     fs.writeFileSync(path.join(designDir, 'Style.txt'), '# corners\ncornerRadius: 0\nstyle: sharp\n');
     const ceSettings = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', {
-      body: { settings: { style: { mainPrice: 'unit' }, colors: { primary: '#0A2240' }, order_email: 'subject: Your request\n\nThank you.' } },
+      body: { settings: { style: { mainPrice: 'unit', quantityLabel: 'moq' }, colors: { primary: '#0A2240' }, order_email: 'subject: Your request\n\nThank you.' } },
     });
     eq('settings change with no zip too', ceSettings.status, 200);
     ok('each setting comes back from and to',
@@ -628,11 +628,14 @@ async function main() {
     const ceSettingsApply = await callMcp(newUser, 'POST', '/api/shops/serhant/database/apply', { body: { staging_id: ceSettings.json?.staging_id } });
     eq('and applies like any staging', ceSettingsApply.status, 200);
     eq('the other lines and the comment stay as they were',
-      fs.readFileSync(path.join(designDir, 'Style.txt'), 'utf8'), '# corners\ncornerRadius: 0\nstyle: sharp\nmainPrice: unit\n');
+      fs.readFileSync(path.join(designDir, 'Style.txt'), 'utf8'), '# corners\ncornerRadius: 0\nstyle: sharp\nmainPrice: unit\nquantityLabel: moq\n');
     ok('the order email is written', /^subject: Your request/.test(fs.readFileSync(path.join(designDir, 'OrderEmail.txt'), 'utf8')));
     const ceBadColor = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { colors: { primary: 'navy' } } } });
     ok('a color that is not hex is refused, and says the format', ceBadColor.status === 400 && /hex/.test(ceBadColor.json?.error?.message || ''),
       JSON.stringify(ceBadColor.json));
+    const ceBadLabel = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { style: { quantityLabel: 'case' } } } });
+    ok('a quantity label that is not box or moq is refused', ceBadLabel.status === 400 && /box or moq/.test(ceBadLabel.json?.error?.message || ''),
+      JSON.stringify(ceBadLabel.json));
     const ceBadKey = await callMcp(newUser, 'POST', '/api/shops/serhant/catalog/edit', { body: { settings: { password: 'x' } } });
     ok('a setting it does not manage is refused', ceBadKey.status === 400, JSON.stringify(ceBadKey.json));
 

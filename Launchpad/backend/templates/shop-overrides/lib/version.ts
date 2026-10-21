@@ -17,15 +17,15 @@
  * a shop created with an incomplete copy of this file never comes up.
  * test/shop-overrides.test.js checks the list above.
  */
-export const VERSION = 'STS-4.4.0';
+export const VERSION = 'STS-4.5.0';
 
 export const VERSION_INFO = {
   name: 'Shop Template System',
   version: VERSION,
-  codename: 'Beacon',
-  releaseDate: '2026-10-20',
+  codename: 'Minimum',
+  releaseDate: '2026-10-21',
   description:
-    'Unit price first. Style.txt mainPrice: unit shows the unit price large on product cards and the product page, and the box price under it.',
+    'Minimum order quantities. Style.txt quantityLabel: moq says "MOQ 1000 units" instead of "Box of 1000 units", counts lots, and prices a lot at the MOQ times the unit price.',
   attribution: 'Built with LR Paris Shuttle',
 };
 
