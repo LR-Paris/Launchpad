@@ -625,6 +625,10 @@ async function main() {
       JSON.stringify(ceSettings.json?.edits || []).includes('"setting":"style.mainPrice","from":"","to":"unit"'),
       JSON.stringify(ceSettings.json?.edits));
     eq('a color change says the shop needs a restart to show it', ceSettings.json?.needs_restart, true);
+    ok('a setting this shop build does not read yet comes with the version it needs',
+      (ceSettings.json?.diff?.warnings || []).some((w) => /runs STS-4\.2\.0, and style\.mainPrice shows from STS-4\.4\.0/.test(w))
+      && (ceSettings.json?.diff?.warnings || []).some((w) => /style\.quantityLabel shows from STS-4\.5\.0/.test(w)),
+      JSON.stringify(ceSettings.json?.diff?.warnings));
     const ceSettingsApply = await callMcp(newUser, 'POST', '/api/shops/serhant/database/apply', { body: { staging_id: ceSettings.json?.staging_id } });
     eq('and applies like any staging', ceSettingsApply.status, 200);
     eq('the other lines and the comment stay as they were',

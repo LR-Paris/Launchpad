@@ -413,7 +413,7 @@ function validate(model, oldModel) {
     if (product.photoCount === 0) emptyPhotos.push(product.key);
   }
   if (missingSku.length) {
-    warnings.push(`${missingSku.length} product${missingSku.length === 1 ? '' : 's'} have no Details/SKU.txt, starting with ${missingSku.slice(0, 3).join(', ')}. They will still show, but stock cannot be tracked for them.`);
+    warnings.push(`${missingSku.length} product${missingSku.length === 1 ? '' : 's'} have no Details/SKU.txt, starting with ${missingSku.slice(0, 3).join(', ')}. The shop hides a product until it has a SKU, so set them with edit_catalog.`);
   }
   if (emptyPhotos.length) {
     warnings.push(`${emptyPhotos.length} product${emptyPhotos.length === 1 ? '' : 's'} have no photos, starting with ${emptyPhotos.slice(0, 3).join(', ')}.`);
@@ -821,7 +821,7 @@ function copyDatabaseDir(fromDir, destDir) {
   return { fileCount, bytes };
 }
 
-function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edits, merge }) {
+function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edits, merge, extraWarnings }) {
   const p = shopPaths(slug, shopsDir);
   recoverInterruptedApply(slug, shopsDir);
   if (!fs.existsSync(p.shopDir)) {
@@ -844,6 +844,7 @@ function stageDatabase({ slug, zipPath, fromDir, userId, ticketId, shopsDir, edi
     const newModel = scanDatabase(stagedDb);
     const willBackupTo = path.posix.join('shops', slug, '.backups', `${backupStamp(now)}.zip`);
     const diff = buildDiff(oldModel, newModel, willBackupTo);
+    if (Array.isArray(extraWarnings) && extraWarnings.length) diff.warnings.unshift(...extraWarnings);
 
     const meta = {
       staging_id: stagingId,
@@ -1145,6 +1146,51 @@ function applySettings(db, settings, changes) {
   return needsRestart;
 }
 
+// A setting the shop's Shuttle build does not read yet is saved and does
+// nothing. NASCAR hit that in October 2026: mainPrice: unit sat in Style.txt
+// on a 4.1.0 shop, and nobody could tell why the page did not change. The
+// answer now says so, with the version the shop has to move to.
+const SETTING_MIN_STS = {
+  'descriptions.heroButton': '4.3.0',
+  'descriptions.aboutTitle': '4.3.0',
+  'fonts.taglineFont': '4.3.0',
+  'fonts.taglineFontUrl': '4.3.0',
+  'style.mainPrice': '4.4.0',
+  'style.quantityLabel': '4.5.0',
+};
+
+function shopStsVersion(shopDir) {
+  try {
+    const text = fs.readFileSync(path.join(shopDir, 'lib', 'version.ts'), 'utf8');
+    const m = text.match(/VERSION\s*=\s*['"]STS-(\d+)\.(\d+)(?:\.(\d+))?['"]/);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3] || 0)] : null;
+  } catch {
+    return null;
+  }
+}
+
+function versionBelow(have, want) {
+  const w = want.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    if ((have[i] || 0) !== (w[i] || 0)) return (have[i] || 0) < (w[i] || 0);
+  }
+  return false;
+}
+
+function settingVersionWarnings(slug, shopDir, changes) {
+  const have = shopStsVersion(shopDir);
+  if (!have) return [];
+  const out = [];
+  for (const c of changes) {
+    const want = c.setting && SETTING_MIN_STS[c.setting];
+    if (want && c.to !== '' && versionBelow(have, want)) {
+      out.push(`${slug} runs STS-${have.join('.')}, and ${c.setting} shows from STS-${want} on. `
+        + `The setting is saved, but the shop shows no change until it moves. Log "Request: move ${slug} to STS-${want}" with report_issue.`);
+    }
+  }
+  return out;
+}
+
 function stageEdits({ slug, userId, edits, settings, shopsDir }) {
   const p = shopPaths(slug, shopsDir);
   recoverInterruptedApply(slug, shopsDir);
@@ -1204,7 +1250,8 @@ function stageEdits({ slug, userId, edits, settings, shopsDir }) {
     }
     if (!changes.length) throw editError('Every value is already what was asked for. There is nothing to stage.');
 
-    const result = stageDatabase({ slug, fromDir: db, userId, ticketId: null, shopsDir, edits: changes });
+    const extraWarnings = settingVersionWarnings(slug, p.shopDir, changes);
+    const result = stageDatabase({ slug, fromDir: db, userId, ticketId: null, shopsDir, edits: changes, extraWarnings });
     return { ...result, edits: changes, needs_restart: needsRestart };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
