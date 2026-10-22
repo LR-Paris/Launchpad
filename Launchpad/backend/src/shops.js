@@ -7,7 +7,7 @@ const Database = require('better-sqlite3');
 const slugify = require('slugify');
 const { generateShopConfig, removeShopConfig, reloadNginx } = require('./nginx');
 
-const { checkShopPermission, isAdminOrAbove } = require('./users');
+const { checkShopPermission, isAdminOrAbove, getUserById } = require('./users');
 const { acquire: lockAcquire, release: lockRelease, isLocked, readLock } = require('./lock');
 const { requireShopAccess, audit, membershipRole, setShopRole, refuse, currentLock } = require('./authz');
 const { writeStarterDatabase } = require('./starter-database');
@@ -1039,6 +1039,9 @@ router.post('/', (req, res) => {
   }
 });
 
+// users.created_by of the accounts people make for themselves on the sign-in page (users.js verifySignupCode).
+const SELF_MADE = ['self-signup'];
+
 // GET /api/shops — the shop list.
 //
 // TWO ANSWERS, DELIBERATELY.
@@ -1057,6 +1060,12 @@ router.post('/', (req, res) => {
 // who should see a shop has a row for it (run scripts/migrate-adr001.js first,
 // then check). Each entry carries `role`, so the UI can already tell the
 // difference between a shop you own and one you are only looking at.
+//
+// One exception to "every signed-in user": an account that made itself at its
+// first sign in (self-signup.js) and is still a plain `user` only sees the shops
+// it has a role on. Any LR Paris mailbox can make one, and the shop list names
+// clients and projects. (Accounts the dev tool's first sign in made are as they
+// were: the console shows them the full list.)
 router.get('/', (req, res) => {
   const db = getDb();
   try {
@@ -1065,7 +1074,8 @@ router.get('/', (req, res) => {
     const user = req.session?.user;
     const viaMcp = req.via === 'mcp';
     const strictWeb = process.env.LAUNCHPAD_STRICT_SHOP_LIST === 'true';
-    const seeEverything = !viaMcp && (user?.role === 'super_admin' || !strictWeb);
+    const selfMade = Boolean(user) && user.role === 'user' && SELF_MADE.includes(getUserById(user.id)?.created_by);
+    const seeEverything = !viaMcp && (user?.role === 'super_admin' || (!strictWeb && !selfMade));
 
     const visible = seeEverything
       ? shops.map(shop => ({

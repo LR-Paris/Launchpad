@@ -5,6 +5,7 @@ const geo = require('./security/geo');
 const turnstile = require('./security/turnstile');
 const authAlerts = require('./security/authAlerts');
 const { startSignedInSession } = require('./session-policy');
+const selfSignup = require('./self-signup');
 
 const router = express.Router();
 const SESSION_COOKIE_NAME = '__lp_sid';
@@ -82,11 +83,60 @@ function requireAuth(req, res, next) {
 // Routes
 // ---------------------------------------------------------------------------
 
+// The one answer to a code request, whoever asked and whatever happened: an
+// account, no account, a throttle, a first sign in. It never says which.
+const CODE_SENT = 'If an account exists, a sign-in code has been sent to your email.';
+
 // POST /api/auth/login-request — request OTP code
 // Public: tells the login page whether to show the Turnstile check.
 router.get('/config', (req, res) => {
   res.json({ turnstileSiteKey: turnstile.siteKey() });
 });
+
+// The account an identifier names, or the address that would sign up. The address
+// is normalised the way self-signup does (JavaScript's lower-casing, which folds
+// a few letters SQLite's does not, like the Kelvin sign) and looked up once more
+// by that address, so an identifier that only differs in such a letter reaches
+// the account it spells, through the usual code and the usual alerts, and never
+// through the first-sign-in path with its own limits.
+function accountFor(identifier) {
+  const typed = identifier.trim();
+  let user = userFns.getUserByUsernameOrEmail(typed);
+  const newEmail = selfSignup.signupEmail(typed);
+  if (!user && newEmail) user = userFns.getUserByUsernameOrEmail(newEmail);
+  return { user, newEmail: user ? null : newEmail };
+}
+
+// A first sign in for an address in SELF_SIGNUP_DOMAINS (self-signup.js). The
+// code is mailed the same way and the answer is the same, but no account is made
+// here: the code waits, hashed, in pending_signups until it comes back right
+// (login-verify). Nothing else is sent to anyone.
+function requestSignupCode(req, res, email, meta) {
+  const audit = req.app.locals.auditLog;
+  // An address an admin blocked (a deleted account, a shared mailbox) or that
+  // is not among the people LR Parrot says work here gets no code and no
+  // account, and the same answer.
+  const allowed = userFns.signupAllowed(email);
+  if (!allowed.ok) {
+    audit?.('login_request_failed', { req, details: { email, reason: `signup_${allowed.reason}` } });
+    return res.json({ message: CODE_SENT });
+  }
+  // Per address first, then per IP, so asking again for one address does not
+  // use up the budget of everyone else behind the same IP.
+  const gate = userFns.canIssueSignupCode(email);
+  if (!gate.ok) {
+    audit?.('login_request_throttled', { req, details: { email, reason: gate.reason } });
+    return res.json({ message: CODE_SENT });
+  }
+  if (!selfSignup.allowNewAddressCode(req.ip)) {
+    audit?.('login_request_throttled', { req, details: { email, reason: 'new_addresses_per_ip' } });
+    return res.json({ message: CODE_SENT });
+  }
+  const code = userFns.issueSignupCode(email);
+  sendOTPEmail(email, code, email.split('@')[0], meta);
+  audit?.('login_request', { req, details: { email, self_signup: true } });
+  return res.json({ message: CODE_SENT });
+}
 
 router.post('/login-request', async (req, res) => {
   const { identifier } = req.body; // username or email
@@ -102,12 +152,17 @@ router.post('/login-request', async (req, res) => {
     audit?.('login_request_failed', { req, details: { identifier, reason: `turnstile_${captcha.reason}` } });
     return res.status(403).json({ error: 'The security check did not pass. Reload the page and try again.' });
   }
-  const user = userFns.getUserByUsernameOrEmail(identifier.trim());
+  const { user, newEmail } = accountFor(identifier);
   if (!user) {
+    // An LR Paris address with no account yet signs up with this code. A
+    // username never does, and neither does an address in any other domain:
+    // those fall through to the answer below, as before.
+    if (newEmail) return requestSignupCode(req, res, newEmail, meta);
+
     audit?.('login_request_failed', { req, details: { identifier, reason: 'user_not_found' } });
     authAlerts.notifyLogin({ event: 'login_request_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
     // Don't reveal if user exists — return success anyway
-    return res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
+    return res.json({ message: CODE_SENT });
   }
 
   // Per-account brake: stops a burst of code requests for one account even when
@@ -116,14 +171,14 @@ router.post('/login-request', async (req, res) => {
   if (!gate.ok) {
     audit?.('login_request_throttled', { req, details: { username: user.username, reason: gate.reason } });
     authAlerts.notifyLogin({ event: 'login_request_throttled', actor: user.username, ip: meta.ip, location: meta.location, details: { reason: gate.reason } });
-    return res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
+    return res.json({ message: CODE_SENT });
   }
 
   const code = userFns.generateOTP(user.id);
   sendOTPEmail(user.email, code, user.username, meta);
 
   audit?.('login_request', { req, details: { username: user.username } });
-  res.json({ message: 'If an account exists, a sign-in code has been sent to your email.' });
+  res.json({ message: CODE_SENT });
 });
 
 // POST /api/auth/login-verify — verify OTP and create session
@@ -137,19 +192,67 @@ router.post('/login-verify', async (req, res) => {
 
   const meta = await geo.requestMeta(req);
 
-  const user = userFns.getUserByUsernameOrEmail(identifier.trim());
-  if (!user) {
-    audit?.('login_failed', { req, details: { identifier, reason: 'user_not_found' } });
-    authAlerts.notifyLogin({ event: 'login_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
-    // The same words as a wrong code, so this answer does not say whether the account exists.
-    return res.status(401).json({ error: 'Invalid or expired code' });
-  }
+  const found = accountFor(identifier);
+  let user = found.user;
+  const newEmail = found.newEmail;
+  let created = false;
+  // No account, but an LR Paris address: the code it was sent proves the
+  // mailbox, and the account is made now (self-signup.js).
 
-  const valid = userFns.verifyOTP(user.id, code.trim());
-  if (!valid) {
-    audit?.('login_failed', { req, details: { username: user.username, reason: 'invalid_otp' } });
-    authAlerts.notifyLogin({ event: 'login_failed', actor: user.username, ip: meta.ip, location: meta.location, details: { reason: 'invalid_otp' } });
-    return res.status(401).json({ error: 'Invalid or expired code' });
+  if (newEmail) {
+    const invalid = (reason) => {
+      audit?.('login_failed', { req, details: { email: newEmail, reason, self_signup: true } });
+      return res.status(401).json({ error: 'Invalid or expired code' });
+    };
+    const allowed = userFns.signupAllowed(newEmail);
+    if (!allowed.ok) return invalid(`signup_${allowed.reason}`);
+    // Too many wrong first-sign-in codes across every address in the last hour:
+    // no code is checked until it is over, so a flood cannot guess one.
+    if (selfSignup.firstSignInsPaused()) return invalid('signup_paused');
+    let made;
+    try {
+      made = userFns.verifySignupCode(newEmail, code.trim());
+    } catch (err) {
+      console.error(`[auth] could not create an account for ${newEmail}: ${err.message}`);
+      return res.status(500).json({ error: 'Failed to create the account' });
+    }
+    if (made.reason) {
+      // Audit only, except that the wrong codes are counted: when they pass the
+      // budget the admin gets one email, and first sign ins pause for the hour.
+      if (made.reason === 'invalid_otp') {
+        const seen = selfSignup.noteWrongSignupCode(newEmail);
+        if (seen.justPaused) {
+          authAlerts.alert('Launchpad: someone is guessing first sign-in codes',
+            `${seen.count} wrong first sign-in codes were sent in the last hour, for ${seen.addresses} different addresses `
+            + `(from IP ${meta.ip}, ${meta.location}, last). This looks like a script guessing six-digit codes for LR Paris addresses.\n\n`
+            + `First sign ins for addresses with no account are paused until ${new Date(seen.resumesAt).toISOString()}. `
+            + `Everyone who already has an account signs in as usual. Nothing was created.`);
+        }
+      }
+      return invalid(made.reason);
+    }
+    ({ user, created } = made);
+    if (created) {
+      // Access an owner granted to this address before it had an account.
+      try { require('./authz').applyPendingGrants(user); } catch (err) {
+        console.error(`[auth] pending grants for ${user.email} failed: ${err.message}`);
+      }
+      audit?.('user_created', { req, actor: user.username, details: { userId: user.id, username: user.username, role: user.role, via: 'self-signup' } });
+    }
+  } else {
+    if (!user) {
+      audit?.('login_failed', { req, details: { identifier, reason: 'user_not_found' } });
+      authAlerts.notifyLogin({ event: 'login_failed', ip: meta.ip, location: meta.location, details: { identifier, reason: 'user_not_found' } });
+      // The same words as a wrong code, so this answer does not say whether the account exists.
+      return res.status(401).json({ error: 'Invalid or expired code' });
+    }
+
+    const valid = userFns.verifyOTP(user.id, code.trim());
+    if (!valid) {
+      audit?.('login_failed', { req, details: { username: user.username, reason: 'invalid_otp' } });
+      authAlerts.notifyLogin({ event: 'login_failed', actor: user.username, ip: meta.ip, location: meta.location, details: { reason: 'invalid_otp' } });
+      return res.status(401).json({ error: 'Invalid or expired code' });
+    }
   }
 
   // How long this sign-in lasts: the "Stay signed in for" choice, renewed on
@@ -167,7 +270,11 @@ router.post('/login-verify', async (req, res) => {
       return res.status(500).json({ error: 'Failed to save session' });
     }
     audit?.('login_success', { req, actor: user.username });
-    authAlerts.notifyLogin({ event: 'login_success', actor: user.username, email: user.email, ip: meta.ip, location: meta.location });
+    // The sign-in that made an account tells nobody: the only email is the code
+    // the person asked for. Their later sign-ins are alerted like any other.
+    if (!created) {
+      authAlerts.notifyLogin({ event: 'login_success', actor: user.username, email: user.email, ip: meta.ip, location: meta.location });
+    }
     res.json({
       user: {
         id: user.id,

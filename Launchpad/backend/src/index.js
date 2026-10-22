@@ -25,6 +25,7 @@ const {
   isAuthorizeNavigation: isSsoAuthorizeNavigation,
   describeClients: describeSsoClients,
 } = require('./sso');
+const { describeSelfSignup } = require('./self-signup');
 const {
   router: usersRouter,
   meRouter,
@@ -34,6 +35,10 @@ const {
   generateOTP,
   verifyOTP,
   canIssueOTP,
+  canIssueSignupCode,
+  issueSignupCode,
+  verifySignupCode,
+  signupAllowed,
   cleanupExpiredOTPs,
   getAllUserPermissions,
   getUserById,
@@ -136,6 +141,8 @@ if (mcpEnabled()) {
 }
 // Reads SSO_CLIENTS now, so a broken value shows in the deploy log at once.
 describeSsoClients();
+// Likewise for who gets an account at first sign in (self-signup.js).
+describeSelfSignup();
 
 // An apply that died between its two renames leaves the shop's DATABASE parked
 // under .DATABASE.replacing-*. Put it back at boot, before anything serves a
@@ -162,6 +169,10 @@ setUserFns({
   generateOTP,
   verifyOTP,
   canIssueOTP,
+  canIssueSignupCode,
+  issueSignupCode,
+  verifySignupCode,
+  signupAllowed,
   getAllUserPermissions,
 });
 
@@ -328,13 +339,16 @@ app.get('/api/auth/csrf-token', (req, res) => {
 // ---------------------------------------------------------------------------
 // Rate limiting
 // ---------------------------------------------------------------------------
-// Keyed by IP *and* identifier. Per-IP alone was right when every sign in came
+// Keyed by IP *and* the account the identifier names. Per-IP alone was right when every sign in came
 // from a person's own browser. It is wrong now: every enrollment through the
 // dev tool arrives from one container, so ten sign ins would lock out the
 // eleventh person on a shared bucket they never touched. Pairing the two keeps
 // the per-person brake (10 tries per address per 15 minutes) and keeps a single
 // noisy IP from spraying addresses, without one colleague's sign in costing
-// another one theirs.
+// another one theirs. An account has a username and an email, which are two
+// identifiers for one set of codes, so an identifier that names an existing
+// account is keyed by that account's id: asking by username and by email spends
+// one budget, not two.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // Slightly higher since OTP needs 2 requests per login
@@ -343,7 +357,12 @@ const loginLimiter = rateLimit({
     // enrollment routes call it "email". Reading both is what keeps every sign
     // in on the same per-address budget instead of collapsing the tool server's
     // traffic onto one bucket keyed by its container IP.
-    const ident = String(req.body?.identifier || req.body?.email || '').trim().toLowerCase().slice(0, 120);
+    const raw = String(req.body?.identifier || req.body?.email || '').trim().slice(0, 120);
+    let ident = raw.toLowerCase();
+    try {
+      const account = raw ? getUserByUsernameOrEmail(raw) : null;
+      if (account) ident = `user:${account.id}`;
+    } catch { /* keyed by what was typed */ }
     return `${req.ip || 'noip'}|${ident || 'noident'}`;
   },
   // express-rate-limit warns when a custom keyGenerator touches req.ip, because

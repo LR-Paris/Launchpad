@@ -93,4 +93,11 @@ function notifyLogin({ event, actor, ip, location, email, details } = {}) {
   }
 }
 
-module.exports = { notifyLogin, _flushDigest: flushDigest };
+// One email to the admin, now, for something that is not a single failed sign-in
+// (self-signup.js: a script guessing first sign-in codes). The caller says when:
+// this does not rate-limit.
+function alert(subject, text) {
+  sendMail(`⚠️ ${subject}`, text);
+}
+
+module.exports = { notifyLogin, alert, _flushDigest: flushDigest };
