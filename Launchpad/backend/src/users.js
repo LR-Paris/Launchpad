@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const selfSignup = require('./self-signup');
 
 const router = express.Router();
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -76,7 +77,50 @@ function initUsersDb() {
     )
   `);
 
+  // A first sign in that has been started and not yet proved (self-signup.js).
+  // Not a user: it never appears in the user admin and holds only the hash of a
+  // code that is good for ten minutes.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_signups (
+      email TEXT PRIMARY KEY,
+      code TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      window_start INTEGER NOT NULL,
+      requests INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+
+  // Addresses nobody may sign up with (self-signup.js): written by deleteUser, so
+  // deleting an account keeps revoking access, and by an admin for a shared
+  // mailbox. Signing up never clears one. An admin who makes the account by hand
+  // does.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS blocked_emails (
+      email TEXT PRIMARY KEY,
+      reason TEXT,
+      blocked_at INTEGER NOT NULL,
+      blocked_by TEXT
+    )
+  `);
+
+  // The people who really work at LR Paris, as another app that has the company
+  // directory (LR Parrot, from Microsoft 365) last sent them (sso.js POST
+  // /members). Once any exist, only these addresses can sign up: an address
+  // nobody has a mailbox for, a shared mailbox or a list gets no code. One set
+  // per app, replaced whole each time.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS signup_members (
+      email TEXT NOT NULL,
+      source TEXT NOT NULL,
+      synced_at INTEGER NOT NULL,
+      PRIMARY KEY (email, source)
+    )
+  `);
+
   // Safe column migrations for existing DBs
+  try { db.exec('ALTER TABLE otp_codes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0'); } catch(e) { /* already exists */ }
   try { db.exec('ALTER TABLE user_shop_permissions ADD COLUMN can_view_analytics INTEGER NOT NULL DEFAULT 1'); } catch(e) { /* already exists */ }
   try { db.exec('ALTER TABLE users ADD COLUMN can_create_shops INTEGER DEFAULT 0'); } catch(e) { /* already exists */ }
 
@@ -170,10 +214,18 @@ function updateUser(id, { username, email, name, role, can_create_shops }) {
   return getUserById(id);
 }
 
-function deleteUser(id) {
-  db.prepare('DELETE FROM user_shop_permissions WHERE user_id = ?').run(id);
-  db.prepare('DELETE FROM otp_codes WHERE user_id = ?').run(id);
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+// Deleting an account is how access is taken away, so it also blocks the address
+// from signing itself up again (blocked_emails): without that, the person types
+// the email once more and self-signup makes a new account, and through Sign in
+// with Launchpad a way back into every app. `by` is who deleted it.
+function deleteUser(id, by) {
+  const row = db.prepare('SELECT email FROM users WHERE id = ?').get(id);
+  db.transaction(() => {
+    if (row) blockEmail(row.email, { by, reason: 'account deleted' });
+    db.prepare('DELETE FROM user_shop_permissions WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM otp_codes WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  })();
 }
 
 function getUserCount() {
@@ -278,28 +330,213 @@ function generateOTP(userId) {
   return code;
 }
 
+const OTP_MAX_ATTEMPTS = 5;
+
 function verifyOTP(userId, code) {
   // Compare against the stored HMAC, not plaintext. Fetch the live code for the
   // user (generateOTP keeps at most one unused), then timing-safe compare.
   const row = db.prepare(
-    'SELECT id, code FROM otp_codes WHERE user_id = ? AND used = 0 AND expires_at > ? ORDER BY id DESC LIMIT 1'
+    'SELECT id, code, attempts FROM otp_codes WHERE user_id = ? AND used = 0 AND expires_at > ? ORDER BY id DESC LIMIT 1'
   ).get(userId, Date.now());
 
   if (!row) return false;
+  // The fifth wrong try burns the code, as for a first sign in (spendSignupCode):
+  // the limiter in index.js counts per IP, so on its own it cannot stop a guess
+  // spread over many addresses of one person.
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(row.id);
+    return false;
+  }
 
   const a = Buffer.from(String(row.code));
   const b = Buffer.from(hashOTP(String(code).trim()));
   const match = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!match) return false;
+  if (!match) {
+    db.prepare('UPDATE otp_codes SET attempts = attempts + 1, used = CASE WHEN attempts + 1 >= ? THEN 1 ELSE 0 END WHERE id = ?')
+      .run(OTP_MAX_ATTEMPTS, row.id);
+    return false;
+  }
 
   // Mark as used
   db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(row.id);
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Self-signup (self-signup.js): the code for an address with no account yet
+//
+// One row per address, replaced by each new code, the way generateOTP retires a
+// user's earlier code. The same hash as otp_codes, the same ten minutes. The row
+// also remembers when this address last asked and how many codes it has had in
+// the current fifteen minutes, which is the per-address brake (an address with no
+// account has no user id for canIssueOTP to count against).
+// ---------------------------------------------------------------------------
+const SIGNUP_TTL_MS = 10 * 60 * 1000; // same as generateOTP, on purpose
+const SIGNUP_MAX_ATTEMPTS = 5;
+const SIGNUP_COOLDOWN_MS = 60 * 1000;
+const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
+const SIGNUP_MAX_CODES = 5;
+
+// Same shape as canIssueOTP: { ok } or { ok:false, reason, retryAfterSec }.
+function canIssueSignupCode(email) {
+  const now = Date.now();
+  const row = db.prepare('SELECT created_at, window_start, requests FROM pending_signups WHERE email = ?').get(email);
+  if (!row) return { ok: true };
+  if (now - row.created_at < SIGNUP_COOLDOWN_MS) return { ok: false, reason: 'cooldown', retryAfterSec: 60 };
+  if (now - row.window_start < SIGNUP_WINDOW_MS && row.requests >= SIGNUP_MAX_CODES) {
+    return { ok: false, reason: 'too_many_codes', retryAfterSec: Math.ceil((row.window_start + SIGNUP_WINDOW_MS - now) / 1000) };
+  }
+  return { ok: true };
+}
+
+function issueSignupCode(email) {
+  const now = Date.now();
+  const code = crypto.randomInt(100000, 999999).toString();
+  const prev = db.prepare('SELECT window_start, requests FROM pending_signups WHERE email = ?').get(email);
+  const sameWindow = prev && now - prev.window_start < SIGNUP_WINDOW_MS;
+  db.prepare(`
+    INSERT INTO pending_signups (email, code, expires_at, attempts, created_at, window_start, requests)
+    VALUES (?, ?, ?, 0, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      code = excluded.code, expires_at = excluded.expires_at, attempts = 0,
+      created_at = excluded.created_at, window_start = excluded.window_start, requests = excluded.requests
+  `).run(email, hashOTP(code), now + SIGNUP_TTL_MS, now, sameWindow ? prev.window_start : now, sameWindow ? prev.requests + 1 : 1);
+  return code;
+}
+
+// Right code: the row is spent. Wrong code: one attempt used, and the fifth wrong
+// one ends this code (the right code is refused after that, ask for a new one).
+// Returns null when the code is good, or why not (for the audit log only: every
+// reason gets the same answer on the wire).
+function spendSignupCode(email, code) {
+  const row = db.prepare('SELECT code, expires_at, attempts FROM pending_signups WHERE email = ?').get(email);
+  if (!row) return 'no_pending_code';
+  if (row.expires_at <= Date.now()) return 'expired';
+  if (row.attempts >= SIGNUP_MAX_ATTEMPTS) return 'too_many_attempts';
+
+  const a = Buffer.from(String(row.code));
+  const b = Buffer.from(hashOTP(String(code).trim()));
+  if (!(a.length === b.length && crypto.timingSafeEqual(a, b))) {
+    db.prepare('UPDATE pending_signups SET attempts = attempts + 1 WHERE email = ?').run(email);
+    return 'invalid_otp';
+  }
+  db.prepare('DELETE FROM pending_signups WHERE email = ?').run(email);
+  return null;
+}
+
+// "arnaud.messager" -> "arnaud.messager", then "arnaud.messager2" if taken. The
+// check ignores case: usernames are matched that way at sign in.
+function freeUsername(email, skip = 0) {
+  const base = selfSignup.usernameBase(email);
+  for (let n = 1 + skip; n < 1000; n += 1) {
+    const candidate = n === 1 ? base : `${base}${n}`;
+    if (!db.prepare('SELECT 1 FROM users WHERE lower(username) = lower(?)').get(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+// The proof step of a first sign in: spend the code and, if it was right, make
+// the account, in one transaction so a failure after the code is spent gives the
+// code back. Returns { user, created } or { reason }. An account that appeared in
+// the meantime (an admin made one, a parallel request won) is not an error: the
+// code was right, so that person is signed in as themselves, and never twice.
+// The account is looked up by its email alone: the code proves this mailbox, so
+// it must never open an account that merely has this text as its username.
+function verifySignupCode(email, code) {
+  const byEmail = () => db.prepare('SELECT * FROM users WHERE lower(email) = lower(?)').get(email);
+  return db.transaction(() => {
+    const reason = spendSignupCode(email, code);
+    if (reason) return { reason };
+    const existing = byEmail();
+    if (existing) return { user: existing, created: false };
+
+    for (let skip = 0; skip < 5; skip += 1) {
+      try {
+        const user = createUser({
+          username: freeUsername(email, skip),
+          email,
+          name: selfSignup.displayName(email),
+          role: 'user',
+          created_by: 'self-signup',
+        });
+        return { user, created: true };
+      } catch {
+        // UNIQUE(email) lost to another writer: they made the account. UNIQUE(username):
+        // that name was just taken, so the loop tries the next one.
+        const raced = byEmail();
+        if (raced) return { user: raced, created: false };
+      }
+    }
+    throw new Error('no free username');
+  })();
+}
+
+// ---------------------------------------------------------------------------
+// Who may sign themselves up (self-signup.js, and the dev tool's first sign in)
+//
+// Two lists, both read only when an address has no account yet; an account that
+// exists signs in as it always did.
+//   blocked_emails   addresses nobody gets an account with: deleted accounts, and
+//                    whatever an admin adds (info@, a list that takes mail).
+//   signup_members   the people who really work here, from LR Parrot's copy of
+//                    the Microsoft 365 directory. Empty (nothing ever sent):
+//                    every address in an allowed domain may sign up, as before.
+//                    Not empty: only those. A new hire is in it after the next
+//                    directory sync (POST /api/admin/directory/sync in LR Parrot).
+// ---------------------------------------------------------------------------
+const normalEmail = (email) => String(email || '').trim().toLowerCase();
+
+function blockEmail(email, { by, reason } = {}) {
+  db.prepare(`
+    INSERT INTO blocked_emails (email, reason, blocked_at, blocked_by) VALUES (?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET reason = excluded.reason, blocked_at = excluded.blocked_at, blocked_by = excluded.blocked_by
+  `).run(normalEmail(email), reason || null, Date.now(), by || null);
+}
+
+function unblockEmail(email) {
+  return db.prepare('DELETE FROM blocked_emails WHERE email = ?').run(normalEmail(email)).changes;
+}
+
+function isBlocked(email) {
+  return Boolean(db.prepare('SELECT 1 FROM blocked_emails WHERE email = ?').get(normalEmail(email)));
+}
+
+function listBlocked() {
+  return db.prepare('SELECT email, reason, blocked_at, blocked_by FROM blocked_emails ORDER BY blocked_at DESC').all();
+}
+
+// Replaces what `source` sent last time, whole, in one transaction.
+function replaceSignupMembers(source, emails) {
+  const now = Date.now();
+  const insert = db.prepare('INSERT OR IGNORE INTO signup_members (email, source, synced_at) VALUES (?, ?, ?)');
+  db.transaction(() => {
+    db.prepare('DELETE FROM signup_members WHERE source = ?').run(source);
+    for (const email of emails) insert.run(normalEmail(email), source, now);
+  })();
+}
+
+function signupMemberCount() {
+  return db.prepare('SELECT COUNT(*) AS n FROM signup_members').get().n;
+}
+
+function isSignupMember(email) {
+  return Boolean(db.prepare('SELECT 1 FROM signup_members WHERE email = ?').get(normalEmail(email)));
+}
+
+// { ok } or { ok: false, reason: 'blocked' | 'not_a_member' }, for an address with no account.
+function signupAllowed(email) {
+  const e = normalEmail(email);
+  if (isBlocked(e)) return { ok: false, reason: 'blocked' };
+  if (signupMemberCount() > 0 && !isSignupMember(e)) return { ok: false, reason: 'not_a_member' };
+  return { ok: true };
+}
+
 // Cleanup expired OTPs periodically
 function cleanupExpiredOTPs() {
   db.prepare('DELETE FROM otp_codes WHERE expires_at < ? OR used = 1').run(Date.now() - 60 * 60 * 1000);
+  // A pending signup is kept until its fifteen minute window is over, then it
+  // is gone: a code that was never used leaves nothing behind.
+  db.prepare('DELETE FROM pending_signups WHERE created_at < ?').run(Date.now() - SIGNUP_WINDOW_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +619,29 @@ router.get('/', requireRole('super_admin'), (req, res) => {
   res.json({ users: result });
 });
 
+// GET /api/users/blocked — addresses nobody can sign up with (deleted accounts, and what an admin added)
+router.get('/blocked', requireRole('super_admin'), (req, res) => {
+  res.json({ blocked: listBlocked() });
+});
+
+// POST /api/users/blocked {email, reason?} — block an address, for a shared mailbox or a list
+router.post('/blocked', requireRole('super_admin'), (req, res) => {
+  const audit = req.app.locals.auditLog;
+  const email = normalEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+  blockEmail(email, { by: req.session.user.username, reason: String(req.body?.reason || 'blocked by an admin').slice(0, 200) });
+  audit?.('signup_blocked', { req, details: { email } });
+  res.status(201).json({ blocked: listBlocked() });
+});
+
+// DELETE /api/users/blocked/:email — let an address sign up again
+router.delete('/blocked/:email', requireRole('super_admin'), (req, res) => {
+  const audit = req.app.locals.auditLog;
+  if (!unblockEmail(req.params.email)) return res.status(404).json({ error: 'That address is not blocked' });
+  audit?.('signup_unblocked', { req, details: { email: normalEmail(req.params.email) } });
+  res.json({ blocked: listBlocked() });
+});
+
 // GET /api/users/:id — get single user
 router.get('/:id', requireRole('super_admin'), (req, res) => {
   const user = getUserById(Number(req.params.id));
@@ -426,6 +686,8 @@ router.post('/', requireRole('super_admin'), (req, res) => {
       role: role || 'user',
       created_by: req.session.user.username,
     });
+    // An admin making the account by hand is the way back for a blocked address.
+    unblockEmail(user.email);
 
     // Set shop permissions if provided
     if (shopPermissions && typeof shopPermissions === 'object') {
@@ -531,7 +793,7 @@ router.delete('/:id', requireRole('super_admin'), (req, res) => {
   }
 
   try {
-    deleteUser(id);
+    deleteUser(id, req.session.user.username);
     audit?.('user_deleted', { req, details: { userId: id, username: existing.username } });
     res.json({ message: 'User deleted' });
   } catch (err) {
@@ -687,6 +949,16 @@ module.exports = {
   generateOTP,
   verifyOTP,
   canIssueOTP,
+  canIssueSignupCode,
+  issueSignupCode,
+  verifySignupCode,
+  signupAllowed,
+  replaceSignupMembers,
+  signupMemberCount,
+  blockEmail,
+  unblockEmail,
+  isBlocked,
+  listBlocked,
   cleanupExpiredOTPs,
   addCredential,
   getCredentialsByUser,

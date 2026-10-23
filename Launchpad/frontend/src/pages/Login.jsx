@@ -84,7 +84,13 @@ export default function Login() {
 
     try {
       const data = await requestLoginCode(identifier, turnstileToken);
-      setMessage(data.message);
+      // Someone typing an email address is told a code is on its way. The
+      // neutral words ("If an account exists...") are the API's answer to
+      // everyone, so it never says who has an account; on this page they only
+      // made a person with no account yet think they had none. A username gets
+      // the neutral words.
+      const typed = identifier.trim();
+      setMessage(typed.includes('@') ? `We sent a 6-digit code to ${typed}. It can take a minute.` : data.message);
       setStep('verify');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to send code');
@@ -199,6 +205,7 @@ export default function Login() {
             </div>
             <p className="text-xs text-muted-foreground">
               Enter your username or email. We'll send a sign-in code to your email.
+              Any LR Paris email can sign in.
             </p>
             {sso && (
               <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">

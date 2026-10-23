@@ -6,6 +6,122 @@ when someone connects Claude to their shops (`lrparisstore.com/mcp/login`).
 Other LR Paris apps, LR Parrot first, can use the same sign-in: see
 [Sign in with Launchpad](#sign-in-with-launchpad-other-lr-paris-apps).
 
+## First sign-in makes the account
+
+Nobody has to create an account for an LR Paris address. Anyone whose email is in
+`SELF_SIGNUP_DOMAINS` (comma-separated, default `lrparis.com`, so no change to
+`.env` is needed) types it on the sign-in page, gets the usual six-digit code by
+email, and the account is made at the moment the code comes back right.
+
+`SELF_SIGNUP_DOMAINS` is the one switch for every way an LR Paris address gets an
+account on its own: this page and the dev tool's first sign-in
+(`/api/mcp/enroll`, `MCP_ENROLL_DOMAINS` in older `.env` files, which still
+works when `SELF_SIGNUP_DOMAINS` is not set). Set it empty and both stop: accounts
+are made by an admin only. The two make the same account (name, username, role
+`user`, no shops) and are held to the same gates below.
+
+1. **Asking for the code** (`POST /api/auth/login-request`). An address with no
+   account that is exactly in an allowed domain gets the same email and the same
+   answer as everyone else ("If an account exists, a sign-in code has been sent
+   to your email." in the API; the sign-in page says "We sent a 6-digit code to
+   <email>" to anyone who typed an email address). No account is made. The code waits in `users.db`
+   `pending_signups`: only its hash, good for 10 minutes, five wrong tries, one
+   row per address. Cleaned up with the other codes (`cleanupExpiredOTPs`).
+2. **Sending the code back** (`POST /api/auth/login-verify`). A right code
+   creates the account: role `user`, no shop access, cannot create shops,
+   `created_by` `self-signup`. The username is the part before the `@` (made
+   unique with 2, 3, ... if taken, in any letter case) and the name is that part
+   in words: `arnaud.messager@lrparis.com` becomes `arnaud.messager` and "Arnaud
+   Messager". An admin can edit both. `data/audit.log` records `user_created` with
+   `via: self-signup`. Access an owner granted to the address before it had an
+   account (shuttle-mcp `grant_access`) lands with the account, as for any new
+   account. Then the person is signed in like anyone else.
+3. **Sign in with Launchpad.** The sign-in page LR Parrot sends people to is this
+   page, so the same applies: sign in with a new LR Paris address, and the page
+   carries on to `/api/auth/sso/authorize` and back to the app. A self-signed
+   account is a plain `user`, which `sso.js` accepts (it checks the email domain
+   against the app's `allowedDomains`, not the role).
+
+What it does not do:
+
+- **Usernames never sign up.** Only an email address does. A username with no
+  account gets the answer it always got.
+- **Other domains are unchanged.** `someone@gmail.com`, `x@lrparis.com.evil.com`,
+  `x@sub.lrparis.com` (a subdomain is not the domain) and `x+alias@lrparis.com`
+  (one mailbox, one account) get the old answer and no email.
+- **It never says whether an account exists.** Same status, same words, whether
+  the address is new, known, throttled or outside the domains.
+- **Nobody is notified.** The only email is the sign-in code the person asked
+  for. No welcome email, no email to an admin, nothing to Teams. The sign-in that
+  creates an account does not send the usual "sign-in" security alert either, and
+  a wrong code on a first sign-in only goes to the audit log. Their later
+  sign-ins are alerted like every account's (`security/authAlerts.js`,
+  `ALERT_EMAIL`).
+
+The limits that already apply to codes still apply (10 requests and verifies per
+account and IP per 15 minutes, a username and an email counting as one account,
+Turnstile when on). A code for an account that exists also dies at its fifth wrong
+try, as a first-sign-in code does. Addresses with no account also
+get their own: one code a minute and five per 15 minutes per address, and 60 new
+addresses an hour per IP, so the sign-in page cannot be used to send mail to
+strangers' mailboxes. Past a limit the answer is the same and no email goes out.
+
+`SELF_SIGNUP_DOMAINS` is read at boot and the deploy log says what it found:
+`[self-signup] Anyone with an @lrparis.com email gets an account at their first sign in`.
+An entry that is not a domain is left out and named. Set it empty to turn the
+whole thing off (`[self-signup] Off`). It changes who may sign up; it does not
+touch the accounts that exist.
+
+### Who can sign up: gates before the code
+
+Anyone who can read a mailbox gets in, so the address has to belong to a real
+person. Two gates come before a code is mailed or checked, for an address with
+no account (`signupAllowed` in `users.js`). An address that fails one gets the
+same answer as any other, no email, and no account; the audit log says why
+(`signup_blocked`, `signup_not_a_member`).
+
+1. **Only the people who work here.** LR Parrot has the company directory (the
+   Microsoft 365 tenant). After every directory sync it sends Launchpad the
+   addresses of the people who work at LR Paris: `POST /api/auth/sso/members`
+   with `{client_id, client_secret, emails}`, the same client secret as the
+   token route. Launchpad keeps them (`users.db` `signup_members`, one set per
+   app, replaced whole each time; a list with no valid address is refused, so an
+   empty list can never open sign-up). Once there are any, only those addresses
+   can sign up: an address nobody has a mailbox for, a shared mailbox, a list, a
+   guest or someone disabled gets no code. Until LR Parrot has sent a list
+   (Launchpad deployed first, or LR Parrot without Graph access) nothing changes
+   and any address in an allowed domain can sign up, so deploy order matters:
+   see the release steps in LR Parrot's `docs/people-and-sharing-spec.md`. A new
+   hire is in the list after the next directory sync (daily; an LR Parrot admin
+   can run it at once with `POST /api/admin/directory/sync`). Accounts that exist
+   sign in as always, listed or not. The list only carries addresses. Nobody is
+   told it was sent.
+2. **Blocked addresses.** Deleting an account (`DELETE /api/users/:id`) blocks its
+   address (`blocked_emails`), so typing the email again does not bring the
+   account back: **deleting an account revokes access for good, until an admin
+   makes the account again.** A super_admin can also block an address (a shared
+   mailbox that is in the directory), list them and unblock one:
+   `GET/POST /api/users/blocked`, `DELETE /api/users/blocked/:email`. Making the
+   account by hand (`POST /api/users`) clears the block.
+
+### A budget for wrong first-sign-in codes
+
+Each address has five tries and each IP its own new addresses, but nothing counted
+wrong guesses in total. Now the wrong first-sign-in codes of the last hour,
+across every address, are counted: at 60 the admin (`ALERT_EMAIL`) gets one email
+("someone is guessing first sign-in codes") and first sign-ins for addresses
+with no account pause until the hour is over. No code is checked meanwhile, the
+answer is the usual one, and accounts that exist sign in as always. A few typos by
+people are far from 60.
+
+### What a self-made account can see
+
+A self-made account (`created_by` `self-signup`) that is still a plain `user` sees
+only the shops it has a role on: the shop list names clients and projects, and any
+LR Paris mailbox can make one. Admin-made accounts, admins, accounts the dev tool's
+first sign-in made, and an account an admin has promoted see the list as before
+(`LAUNCHPAD_STRICT_SHOP_LIST` still filters it for everyone when set).
+
 ## How long a sign-in lasts
 
 The sign-in page asks how long to stay signed in: 1 day, 1 week, 1 month or
@@ -89,6 +205,11 @@ It is a small authorization-code flow in `backend/src/sso.js`.
    - Signed in, account in one of the app's `allowedDomains`: a redirect to
      `redirect_uri?code=<one-time code>&state=<state, unchanged>`.
    - Signed in, any other domain: a plain 403 page.
+   A third call is not part of signing in: `POST /api/auth/sso/members` (see "Who
+   can sign up" above). It takes the same `client_id` and `client_secret`, a JSON
+   `emails` list, and answers `{accepted: n}` (`401 invalid_client`, or `400
+   invalid_request` for something that is not a list or has no address in the
+   app's `allowedDomains`).
 2. The app's server calls `POST /api/auth/sso/token` with the JSON body
    `{client_id, client_secret, code, redirect_uri}`. No cookie, no CSRF token.
    - Good: `200 {user: {id, username, email, name, role}}`.
@@ -182,6 +303,16 @@ the way in, authorize spelled `/authorize/` or `/Authorize`, and a token body
 that is not JSON. It also boots it once with `SSO_CLIENTS` that is not JSON.
 For the 60-second expiry it moves the backend's clock with a small preload,
 not with a setting in `src/`.
+
+`backend/test/self-signup.test.js` checks First sign-in makes the account with
+node's own test runner: the code and the account, every way a code can fail, the
+other domains and usernames, existing accounts, races, the per-address and per-IP
+limits, `SELF_SIGNUP_DOMAINS` (and that the dev tool's first sign-in follows it),
+Sign in with Launchpad after a self-signup, the list of people who work here, blocked
+and deleted addresses, the budget for wrong codes, an identifier spelled with a
+look-alike letter, five tries per code for existing accounts, the shop list, and
+that nobody is notified (a preload records every request the backend makes and
+refuses all but Mailgun).
 
 Run each file with plain node, from `backend/`:
 

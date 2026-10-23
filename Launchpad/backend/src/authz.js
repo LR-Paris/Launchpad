@@ -21,7 +21,8 @@ const fileLock = require('./lock');
 // have an account, the same ten minute expiry, the same Mailgun sender.
 // users.js only requires this file lazily, inside a function, so there is no
 // cycle. See the enrollment block near the bottom.
-const { generateOTP, verifyOTP } = require('./users');
+const { generateOTP, verifyOTP, signupAllowed } = require('./users');
+const selfSignup = require('./self-signup');
 const { sendOTPEmail } = require('./auth');
 
 const ROLES = ['viewer', 'editor', 'owner'];
@@ -1110,10 +1111,13 @@ function requireMcp(req, res, next) {
 }
 
 // Who may enroll. An address outside these domains never reaches the mail path,
-// so this route cannot be used to spray sign-in codes at strangers.
+// so this route cannot be used to spray sign-in codes at strangers. The same
+// list as the sign-in page's first sign in (SELF_SIGNUP_DOMAINS, or the older
+// MCP_ENROLL_DOMAINS), so there is one switch: turning self-signup off turns this
+// off too. The address must also pass signupAllowed (not blocked, and one of the
+// people LR Parrot says work here once it has sent that list).
 function enrollDomains() {
-  return (process.env.MCP_ENROLL_DOMAINS || 'lrparis.com')
-    .split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+  return selfSignup.selfSignupDomains();
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1168,6 +1172,11 @@ function enrollableEmail(req, res) {
     return null;
   }
   const domain = email.split('@')[1];
+  if (enrollDomains().length === 0) {
+    refuse(res, 403, 'NOT_PERMITTED', 'Accounts here are made by an admin.',
+      'Ask Gio to make your account, then sign in.', false);
+    return null;
+  }
   if (!enrollDomains().includes(domain)) {
     refuse(res, 403, 'NOT_PERMITTED',
       `The dev tool only signs in ${enrollDomains().join(' or ')} addresses.`,
@@ -1228,6 +1237,12 @@ mcpPublicRouter.post('/enroll', requireMcp, (req, res) => {
   if (!email) return undefined;
 
   const existing = userByEmail(email);
+  // An address nobody may sign up with gets the answer an address that works
+  // gets, and no email and no pending code (self-signup.js).
+  if (!existing && !signupAllowed(email).ok) {
+    auditRaw({ userId: null, username: null, action: 'mcp_enroll_request', detail: { email, known: false, refused: signupAllowed(email).reason }, via: 'mcp' });
+    return res.json({ sent: true, expires_in: Math.round(PENDING_TTL_MS / 1000) });
+  }
   let code;
   try {
     code = existing ? generateOTP(existing.id) : startPendingEnrollment(email);
@@ -1277,12 +1292,13 @@ mcpPublicRouter.post('/enroll/verify', requireMcp, (req, res) => {
   }
 
   if (!takePendingEnrollment(email, code)) return deny();
+  if (!signupAllowed(email).ok) return deny();
 
   const local = email.split('@')[0];
   const username = uniqueUsername(local);
-  // A readable placeholder, replaced the moment an admin edits the profile.
-  const name = local.split(/[._-]+/).filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || username;
+  // A readable placeholder, replaced the moment an admin edits the profile. The
+  // same words as the sign-in page's first sign in makes (self-signup.js).
+  const name = selfSignup.displayName(email) || username;
 
   let info;
   try {

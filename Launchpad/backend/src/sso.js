@@ -27,6 +27,15 @@
 //     name, role}}, or 401 invalid_client, or 400 invalid_grant, or 400
 //     invalid_request for a body that is not JSON (tokenErrors, below).
 //
+//  3. POST /api/auth/sso/members  {client_id, client_secret, emails: [...]}
+//     Not part of signing in. An app that has the company directory (LR Parrot,
+//     from Microsoft 365) sends the addresses of the people who really work
+//     here, so that first sign in's self-signup (self-signup.js) only makes
+//     accounts for them, and not for an invented address, a shared mailbox or a
+//     list. Replaces what that app sent before. Answers {accepted: n}, or 401
+//     invalid_client, or 400 invalid_request (not a list, or an empty one: an
+//     empty list would open sign-up to everyone). Sends nobody anything.
+//
 // Codes are 32 random bytes, base64url. Only their SHA-256 is kept, for 60
 // seconds, and the first attempt to use one ends it, right or wrong. They live
 // in this process's memory, which is fine while Launchpad is one process: a
@@ -61,6 +70,8 @@ const DEFAULT_ALLOWED_DOMAINS = ['lrparis.com'];
 const MIN_SECRET_LENGTH = 32;
 const MAX_STATE_LENGTH = 1024;
 const CLIENT_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const MEMBERS_MAX = 20000;
+const MEMBER_RE = /^[^\s@]{1,64}@[^\s@]{1,190}$/;
 
 // Where index.js mounts authorize. Express routes it without regard to letter
 // case or one trailing slash, so /authorize/ and /SSO/Authorize land on it too.
@@ -390,6 +401,36 @@ tokenRouter.post('/token', tokenLimiter, (req, res) => {
   return res.json({
     user: { id: user.id, username: user.username, email: user.email, name: user.name, role: user.role },
   });
+});
+
+// The people who work at LR Paris, from an app that has the directory. The
+// secret is the credential, as for /token. Only addresses in the app's own
+// allowedDomains are kept.
+tokenRouter.post('/members', tokenLimiter, (req, res) => {
+  const audit = req.app.locals.auditLog;
+  res.set('Cache-Control', 'no-store');
+
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const { client_id: clientId, client_secret: secret, emails } = body;
+  const client = getClient(clientId);
+  const secretOk = secretMatches(typeof secret === 'string' ? secret : '', client ? client.secret : NO_CLIENT_SECRET);
+  if (!client || typeof secret !== 'string' || !secretOk) {
+    audit?.('sso_denied', { req, details: { client: clientLabel(clientId), reason: client ? 'bad_secret' : 'unknown_client', step: 'members' } });
+    return res.status(401).json({ error: 'invalid_client' });
+  }
+
+  if (!Array.isArray(emails) || emails.length > MEMBERS_MAX) return res.status(400).json({ error: 'invalid_request' });
+  const kept = new Set();
+  for (const e of emails) {
+    const email = typeof e === 'string' ? e.trim().toLowerCase() : '';
+    if (MEMBER_RE.test(email) && client.allowedDomains.includes(emailDomain(email))) kept.add(email);
+  }
+  // Never an empty list: no members known means "anyone may sign up".
+  if (kept.size === 0) return res.status(400).json({ error: 'invalid_request' });
+
+  users.replaceSignupMembers(client.id, kept);
+  audit?.('sso_members', { req, details: { client: client.id, accepted: kept.size } });
+  return res.json({ accepted: kept.size });
 });
 
 // express.json() runs before tokenRouter, for the whole app. A body it cannot

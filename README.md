@@ -191,6 +191,7 @@ cp .env.example .env
 | `COOKIE_SECURE` | No | `false` | Set to `true` when serving over HTTPS |
 | `SESSION_MAX_AGE_DAYS` | No | `180` | A sign-in ends this many days after it started, however active. The "Stay signed in for" choice counts from the last visit inside this limit. See `Launchpad/docs/SIGN-IN.md` |
 | `SSO_CLIENTS` | No | — | JSON, one line in single quotes: the other LR Paris apps (LR Parrot first) that may "Sign in with Launchpad", each with its secret, exact redirect addresses and allowed email domains. See `Launchpad/docs/SIGN-IN.md` |
+| `SELF_SIGNUP_DOMAINS` | No | `lrparis.com` | Comma-separated email domains whose people get a Launchpad account at their first sign in: they ask for the usual email code, and the account (role `user`, no shops) is made when it comes back right. Nobody is notified. It is the one switch for every self-enrolment (the dev tool's first sign in follows it; `MCP_ENROLL_DOMAINS` still works when this is not set). Once LR Parrot sends the list of people who work here only they can sign up, and deleting an account blocks its address. Set it to nothing to turn it off. See `Launchpad/docs/SIGN-IN.md` |
 | `BASE_DOMAIN` | Yes (prod) | — | Your domain (e.g. `yourdomain.com`). Used for CORS and shop routing |
 | `HOST_PROJECT_DIR` | Auto | `$PWD` | Absolute path to the project on the host. Set automatically by Docker Compose |
 
